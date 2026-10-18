@@ -3,6 +3,12 @@
 
 
 
+
+## v0.1.3-beta.0 (2026-10-18)
+### 🚀 新增功能
+
+- [888ab9e](/-/commit/888ab9e6e232a4fd78f834b13376085fbd78ccca) 新增(src-tauri): 添加纯检测模式并优化网络超时配置 (src-tauri/Cargo.lock, src-tauri/Cargo.toml, src-tauri/src/cli.rs, src-tauri/src/config.rs, src-tauri/src/download.rs, src-tauri/src/lib.rs, src-tauri/src/manifest.rs, src-tauri/src/updater.rs, src-zsui/README.md, src-zsui/src/cli.rs, src-zsui/src/config.rs, src-zsui/src/download.rs, src-zsui/src/main.rs, src-zsui/src/manifest.rs, src-zsui/src/updater.rs)
+
 ## v0.1.2 (2026-10-18)
 ### 🚀 新增功能
 
