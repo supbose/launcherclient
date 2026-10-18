@@ -30,8 +30,14 @@ pub struct FlatManifest {
     /// 更新包 SHA256 校验值
     #[serde(default)]
     pub sha256: Option<String>,
-    /// 更新包下载地址
+    /// 更新包下载地址（单包模式；parts 存在时忽略此字段）
     pub url: String,
+    /// 分卷下载地址列表（可选，分卷模式；按序拼接后为完整 zip）
+    #[serde(default)]
+    pub parts: Option<Vec<String>>,
+    /// 各分卷的 SHA256 校验值（可选，与 parts 等长，逐卷校验）
+    #[serde(default)]
+    pub part_sha256: Option<Vec<String>>,
     /// 发布时间
     #[serde(default)]
     pub release_date: Option<String>,
@@ -44,8 +50,41 @@ fn default_true() -> bool {
     true
 }
 
-/// 拉取并解析服务器 manifest
-pub async fn fetch(url: &str) -> Result<FlatManifest, String> {
+/// 拉取并解析服务器 manifest（带故障转移：按序尝试多个地址，第一个成功的生效）
+///
+/// 全部失败时返回最后一个错误
+pub async fn fetch_with_failover(urls: &[String]) -> Result<FlatManifest, String> {
+    if urls.is_empty() {
+        return Err("manifest 地址列表为空".to_string());
+    }
+
+    let mut last_err = String::new();
+    for (i, url) in urls.iter().enumerate() {
+        if urls.len() > 1 {
+            eprintln!("[更新器] 尝试 manifest 地址 {}/{}: {}", i + 1, urls.len(), url);
+        }
+        match fetch(url).await {
+            Ok(m) => {
+                if i > 0 {
+                    eprintln!("[更新器] 地址 {} 拉取成功", url);
+                }
+                return Ok(m);
+            }
+            Err(e) => {
+                eprintln!("[更新器] 地址 {} 拉取失败: {}", url, e);
+                last_err = e;
+            }
+        }
+    }
+    Err(format!(
+        "全部 {} 个 manifest 地址均拉取失败，最后错误: {}",
+        urls.len(),
+        last_err
+    ))
+}
+
+/// 拉取并解析单个 manifest 地址
+async fn fetch(url: &str) -> Result<FlatManifest, String> {
     let response = reqwest::get(url)
         .await
         .map_err(|e| format!("请求 manifest 失败: {}", e))?;

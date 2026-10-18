@@ -96,3 +96,144 @@ pub fn verify_sha256(file: &Path, expected: &Option<String>) -> Result<(), Strin
         ))
     }
 }
+
+/// 分卷下载结果
+pub struct PartsDownload {
+    /// 已下载（或复用）的分卷文件路径，按序排列
+    pub part_paths: Vec<PathBuf>,
+}
+
+/// 逐卷下载分卷文件（已存在且校验通过的卷直接复用）
+///
+/// - `urls`: 分卷地址列表（按序）
+/// - `sha256s`: 各分卷期望 SHA256（可选，None 或与 urls 不等长时跳过逐卷校验）
+/// - `dir`: 分卷保存目录（不存在会自动创建）
+/// - `on_part`: 卷级进度回调 (第几卷, 总卷数, 提示文本)
+pub async fn download_parts<F>(
+    urls: &[String],
+    sha256s: Option<&[String]>,
+    dir: &Path,
+    on_part: F,
+) -> Result<PartsDownload, String>
+where
+    F: Fn(usize, usize, String) + Send + Sync + 'static,
+{
+    if urls.is_empty() {
+        return Err("分卷地址列表为空".to_string());
+    }
+    tokio::fs::create_dir_all(dir)
+        .await
+        .map_err(|e| format!("创建分卷目录失败 {}: {}", dir.display(), e))?;
+
+    let total = urls.len();
+    let mut part_paths = Vec::with_capacity(total);
+
+    for (i, url) in urls.iter().enumerate() {
+        let part_path = dir.join(format!("part_{:03}", i + 1));
+        on_part(i, total, format!("({}/{})", i + 1, total));
+
+        // 已存在且校验通过的卷直接复用（断点续传思想）
+        let expected = sha256s.and_then(|s| s.get(i).cloned());
+        if part_path.exists() {
+            let cached = part_path.clone();
+            let exp = expected.clone();
+            let ok = tokio::task::spawn_blocking(move || verify_sha256(&cached, &exp))
+                .await
+                .unwrap_or_else(|e| Err(format!("校验任务异常: {}", e)))
+                .is_ok();
+            if ok {
+                eprintln!(
+                    "[下载] 复用分卷 {}/{}: {}",
+                    i + 1,
+                    total,
+                    part_path.display()
+                );
+                part_paths.push(part_path);
+                continue;
+            }
+            eprintln!("[下载] 分卷 {}/{} 校验不通过，重新下载", i + 1, total);
+            let _ = tokio::fs::remove_file(&part_path).await;
+        }
+
+        // 下载该卷（卷级进度通过 on_part 提示）
+        on_part(i, total, format!("({}/{})", i + 1, total));
+        download_file(url, &part_path, |_| {}).await.map_err(|e| {
+            format!("分卷 {}/{} 下载失败: {}", i + 1, total, e)
+        })?;
+
+        // 逐卷校验
+        if let Some(exp) = &expected {
+            let cached = part_path.clone();
+            let exp = exp.clone();
+            let check = tokio::task::spawn_blocking(move || verify_sha256(&cached, &Some(exp)))
+                .await
+                .unwrap_or_else(|e| Err(format!("校验任务异常: {}", e)));
+            if let Err(e) = check {
+                return Err(format!("分卷 {}/{} 校验失败: {}", i + 1, total, e));
+            }
+        }
+
+        eprintln!("[下载] 分卷 {}/{} 完成: {}", i + 1, total, url);
+        part_paths.push(part_path);
+    }
+
+    Ok(PartsDownload { part_paths })
+}
+
+/// 按序拼接分卷为完整 zip，边拼接边计算 SHA256 并与期望值比对
+///
+/// - `part_paths`: 分卷路径列表（按序）
+/// - `dest`: 合并输出路径
+/// - `expected_sha256`: 完整 zip 的期望 SHA256（空则跳过整体校验）
+pub async fn merge_parts(
+    part_paths: &[PathBuf],
+    dest: &Path,
+    expected_sha256: &Option<String>,
+) -> Result<(), String> {
+    use tokio::io::AsyncReadExt;
+
+    let mut out = tokio::fs::File::create(dest)
+        .await
+        .map_err(|e| format!("创建合并文件失败 {}: {}", dest.display(), e))?;
+    let mut hasher = Sha256::new();
+
+    for part in part_paths {
+        let mut file = tokio::fs::File::open(part)
+            .await
+            .map_err(|e| format!("打开分卷失败 {}: {}", part.display(), e))?;
+        let mut buf = vec![0u8; 256 * 1024];
+        loop {
+            let n = file
+                .read(&mut buf)
+                .await
+                .map_err(|e| format!("读取分卷失败 {}: {}", part.display(), e))?;
+            if n == 0 {
+                break;
+            }
+            hasher.update(&buf[..n]);
+            out.write_all(&buf[..n])
+                .await
+                .map_err(|e| format!("写入合并文件失败: {}", e))?;
+        }
+    }
+
+    out.flush()
+        .await
+        .map_err(|e| format!("合并文件刷新失败: {}", e))?;
+    out.sync_all()
+        .await
+        .map_err(|e| format!("合并文件落盘失败: {}", e))?;
+
+    // 整体 SHA256 校验
+    if let Some(expected) = expected_sha256.as_deref().map(str::trim).filter(|s| !s.is_empty()) {
+        let actual = hex::encode(hasher.finalize());
+        if !actual.eq_ignore_ascii_case(expected) {
+            return Err(format!(
+                "合并后整体 SHA256 校验不匹配，期望: {}，实际: {}",
+                expected, actual
+            ));
+        }
+    }
+
+    Ok(())
+}

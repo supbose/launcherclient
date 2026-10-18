@@ -1,0 +1,29 @@
+{
+  "_说明": "服务器 manifest 示例（version.json），由 update.json 的 manifest_url 指向。分卷模式：parts 存在且非空时走分卷下载，url 被忽略；单包模式：只填 url，省略 parts 相关字段。两种模式可随时切换，更新器自动识别。",
+
+  "version": "2.1.3",
+  "update": true,
+  "size_bytes": 2374852351,
+
+  "_单包模式": "url 指向单个 zip，parts 省略或为空数组时生效",
+  "url": "https://down.cdn.qcsm.ltd/download/win-unpacked_20260610_102730.zip",
+
+  "_分卷模式": "parts 为分卷地址列表（.zip.001/.002/...，按序排列）；part_sha256 为各分卷 SHA256（可选，与 parts 等长时逐卷校验，已下载合格的卷自动复用）；sha256 为合并后完整 zip 的 SHA256（强烈建议填写，合并后整体校验）",
+  "parts": [
+    "https://down.cdn.qcsm.ltd/download/pkg.zip.001",
+    "https://down.cdn.qcsm.ltd/download/pkg.zip.002",
+    "https://down.cdn.qcsm.ltd/download/pkg.zip.003"
+  ],
+  "part_sha256": [
+    "1111111111111111111111111111111111111111111111111111111111111111",
+    "2222222222222222222222222222222222222222222222222222222222222222",
+    "3333333333333333333333333333333333333333333333333333333333333333"
+  ],
+  "sha256": "419d300d470337f72a41c13d713fcee20bf5c8acf8cef31f2b34a273708594d7",
+
+  "release_date": "2026-06-09T18:23:00.000Z",
+  "changelog": [
+    "新增分卷下载支持",
+    "修复了某些 bugs"
+  ]
+}

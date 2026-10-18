@@ -1,5 +1,8 @@
+mod cleanup;
 mod cli;
 mod config;
+mod download;
+mod install;
 mod manifest;
 mod updater;
 

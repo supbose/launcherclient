@@ -6,6 +6,23 @@
       <template v-if="stage === 'checking'">
         <div class="spinner"></div>
         <div class="status-text">{{ message || '正在检查更新...' }}</div>
+        <div class="status-sub" v-if="subText">{{ subText }}</div>
+      </template>
+
+      <!-- 下载中 -->
+      <template v-else-if="stage === 'downloading'">
+        <div class="status-text">{{ message }}</div>
+        <div class="progress-track">
+          <div class="progress-fill" :style="{ width: progressPercent + '%' }"></div>
+        </div>
+        <div class="progress-label">{{ progressPercent.toFixed(1) }}%</div>
+      </template>
+
+      <!-- 安装中 -->
+      <template v-else-if="stage === 'installing'">
+        <div class="spinner"></div>
+        <div class="status-text">{{ message }}</div>
+        <div class="status-sub">{{ subText }}</div>
       </template>
 
       <!-- 已是最新 -->
@@ -22,11 +39,19 @@
         <div class="status-sub">{{ subText }}</div>
       </template>
 
+      <!-- 更新完成 -->
+      <template v-else-if="stage === 'done'">
+        <div class="status-dot ok"></div>
+        <div class="status-text">{{ message }}</div>
+        <div class="status-sub">{{ subText }}</div>
+        <button class="btn-close" @click="closeApp">完成</button>
+      </template>
+
       <!-- 错误 -->
       <template v-else-if="stage === 'error'">
         <div class="status-dot err"></div>
-        <div class="status-text error">更新检查失败</div>
-        <div class="status-sub error">{{ message }}</div>
+        <div class="status-text error">{{ message }}</div>
+        <div class="status-sub error">{{ subText }}</div>
         <button class="btn-close" @click="closeApp">关闭</button>
       </template>
     </div>
@@ -34,12 +59,15 @@
 </template>
 
 <script setup>
-import { ref, onMounted, onUnmounted } from 'vue';
+import { ref, computed, onMounted, onUnmounted } from 'vue';
 import MinTitleBar from './components/MinTitleBar.vue';
 
 const stage = ref('checking');
 const message = ref('');
 const subText = ref('');
+const percent = ref(0);
+
+const progressPercent = computed(() => Math.min(100, Math.max(0, percent.value)));
 
 let unlisten = null;
 
@@ -51,6 +79,7 @@ onMounted(async () => {
       stage.value = p.stage || 'checking';
       message.value = p.message || '';
       subText.value = p.sub || '';
+      percent.value = typeof p.percent === 'number' ? p.percent : 0;
     });
   } catch (e) {
     console.error('事件监听初始化失败:', e);
@@ -90,7 +119,7 @@ const closeApp = async () => {
   align-items: center;
   justify-content: center;
   gap: 14px;
-  padding: 0 24px;
+  padding: 0 28px;
 }
 
 .spinner {
@@ -134,6 +163,26 @@ const closeApp = async () => {
 
 .status-sub.error {
   color: rgba(255, 91, 102, 0.75);
+}
+
+.progress-track {
+  width: 100%;
+  height: 8px;
+  border-radius: 4px;
+  background: rgba(255, 255, 255, 0.1);
+  overflow: hidden;
+}
+
+.progress-fill {
+  height: 100%;
+  border-radius: 4px;
+  background: linear-gradient(90deg, #4a9eff 0%, #35c26e 100%);
+  transition: width 0.3s ease;
+}
+
+.progress-label {
+  font-size: 12px;
+  color: rgba(232, 234, 240, 0.65);
 }
 
 .btn-close {

@@ -15,12 +15,32 @@
 
 use serde::Deserialize;
 
+/// manifest 地址配置项（兼容单地址字符串或多地址数组，多地址按序故障转移）
+#[derive(Debug, Deserialize)]
+#[serde(untagged)]
+pub enum OneOrMany {
+    /// 单地址
+    One(String),
+    /// 多地址（按序尝试）
+    Many(Vec<String>),
+}
+
+impl OneOrMany {
+    /// 展开为地址列表
+    pub fn to_urls(&self) -> Vec<String> {
+        match self {
+            OneOrMany::One(u) => vec![u.clone()],
+            OneOrMany::Many(us) => us.clone(),
+        }
+    }
+}
+
 /// update.json 配置项（全部可选，未配置的项回退默认值）
 #[derive(Debug, Default, Deserialize)]
 pub struct UpdateSettings {
-    /// 服务器 manifest（version.json）地址
+    /// 服务器 manifest（version.json）地址，单个字符串或地址数组（按序故障转移）
     #[serde(default)]
-    pub manifest_url: Option<String>,
+    pub manifest_url: Option<OneOrMany>,
     /// 应用名称，决定配置/下载/安装目录
     #[serde(default)]
     pub app_name: Option<String>,
@@ -30,7 +50,13 @@ pub struct UpdateSettings {
     /// 当前已安装版本（备用，一般从本地 app.json 读取）
     #[serde(default)]
     pub current_version: Option<String>,
+    /// 保留的版本目录数量（含当前版本，旧目录即回滚资产），0 或缺省用默认值
+    #[serde(default)]
+    pub max_versions: Option<usize>,
 }
+
+/// max_versions 默认值：当前版本 + 1 个旧版本（回滚资产）
+pub const DEFAULT_MAX_VERSIONS: usize = 2;
 
 /// 依次在 exe 同目录、当前工作目录查找 update.json，找不到返回默认配置
 pub fn load() -> UpdateSettings {
