@@ -1,6 +1,12 @@
 
 
 
+
+## v0.1.1-beta.4 (2026-10-18)
+### 🚀 新增功能
+
+- [6aae593](/-/commit/6aae5938a7ec8d76fb3d8db0efb0fe2a620d8d57) 新增(updater): 添加防重入启动标记环境变量 (src-zsui/README.md, src-zsui/src/updater.rs)
+
 ## v0.1.1-beta.3 (2026-10-18)
 ### 🚀 新增功能
 
