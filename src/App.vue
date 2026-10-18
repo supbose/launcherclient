@@ -15,7 +15,11 @@
         <div class="progress-track">
           <div class="progress-fill" :style="{ width: progressPercent + '%' }"></div>
         </div>
-        <div class="progress-label">{{ progressPercent.toFixed(1) }}%</div>
+        <div class="progress-label">
+          {{ progressPercent.toFixed(1) }}%
+          <template v-if="sizeText"> · {{ sizeText }}</template>
+          <template v-if="speedText"> · {{ speedText }}</template>
+        </div>
       </template>
 
       <!-- 安装中 -->
@@ -66,8 +70,34 @@ const stage = ref('checking');
 const message = ref('');
 const subText = ref('');
 const percent = ref(0);
+// 下载详情（后端仅下载阶段携带）
+const downloadedBytes = ref(0);
+const totalBytes = ref(0);
+const speedBps = ref(0);
 
 const progressPercent = computed(() => Math.min(100, Math.max(0, percent.value)));
+
+// 字节数格式化（与登录器 QsLtdLauncherClient 同款格式）
+const formatBytes = (bytes) => {
+  if (!bytes || bytes <= 0) return '0 B';
+  const units = ['B', 'KB', 'MB', 'GB', 'TB'];
+  const i = Math.min(Math.floor(Math.log(bytes) / Math.log(1024)), units.length - 1);
+  return (bytes / Math.pow(1024, i)).toFixed(2) + ' ' + units[i];
+};
+
+// "12.30 MB / 45.60 MB"（总大小未知时不显示）
+const sizeText = computed(() => {
+  if (!downloadedBytes.value) return '';
+  return totalBytes.value > 0
+    ? formatBytes(downloadedBytes.value) + ' / ' + formatBytes(totalBytes.value)
+    : formatBytes(downloadedBytes.value);
+});
+
+// "2.50 MB/s"
+const speedText = computed(() => {
+  if (!speedBps.value) return '';
+  return formatBytes(speedBps.value) + '/s';
+});
 
 let unlisten = null;
 
@@ -79,7 +109,21 @@ onMounted(async () => {
       stage.value = p.stage || 'checking';
       message.value = p.message || '';
       subText.value = p.sub || '';
-      percent.value = typeof p.percent === 'number' ? p.percent : 0;
+      // 后端携带字节数时用字节计算精确百分比，未携带时保留后端百分比
+      if (typeof p.downloaded_bytes === 'number' && typeof p.total_bytes === 'number' && p.total_bytes > 0) {
+        percent.value = (p.downloaded_bytes / p.total_bytes) * 100;
+        downloadedBytes.value = p.downloaded_bytes;
+        totalBytes.value = p.total_bytes;
+        speedBps.value = typeof p.speed_bps === 'number' ? p.speed_bps : 0;
+      } else if (typeof p.percent === 'number') {
+        percent.value = p.percent;
+      }
+      // 离开下载阶段时清空下载详情
+      if (p.stage !== 'downloading') {
+        downloadedBytes.value = 0;
+        totalBytes.value = 0;
+        speedBps.value = 0;
+      }
     });
   } catch (e) {
     console.error('事件监听初始化失败:', e);

@@ -108,15 +108,17 @@ pub struct PartsDownload {
 /// - `urls`: 分卷地址列表（按序）
 /// - `sha256s`: 各分卷期望 SHA256（可选，None 或与 urls 不等长时跳过逐卷校验）
 /// - `dir`: 分卷保存目录（不存在会自动创建）
-/// - `on_part`: 卷级进度回调 (第几卷, 总卷数, 提示文本)
+/// - `total_size`: 整体总字节数（可选，来自 manifest.size_bytes，用于整体进度计算）
+/// - `on_part`: 进度回调 (当前卷索引, 总卷数, 整体字节进度)
 pub async fn download_parts<F>(
     urls: &[String],
     sha256s: Option<&[String]>,
     dir: &Path,
+    total_size: Option<u64>,
     on_part: F,
 ) -> Result<PartsDownload, String>
 where
-    F: Fn(usize, usize, String) + Send + Sync + 'static,
+    F: Fn(usize, usize, DownloadProgress) + Send + Sync + 'static,
 {
     if urls.is_empty() {
         return Err("分卷地址列表为空".to_string());
@@ -126,14 +128,15 @@ where
         .map_err(|e| format!("创建分卷目录失败 {}: {}", dir.display(), e))?;
 
     let total = urls.len();
+    let on_part = std::sync::Arc::new(on_part);
     let mut part_paths = Vec::with_capacity(total);
+    let mut completed_bytes: u64 = 0;
 
     for (i, url) in urls.iter().enumerate() {
         let part_path = dir.join(format!("part_{:03}", i + 1));
-        on_part(i, total, format!("({}/{})", i + 1, total));
+        let expected = sha256s.and_then(|s| s.get(i).cloned());
 
         // 已存在且校验通过的卷直接复用（断点续传思想）
-        let expected = sha256s.and_then(|s| s.get(i).cloned());
         if part_path.exists() {
             let cached = part_path.clone();
             let exp = expected.clone();
@@ -142,6 +145,19 @@ where
                 .unwrap_or_else(|e| Err(format!("校验任务异常: {}", e)))
                 .is_ok();
             if ok {
+                let part_len = tokio::fs::metadata(&part_path)
+                    .await
+                    .map(|m| m.len())
+                    .unwrap_or(0);
+                completed_bytes += part_len;
+                on_part(
+                    i,
+                    total,
+                    DownloadProgress {
+                        downloaded: completed_bytes,
+                        total: total_size,
+                    },
+                );
                 eprintln!(
                     "[下载] 复用分卷 {}/{}: {}",
                     i + 1,
@@ -155,11 +171,32 @@ where
             let _ = tokio::fs::remove_file(&part_path).await;
         }
 
-        // 下载该卷（卷级进度通过 on_part 提示）
-        on_part(i, total, format!("({}/{})", i + 1, total));
-        download_file(url, &part_path, |_| {}).await.map_err(|e| {
-            format!("分卷 {}/{} 下载失败: {}", i + 1, total, e)
-        })?;
+        // 下载该卷，字节进度透传累加为整体进度
+        let base = completed_bytes;
+        on_part(
+            i,
+            total,
+            DownloadProgress {
+                downloaded: base,
+                total: total_size,
+            },
+        );
+        let cb = {
+            let on_part = on_part.clone();
+            move |p: DownloadProgress| {
+                on_part(
+                    i,
+                    total,
+                    DownloadProgress {
+                        downloaded: base + p.downloaded,
+                        total: total_size,
+                    },
+                );
+            }
+        };
+        download_file(url, &part_path, cb)
+            .await
+            .map_err(|e| format!("分卷 {}/{} 下载失败: {}", i + 1, total, e))?;
 
         // 逐卷校验
         if let Some(exp) = &expected {
@@ -173,6 +210,11 @@ where
             }
         }
 
+        let part_len = tokio::fs::metadata(&part_path)
+            .await
+            .map(|m| m.len())
+            .unwrap_or(0);
+        completed_bytes += part_len;
         eprintln!("[下载] 分卷 {}/{} 完成: {}", i + 1, total, url);
         part_paths.push(part_path);
     }

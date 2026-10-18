@@ -1,6 +1,6 @@
 {
   "$schema": "https://schema.tauri.app/config/2",
-  "productName": "QsLtdUpdater",
+  "productName": "Updater",
   "version": "0.1.0",
   "identifier": "com.qsltd.updater",
   "build": {
@@ -13,7 +13,7 @@
     "windows": [
       {
         "label": "main",
-        "title": "QsLtd 更新程序",
+        "title": "更新程序",
         "width": 440,
         "height": 300,
         "center": true,

@@ -126,7 +126,9 @@ pub async fn run_check(app: AppHandle, args: CliArgs) {
         match &cfg.launch {
             // 被目标程序拉起：静默拉起目标程序后退出，窗口全程不显示
             Some(_) => {
-                launch_target(&cfg);
+                // 安装目录从本地 app.json 读取（相对路径 launch 按此目录解析）
+                let installed = read_installed_path(&cfg.app_name).await;
+                launch_target(&cfg, installed.as_deref().map(Path::new));
                 app.exit(0);
             }
             // 手动运行：显示检查结果，由用户关闭
@@ -145,9 +147,16 @@ pub async fn run_check(app: AppHandle, args: CliArgs) {
     }
 
     // ---- 发现新版本：下载 → 校验 → 安装 ----
+    let is_parts = m.parts.as_ref().is_some_and(|p| !p.is_empty());
     eprintln!(
-        "[更新器] 发现新版本: {} -> {}（下载地址: {}）",
-        current_version, m.version, m.url
+        "[更新器] 发现新版本: {} -> {}（{}）",
+        current_version,
+        m.version,
+        if is_parts {
+            format!("分卷 {} 个", m.parts.as_ref().unwrap().len())
+        } else {
+            format!("下载地址: {}", m.url)
+        }
     );
     emit_phase(
         &app,
@@ -160,13 +169,19 @@ pub async fn run_check(app: AppHandle, args: CliArgs) {
 
     // 下载：分卷模式（parts 存在）或单包模式
     let zip_path = download_dir(&cfg.app_name).join(format!("update_{}.zip", m.version));
-    if m.parts.as_ref().is_some_and(|p| !p.is_empty()) {
+    if is_parts {
         if let Err(e) = run_download_parts(&app, &m, &cfg.app_name, &zip_path).await {
             eprintln!("[更新器] 分卷下载失败: {}", e);
             emit_phase(&app, "error", "更新包下载失败", &e, None);
             return;
         }
     } else {
+        if m.url.is_empty() {
+            let e = "manifest 缺少 url 字段（单包模式必填）".to_string();
+            eprintln!("[更新器] 下载失败: {}", e);
+            emit_phase(&app, "error", "更新包下载失败", &e, None);
+            return;
+        }
         let download_result = run_download(&app, &m, &zip_path).await;
         if let Err(e) = download_result {
             eprintln!("[更新器] 下载失败: {}", e);
@@ -234,7 +249,7 @@ pub async fn run_check(app: AppHandle, args: CliArgs) {
     // 更新完成后拉起目标程序并退出；手动模式则保留窗口由用户关闭
     match &cfg.launch {
         Some(_) => {
-            launch_target(&cfg);
+            launch_target(&cfg, Some(&target_dir));
             app.exit(0);
         }
         None => {
@@ -255,6 +270,8 @@ async fn run_download_parts(
     let urls = m.parts.as_ref().ok_or("分卷地址列表缺失")?;
     let parts_dir = download_dir(app_name).join(format!("update_{}_parts", m.version));
     let sha256s = m.part_sha256.as_deref().filter(|s| s.len() == urls.len());
+    // 整体总大小（manifest.size_bytes），分卷之和等于完整 zip 大小
+    let total_size = m.size_bytes;
 
     emit_phase(
         app,
@@ -264,18 +281,29 @@ async fn run_download_parts(
         Some(0.0),
     );
 
+    let tracker = std::sync::Mutex::new(SpeedTracker::new());
     let app_handle = app.clone();
-    let result = download::download_parts(urls, sha256s, &parts_dir, move |i, total, msg| {
-        let percent = ((i + 1) as f64 / total as f64) * 100.0;
-        emit_phase(
-            &app_handle,
-            "downloading",
-            "正在下载更新包（分卷）...",
-            &msg,
-            Some(percent),
-        );
-    })
-    .await?;
+    let result =
+        download::download_parts(urls, sha256s, &parts_dir, total_size, move |i, total, p| {
+            let mut t = tracker.lock().unwrap_or_else(|e| e.into_inner());
+            let (should, speed) = t.tick(p.downloaded, p.percent() == Some(100.0));
+            if should {
+                let msg = format!("正在下载更新包（分卷 {}/{}）...", i + 1, total);
+                // 总大小未知时按卷数估算百分比
+                let percent = p
+                    .percent()
+                    .unwrap_or(((i + 1) as f64 / total as f64) * 100.0);
+                emit_download(
+                    &app_handle,
+                    &msg,
+                    Some(percent),
+                    p.downloaded,
+                    p.total,
+                    Some(speed),
+                );
+            }
+        })
+        .await?;
 
     emit_phase(app, "checking", "正在合并分卷...", "", None);
     eprintln!("[更新器] 合并 {} 个分卷...", result.part_paths.len());
@@ -298,8 +326,13 @@ async fn run_download(
             .unwrap_or_else(|e| Err(format!("校验任务异常: {}", e)))
             .is_ok();
         if ok {
-            eprintln!("[更新器] 复用已下载的更新包: {}", zip_path.display());
-            emit_phase(app, "downloading", "使用已下载的更新包", "", Some(100.0));
+            let size = tokio::fs::metadata(zip_path).await.map(|m| m.len()).unwrap_or(0);
+            eprintln!(
+                "[更新器] 复用已下载的更新包: {}（{}）",
+                zip_path.display(),
+                format_bytes(size)
+            );
+            emit_download(app, "使用已下载的更新包", Some(100.0), size, Some(size), None);
             return Ok(());
         }
         eprintln!("[更新器] 本地更新包校验不通过，重新下载");
@@ -313,17 +346,19 @@ async fn run_download(
     }
 
     emit_phase(app, "downloading", "正在下载更新包...", "", Some(0.0));
-    let last_emit = Instant::now();
+    let tracker = std::sync::Mutex::new(SpeedTracker::new());
     let app_handle = app.clone();
     let result = download::download_file(&m.url, zip_path, move |p| {
-        // 进度事件节流，避免事件风暴
-        if last_emit.elapsed() >= Duration::from_millis(PROGRESS_INTERVAL_MS) || p.percent() == Some(100.0) {
-            emit_phase(
+        let mut t = tracker.lock().unwrap_or_else(|e| e.into_inner());
+        let (should, speed) = t.tick(p.downloaded, p.percent() == Some(100.0));
+        if should {
+            emit_download(
                 &app_handle,
-                "downloading",
                 "正在下载更新包...",
-                &format!("{:.1}%", p.percent().unwrap_or(0.0)),
                 p.percent(),
+                p.downloaded,
+                p.total,
+                Some(speed),
             );
         }
     })
@@ -331,11 +366,76 @@ async fn run_download(
 
     match result {
         Ok((_, sha)) => {
-            eprintln!("[更新器] 下载完成，SHA256: {}", sha);
+            let size = tokio::fs::metadata(zip_path).await.map(|m| m.len()).unwrap_or(0);
+            eprintln!(
+                "[更新器] 下载完成，大小 {}，SHA256: {}",
+                format_bytes(size),
+                sha
+            );
             Ok(())
         }
         Err(e) => Err(e),
     }
+}
+
+/// 下载进度节流 + 速度平滑器（单包/分卷共用）
+///
+/// 按 PROGRESS_INTERVAL_MS 节流推送，速度用指数平滑（0.6 旧值 + 0.4 瞬时）避免数字跳动
+struct SpeedTracker {
+    /// 上次推送时间
+    last_emit: Instant,
+    /// 上次推送时的已下载字节
+    last_bytes: u64,
+    /// 平滑后的速度（字节/秒）
+    smooth: f64,
+}
+
+impl SpeedTracker {
+    fn new() -> Self {
+        Self {
+            last_emit: Instant::now(),
+            last_bytes: 0,
+            smooth: 0.0,
+        }
+    }
+
+    /// 记录一次进度，判断是否应推送
+    ///
+    /// - `downloaded`: 当前已下载字节
+    /// - `force`: 强制推送（如进度到 100%）
+    ///
+    /// 返回 (是否应推送, 平滑速度 字节/秒)
+    fn tick(&mut self, downloaded: u64, force: bool) -> (bool, u64) {
+        let elapsed = self.last_emit.elapsed().as_secs_f64();
+        if !force && elapsed < PROGRESS_INTERVAL_MS as f64 / 1000.0 {
+            return (false, 0);
+        }
+        let instant = if elapsed > 0.0 {
+            (downloaded - self.last_bytes) as f64 / elapsed
+        } else {
+            0.0
+        };
+        self.smooth = if self.smooth > 0.0 {
+            self.smooth * 0.6 + instant * 0.4
+        } else {
+            instant
+        };
+        self.last_bytes = downloaded;
+        self.last_emit = Instant::now();
+        (true, self.smooth as u64)
+    }
+}
+
+/// 字节数格式化为易读文本（与登录器 QsLtdLauncherClient 同款格式）
+fn format_bytes(bytes: u64) -> String {
+    const UNITS: [&str; 5] = ["B", "KB", "MB", "GB", "TB"];
+    if bytes == 0 {
+        return "0 B".to_string();
+    }
+    let i = (bytes as f64).log(1024.0).floor() as usize;
+    let i = i.min(UNITS.len() - 1);
+    let value = bytes as f64 / 1024f64.powi(i as i32);
+    format!("{:.2} {}", value, UNITS[i])
 }
 
 /// 解析当前版本：命令行 > update.json > 本地 app.json > 默认 0.0.0
@@ -370,14 +470,47 @@ async fn resolve_current_version(args: &CliArgs, app_name: &str) -> String {
     "0.0.0".to_string()
 }
 
-/// 拉起目标程序，工作目录设为程序所在目录
-fn launch_target(cfg: &ResolvedConfig) {
+/// 拉起目标程序
+///
+/// `launch` 为绝对路径时直接使用；为相对路径（通常是文件名）时按以下顺序解析：
+/// 1. 目标程序安装目录（版本目录，优先——目标程序由更新器安装在此）
+/// 2. 更新器 exe 所在目录（兜底）
+/// 都不存在时打印错误
+///
+/// - `installed_path`: 目标程序安装目录（更新完成分支传入本次安装目录；无更新分支从本地 app.json 读取）
+fn launch_target(cfg: &ResolvedConfig, installed_path: Option<&Path>) {
     let Some(exe) = &cfg.launch else {
         return;
     };
-    let exe_path = Path::new(exe);
+    let raw = Path::new(exe);
+    let exe_path = if raw.is_absolute() {
+        raw.to_path_buf()
+    } else {
+        let mut candidates: Vec<PathBuf> = Vec::new();
+        if let Some(dir) = installed_path {
+            candidates.push(dir.join(raw));
+        }
+        if let Ok(cur) = std::env::current_exe() {
+            if let Some(dir) = cur.parent() {
+                candidates.push(dir.join(raw));
+            }
+        }
+        // 都不存在时回退第一个候选路径，用于生成错误信息
+        candidates
+            .into_iter()
+            .find(|p| p.exists())
+            .unwrap_or_else(|| {
+                installed_path
+                    .map(|d| d.join(raw))
+                    .unwrap_or_else(|| raw.to_path_buf())
+            })
+    };
     if !exe_path.exists() {
-        eprintln!("[更新器] 目标程序不存在: {}", exe);
+        eprintln!(
+            "[更新器] 目标程序不存在: {}（解析路径: {}）",
+            exe,
+            exe_path.display()
+        );
         return;
     }
     let workdir = exe_path
@@ -385,10 +518,45 @@ fn launch_target(cfg: &ResolvedConfig) {
         .map(|p| p.to_path_buf())
         .unwrap_or_else(|| std::env::current_dir().unwrap_or_default());
 
-    match std::process::Command::new(exe_path).current_dir(workdir).spawn() {
-        Ok(_) => eprintln!("[更新器] 已拉起目标程序: {}", exe),
+    match std::process::Command::new(&exe_path).current_dir(workdir).spawn() {
+        Ok(_) => eprintln!("[更新器] 已拉起目标程序: {}", exe_path.display()),
         Err(e) => eprintln!("[更新器] 拉起目标程序失败: {}", e),
     }
+}
+
+/// 读取本地 app.json 记录的安装目录（不存在或未记录时返回 None）
+async fn read_installed_path(app_name: &str) -> Option<String> {
+    let path = local_manifest_path(app_name);
+    if !path.exists() {
+        return None;
+    }
+    match qsltd_update::LocalManifest::load(&path).await {
+        Ok(Some(m)) if !m.installed_path.is_empty() => Some(m.installed_path),
+        _ => None,
+    }
+}
+
+/// 推送下载阶段事件（携带字节数与速度，供前端显示"已下载/总大小 · 速度"）
+fn emit_download(
+    app: &AppHandle,
+    message: &str,
+    percent: Option<f64>,
+    downloaded: u64,
+    total: Option<u64>,
+    speed_bps: Option<u64>,
+) {
+    let _ = app.emit(
+        "update-phase",
+        PhasePayload {
+            stage: "downloading".to_string(),
+            message: message.to_string(),
+            sub: String::new(),
+            percent,
+            downloaded_bytes: Some(downloaded),
+            total_bytes: total,
+            speed_bps,
+        },
+    );
 }
 
 /// 推送阶段事件给前端
@@ -406,6 +574,9 @@ fn emit_phase(
             message: message.to_string(),
             sub: sub.to_string(),
             percent,
+            downloaded_bytes: None,
+            total_bytes: None,
+            speed_bps: None,
         },
     );
 }
@@ -421,6 +592,15 @@ struct PhasePayload {
     sub: String,
     /// 进度百分比（仅 downloading 阶段有效）
     percent: Option<f64>,
+    /// 已下载字节数（仅下载阶段携带）
+    #[serde(skip_serializing_if = "Option::is_none")]
+    downloaded_bytes: Option<u64>,
+    /// 总字节数（仅下载阶段携带，服务器未返回时缺失）
+    #[serde(skip_serializing_if = "Option::is_none")]
+    total_bytes: Option<u64>,
+    /// 下载速度 字节/秒（仅下载阶段携带）
+    #[serde(skip_serializing_if = "Option::is_none")]
+    speed_bps: Option<u64>,
 }
 
 /// 显示主窗口并置顶聚焦

@@ -58,9 +58,10 @@ pub struct UpdateSettings {
 /// max_versions 默认值：当前版本 + 1 个旧版本（回滚资产）
 pub const DEFAULT_MAX_VERSIONS: usize = 2;
 
-/// 依次在 exe 同目录、当前工作目录查找 update.json，找不到返回默认配置
+/// 依次在 exe 同目录、当前工作目录查找 update.json，找不到时自动生成默认模板
 pub fn load() -> UpdateSettings {
-    for dir in candidate_dirs() {
+    let dirs = candidate_dirs();
+    for dir in &dirs {
         let path = dir.join("update.json");
         if path.exists() {
             match std::fs::read_to_string(&path) {
@@ -75,7 +76,51 @@ pub fn load() -> UpdateSettings {
             }
         }
     }
+    // 未找到配置文件：生成默认模板（exe 目录写失败时落到 cwd），不影响本次默认值运行
+    for dir in &dirs {
+        if generate_default_template(dir) {
+            break;
+        }
+    }
     UpdateSettings::default()
+}
+
+/// 生成默认配置模板到指定目录（已存在时不覆盖）
+///
+/// 返回是否生成成功；JSON 不支持注释，字段说明放在 `_说明` 字段（读取时会忽略未知字段）
+fn generate_default_template(dir: &std::path::Path) -> bool {
+    let path = dir.join("update.json");
+    if path.exists() {
+        return true;
+    }
+    let template = serde_json::json!({
+        "_说明": {
+            "manifest_url": "服务器 version.json 地址；数组表示按序故障转移，第一个失败自动切换下一个",
+            "app_name": "应用名称，决定配置/下载/安装目录（%APPDATA%\\<app_name>）",
+            "launch": "更新完成后拉起的目标程序；相对路径按安装目录解析；留空为手动模式（只显示结果不拉起）",
+            "current_version": "强制指定当前版本；留空自动从本地 app.json 探测",
+            "max_versions": "保留的版本目录数量（含当前版本，旧目录即回滚资产），默认 2"
+        },
+        "manifest_url": ["https://qsw.us.ci/update/qsm/version.json"],
+        "app_name": "qsm",
+        "launch": "",
+        "current_version": "",
+        "max_versions": DEFAULT_MAX_VERSIONS
+    });
+    let Ok(content) = serde_json::to_string_pretty(&template) else {
+        eprintln!("[配置] 默认模板序列化失败");
+        return false;
+    };
+    match std::fs::write(&path, content) {
+        Ok(_) => {
+            eprintln!("[配置] 未找到配置文件，已生成默认模板: {}", path.display());
+            true
+        }
+        Err(e) => {
+            eprintln!("[配置] 默认模板生成失败 {}: {}", path.display(), e);
+            false
+        }
+    }
 }
 
 /// 候选查找目录：exe 所在目录优先，其次当前工作目录

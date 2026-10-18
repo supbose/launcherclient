@@ -30,7 +30,8 @@ pub struct FlatManifest {
     /// 更新包 SHA256 校验值
     #[serde(default)]
     pub sha256: Option<String>,
-    /// 更新包下载地址（单包模式；parts 存在时忽略此字段）
+    /// 更新包下载地址（单包模式必填；分卷模式下可缺省，parts 存在时忽略此字段）
+    #[serde(default)]
     pub url: String,
     /// 分卷下载地址列表（可选，分卷模式；按序拼接后为完整 zip）
     #[serde(default)]

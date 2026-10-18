@@ -10,6 +10,12 @@ license = "MIT"
 name = "qsltdupdater_lib"
 crate-type = ["staticlib", "cdylib", "rlib"]
 
+[features]
+# tauri dev 时 tauri-cli 会加 --no-default-features（走 devUrl 热更）；
+# 普通 cargo build/run 含此 feature → 内嵌 frontendDist 资源，窗口不依赖 vite
+default = ["custom-protocol"]
+custom-protocol = ["tauri/custom-protocol"]
+
 [build-dependencies]
 tauri-build = { version = "2", features = [] }
 
