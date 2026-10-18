@@ -2,6 +2,16 @@
 
 
 
+
+## v0.1.2 (2026-10-18)
+### 🚀 新增功能
+
+- [afd4785](/-/commit/afd47859acb66b02cdcb9992338c90f8f937ad8f) 新增(src-zsui): 重构更新核心库，增加合并与安装进度回调支持 (src-tauri/Cargo.lock, src-tauri/Cargo.toml, src-tauri/src/download.rs, src-tauri/src/install.rs, src-tauri/src/updater.rs, src-zsui/Cargo.lock, src-zsui/Cargo.toml, src-zsui/src/download.rs, src-zsui/src/install.rs, src-zsui/src/ui.rs, src-zsui/src/updater.rs, src/App.vue)
+
+### 🩹 修复 Bug
+
+- [3976fe4](/-/commit/3976fe45d7859d9f35bb6194a11bfb18d1543619) 修复(updater): 仅检测模式下静默退出不显示主窗口，添加启动环境变量标记 (src-tauri/src/updater.rs)
+
 ## v0.1.1-beta.4 (2026-10-18)
 ### 🚀 新增功能
 
