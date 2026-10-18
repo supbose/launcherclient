@@ -131,16 +131,9 @@ pub async fn run_check(app: AppHandle, args: CliArgs) {
                 launch_target(&cfg, installed.as_deref().map(Path::new));
                 app.exit(0);
             }
-            // 手动运行：显示检查结果，由用户关闭
+            // 仅检测模式（由目标程序启动时拉起）：无更新静默退出，不打扰目标程序
             None => {
-                emit_phase(
-                    &app,
-                    "up-to-date",
-                    "已是最新版本",
-                    &format!("当前版本 {}", current_version),
-                    None,
-                );
-                show_main_window(&app);
+                app.exit(0);
             }
         }
         return;
@@ -518,7 +511,12 @@ fn launch_target(cfg: &ResolvedConfig, installed_path: Option<&Path>) {
         .map(|p| p.to_path_buf())
         .unwrap_or_else(|| std::env::current_dir().unwrap_or_default());
 
-    match std::process::Command::new(&exe_path).current_dir(workdir).spawn() {
+    match std::process::Command::new(&exe_path)
+        .current_dir(workdir)
+        // 标记"本次启动由更新器拉回"，客户端用它防止启动检测重入循环
+        .env("QSLTD_FROM_UPDATER", "1")
+        .spawn()
+    {
         Ok(_) => eprintln!("[更新器] 已拉起目标程序: {}", exe_path.display()),
         Err(e) => eprintln!("[更新器] 拉起目标程序失败: {}", e),
     }
