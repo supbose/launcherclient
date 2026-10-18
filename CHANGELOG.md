@@ -1,5 +1,11 @@
 
 
+
+## v0.1.1-beta.3 (2026-10-18)
+### 🚀 新增功能
+
+- [445a2da](/-/commit/445a2da17ce0b3d30e892ef87d17359cad25b2e4) 新增(src-zsui): 新增 zsui 原生 UI 版独立更新程序实现 (.gitignore, package.json, src-zsui/Cargo.lock, src-zsui/Cargo.toml, src-zsui/README.md, src-zsui/src/cleanup.rs, src-zsui/src/cli.rs, src-zsui/src/config.rs, src-zsui/src/download.rs, src-zsui/src/install.rs, src-zsui/src/main.rs, src-zsui/src/manifest.rs, src-zsui/src/ui.rs, src-zsui/src/updater.rs)
+
 ## v0.1.1-beta.2 (2026-10-18)
 ### 🚀 新增功能
 

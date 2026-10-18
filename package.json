@@ -15,9 +15,9 @@
     "dev": "vite",
     "preview": "vite preview",
     "tauri": "tauri",
-    "tauri:dev": "tauri dev",
-    "tauri:build": "tauri build"
+    "tauri:build": "tauri build",
+    "tauri:dev": "tauri dev"
   },
   "type": "module",
-  "version": "0.1.1-beta.2"
+  "version": "0.1.1-beta.3"
 }
