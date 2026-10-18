@@ -252,20 +252,18 @@ pub async fn run_check(app: AppHandle, args: CliArgs) {
     }
     eprintln!("[更新器] 更新包校验通过: {}", zip_path.display());
 
-    // 安装前停止用户配置的服务（运行中的才停；停止失败自动卸载兜底）
-    let stopped_services: Vec<String> = if cfg.services.is_empty() {
-        Vec::new()
-    } else {
+    // 安装前卸载用户配置的服务（运行中先停止；卸载后不恢复、不重启）
+    if !cfg.services.is_empty() {
         let svc_app = app.clone();
         let svc_names = cfg.services.clone();
         tokio::task::spawn_blocking(move || {
-            services::stop_configured(&svc_names, &|msg| {
+            services::uninstall_configured(&svc_names, &|msg| {
                 emit_phase(&svc_app, "installing", "正在处理服务...", msg, None);
             })
         })
         .await
-        .unwrap_or_default()
-    };
+        .ok();
+    }
 
     // 安装
     let target_dir = install_dir(&cfg.app_name, &m.version);
@@ -275,7 +273,6 @@ pub async fn run_check(app: AppHandle, args: CliArgs) {
     });
     if let Err(e) = install::install(&zip_path, &target_dir, install_cb).await {
         eprintln!("[更新器] 安装失败: {}", e);
-        services::start_all(&stopped_services);
         emit_phase(&app, "error", "更新安装失败", &e, None);
         return;
     }
@@ -292,7 +289,6 @@ pub async fn run_check(app: AppHandle, args: CliArgs) {
     .await
     {
         eprintln!("[更新器] 本地版本记录写入失败: {}", e);
-        services::start_all(&stopped_services);
         emit_phase(&app, "error", "本地版本记录写入失败", &e, None);
         return;
     }
@@ -300,9 +296,6 @@ pub async fn run_check(app: AppHandle, args: CliArgs) {
     // 清理旧版本目录（旧目录即回滚资产，保留 max_versions 个）
     cleanup::cleanup_old_versions(&install_root(&cfg.app_name), &m.version, cfg.max_versions)
         .await;
-
-    // 恢复更新前停止的服务（先于目标程序拉起：客户端可能依赖后端服务）
-    services::start_all(&stopped_services);
 
     emit_phase(
         &app,

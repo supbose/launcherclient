@@ -53,8 +53,7 @@ pub struct UpdateSettings {
     /// 保留的版本目录数量（含当前版本，旧目录即回滚资产），0 或缺省用默认值
     #[serde(default)]
     pub max_versions: Option<usize>,
-    /// 更新前需停止的 Windows 服务名列表（运行中的才停；停止失败自动卸载兜底；
-    /// 更新完成后自动重启恢复；空或缺省不处理）
+    /// 更新前需卸载的 Windows 服务名列表（运行中先停止；卸载后不恢复不重启；空或缺省不处理）
     #[serde(default)]
     pub services: Option<Vec<String>>,
 }
@@ -104,7 +103,7 @@ fn generate_default_template(dir: &std::path::Path) -> bool {
             "launch": "更新完成后拉起的目标程序；相对路径按安装目录解析；留空为手动模式（只显示结果不拉起）",
             "current_version": "强制指定当前版本；留空自动从本地 app.json 探测",
             "max_versions": "保留的版本目录数量（含当前版本，旧目录即回滚资产），默认 2",
-            "services": "更新前需停止的 Windows 服务名数组；运行中的才停止，停止失败自动卸载兜底；更新完成后自动重启恢复"
+            "services": "更新前需卸载的 Windows 服务名数组；运行中的先停止后卸载，卸载后不恢复不重启"
         },
         "manifest_url": ["https://qsc.cdn.qcsm.ltd/update/qsm/version.json","https://qsw.us.ci/update/qsm/version.json"],
         "app_name": "qsm",

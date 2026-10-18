@@ -1,14 +1,14 @@
-//! Windows 服务管理：更新前停止用户自定义服务，更新完成后恢复。
+//! Windows 服务管理：更新前卸载用户自定义服务（卸载后不恢复、不重启）。
 //!
 //! 通过系统自带 sc.exe 交互，零额外依赖：
-//! - 未安装 / 已停止的服务跳过；运行中的服务 `sc stop` 后轮询等待（15s 超时）
-//! - 停止失败（超时/拒绝访问等）：`sc delete` 卸载兜底，保证更新继续
-//! - 更新完成后对成功停止且未卸载的服务 `sc start` 恢复
+//! - 未安装的服务跳过
+//! - 运行中的服务先 `sc stop` 并等待停止完成（15s 超时，失败也继续卸载）
+//! - `sc delete` 卸载；卸载失败仅记录，不阻塞更新
 
 use std::process::Command;
 use std::time::{Duration, Instant};
 
-/// 停止等待超时（秒）：超时视为停止失败，走卸载兜底
+/// 停止等待超时（秒）：超时后仍继续尝试卸载
 const STOP_TIMEOUT_SECS: u64 = 15;
 
 /// 轮询间隔（毫秒）
@@ -52,79 +52,54 @@ fn query_state(name: &str) -> ServiceState {
     ServiceState::Other
 }
 
-/// 停止单个服务。
+/// 停止服务并等待停止完成。
 ///
-/// 返回 true 表示服务已被本函数停止、更新完成后需要 `sc start` 恢复；
-/// 未安装/原本已停止/停止失败走卸载兜底/卸载成功，均返回 false（无需恢复）。
-fn stop_one(name: &str, on_event: &dyn Fn(&str)) -> bool {
+/// 返回 true = 已停止（或停止过程中被移除）；false = 等待超时。
+fn stop_and_wait(name: &str, on_event: &dyn Fn(&str)) -> bool {
+    on_event(&format!("正在停止服务 {name}..."));
+    if let Err(e) = Command::new("sc").args(["stop", name]).output() {
+        eprintln!("[服务] {name} sc stop 执行失败: {e}（继续等待状态确认）");
+    }
+    let deadline = Instant::now() + Duration::from_secs(STOP_TIMEOUT_SECS);
+    loop {
+        match query_state(name) {
+            ServiceState::Stopped | ServiceState::NotInstalled => return true,
+            _ => {}
+        }
+        if Instant::now() >= deadline {
+            eprintln!("[服务] {name} 停止等待超时（{STOP_TIMEOUT_SECS}s）");
+            return false;
+        }
+        std::thread::sleep(Duration::from_millis(POLL_INTERVAL_MS));
+    }
+}
+
+/// 卸载单个服务：运行中先停止（失败也继续），然后 `sc delete`。未安装跳过。
+fn uninstall_one(name: &str, on_event: &dyn Fn(&str)) {
     match query_state(name) {
         ServiceState::NotInstalled => {
             eprintln!("[服务] {name} 未安装，跳过");
-            false
+            return;
         }
-        ServiceState::Stopped => {
-            eprintln!("[服务] {name} 已是停止状态，无需处理");
-            false
-        }
+        ServiceState::Stopped => {}
         ServiceState::Running | ServiceState::Other => {
-            on_event(&format!("正在停止服务 {name}..."));
-            if let Err(e) = Command::new("sc").args(["stop", name]).output() {
-                eprintln!("[服务] {name} sc stop 执行失败: {e}（继续等待状态确认）");
-            }
-            let deadline = Instant::now() + Duration::from_secs(STOP_TIMEOUT_SECS);
-            loop {
-                match query_state(name) {
-                    ServiceState::Stopped => {
-                        eprintln!("[服务] {name} 已停止");
-                        return true;
-                    }
-                    ServiceState::NotInstalled => {
-                        eprintln!("[服务] {name} 停止过程中已被移除");
-                        return false;
-                    }
-                    _ => {}
-                }
-                if Instant::now() >= deadline {
-                    break;
-                }
-                std::thread::sleep(Duration::from_millis(POLL_INTERVAL_MS));
-            }
-            // 停止失败：卸载兜底，保证更新继续（不恢复）
-            on_event(&format!("服务 {name} 停止超时，正在卸载..."));
-            eprintln!("[服务] {name} 停止超时（{STOP_TIMEOUT_SECS}s），执行卸载兜底");
-            match Command::new("sc").args(["delete", name]).output() {
-                Ok(o) if o.status.success() => {
-                    eprintln!("[服务] {name} 已卸载（更新后不会自动恢复）");
-                }
-                Ok(o) => eprintln!("[服务] {name} 卸载失败（exit {:?}），继续更新", o.status.code()),
-                Err(e) => eprintln!("[服务] {name} 卸载执行失败: {e}，继续更新"),
-            }
-            false
+            let _ = stop_and_wait(name, on_event);
         }
+    }
+    on_event(&format!("正在卸载服务 {name}..."));
+    match Command::new("sc").args(["delete", name]).output() {
+        Ok(o) if o.status.success() => eprintln!("[服务] {name} 已卸载"),
+        Ok(o) => eprintln!("[服务] {name} 卸载失败（exit {:?}），继续更新", o.status.code()),
+        Err(e) => eprintln!("[服务] {name} 卸载执行失败: {e}，继续更新"),
     }
 }
 
-/// 停止配置的服务列表（安装前调用，阻塞，编排层用 spawn_blocking 包裹）。
+/// 卸载配置的服务列表（安装前调用，阻塞，编排层用 spawn_blocking 包裹）。
 ///
-/// `on_event` 用于 UI 阶段文案；返回成功停止、需要在更新完成后恢复的服务名。
-pub fn stop_configured(services: &[String], on_event: &dyn Fn(&str)) -> Vec<String> {
-    let mut stopped = Vec::new();
+/// `on_event` 用于 UI 阶段文案；卸载后不恢复、不重启。
+pub fn uninstall_configured(services: &[String], on_event: &dyn Fn(&str)) {
     for name in services {
-        if stop_one(name, on_event) {
-            stopped.push(name.clone());
-        }
-    }
-    stopped
-}
-
-/// 恢复更新前被停止的服务（更新收尾调用；启动失败仅记录，不阻断流程）
-pub fn start_all(services: &[String]) {
-    for name in services {
-        match Command::new("sc").args(["start", name]).output() {
-            Ok(o) if o.status.success() => eprintln!("[服务] {name} 已重新启动"),
-            Ok(o) => eprintln!("[服务] {name} 启动失败（exit {:?}），请手动启动", o.status.code()),
-            Err(e) => eprintln!("[服务] {name} 启动执行失败: {e}"),
-        }
+        uninstall_one(name, on_event);
     }
 }
 
@@ -132,33 +107,22 @@ pub fn start_all(services: &[String]) {
 mod tests {
     use super::*;
 
-    /// 真实 sc.exe 冒烟：低风险的系统服务（打印假脱机，可停可启），测完立即恢复。
-    /// 需要管理员权限运行（cargo test 直接以当前用户执行）。
+    /// 测试辅助：sc start 启动服务（用于系统服务测后恢复）
+    fn start_service(name: &str) {
+        let _ = Command::new("sc").args(["start", name]).output();
+    }
+
+    /// 真实 sc.exe 冒烟：停止运行中服务的等待逻辑（系统服务 Spooler，测完恢复）。
     #[test]
-    fn stop_and_restore_real_service() {
+    fn stop_running_service_waits_for_stopped() {
         const NAME: &str = "Spooler";
+        assert_eq!(query_state(NAME), ServiceState::Running, "前置: Spooler 应在运行");
 
-        // 前置：服务在运行
-        assert_eq!(query_state(NAME), ServiceState::Running, "前置条件: Spooler 应在运行");
-        // 未安装服务名 → NotInstalled 分支
-        assert_eq!(query_state("qs_no_such_service_xyz"), ServiceState::NotInstalled);
-
-        // 停止（on_event 文案回调被触发）→ 状态确认
-        let events = std::cell::RefCell::new(Vec::new());
-        let stopped = stop_configured(&[NAME.to_string()], &|e| {
-            events.borrow_mut().push(e.to_string())
-        });
-        let events = events.into_inner();
-        assert_eq!(stopped, vec![NAME.to_string()], "运行中的服务应被停止并列入恢复清单");
+        assert!(stop_and_wait(NAME, &|_| {}), "停止应成功");
         assert_eq!(query_state(NAME), ServiceState::Stopped);
-        assert!(events.iter().any(|e| e.contains("正在停止服务")), "应推送停止事件文案");
 
-        // 已停止的服务再检测 → 跳过、不进恢复清单
-        let again = stop_configured(&[NAME.to_string()], &|_| {});
-        assert!(again.is_empty(), "已停止的服务无需恢复");
-
-        // 恢复 → 轮询等待回到运行态（sc start 返回时可能仍在 START_PENDING 过渡）
-        start_all(&stopped);
+        // 恢复系统服务 → 轮询等待回到运行态（sc start 返回时可能仍在 START_PENDING）
+        start_service(NAME);
         let deadline = Instant::now() + Duration::from_secs(10);
         loop {
             assert_ne!(query_state(NAME), ServiceState::NotInstalled, "服务不应消失");
@@ -168,5 +132,41 @@ mod tests {
             assert!(Instant::now() < deadline, "10s 内未恢复运行");
             std::thread::sleep(Duration::from_millis(POLL_INTERVAL_MS));
         }
+    }
+
+    /// 真实 sc.exe 冒烟：临时创建测试服务 → 卸载 → 确认系统无残留。
+    #[test]
+    fn uninstall_temporary_service() {
+        const NAME: &str = "qs_updtest_svc";
+        // 清理可能的旧残留
+        let _ = Command::new("sc").args(["delete", NAME]).output();
+
+        // 创建临时服务（demand-start，无需真正运行；binPath 用测试进程自身 exe，无害）。
+        // sc.exe 的参数解析要求 "binPath=" 与值分开传（同参数合一会报 Invalid field）。
+        let bin = std::env::current_exe().unwrap();
+        let out = Command::new("sc")
+            .args([
+                "create",
+                NAME,
+                "binPath=",
+                &format!("\"{}\"", bin.display()),
+                "start=",
+                "demand",
+            ])
+            .output()
+            .unwrap();
+        assert!(out.status.success(), "sc create 应成功");
+        assert_eq!(query_state(NAME), ServiceState::Stopped, "新建服务应为停止态");
+
+        // 卸载（事件文案被推送）→ 服务不存在
+        let events = std::cell::RefCell::new(Vec::new());
+        uninstall_configured(&[NAME.to_string()], &|e| events.borrow_mut().push(e.to_string()));
+        let events = events.into_inner();
+        assert_eq!(query_state(NAME), ServiceState::NotInstalled, "卸载后服务应不存在");
+        assert!(events.iter().any(|e| e.contains("正在卸载服务")), "应推送卸载事件文案");
+
+        // 对已卸载的服务再次执行 → 未安装跳过，不报错
+        uninstall_configured(&[NAME.to_string()], &|_| {});
+        assert_eq!(query_state(NAME), ServiceState::NotInstalled);
     }
 }

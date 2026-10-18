@@ -278,20 +278,18 @@ async fn run_update_flow(cfg: &ResolvedConfig, m: &manifest::FlatManifest, proxy
     }
     eprintln!("[更新器] 更新包校验通过: {}", zip_path.display());
 
-    // 安装前停止用户配置的服务（运行中的才停；停止失败自动卸载兜底）
-    let stopped_services: Vec<String> = if cfg.services.is_empty() {
-        Vec::new()
-    } else {
+    // 安装前卸载用户配置的服务（运行中先停止；卸载后不恢复、不重启）
+    if !cfg.services.is_empty() {
         let svc_names = cfg.services.clone();
         let svc_proxy = proxy.clone();
         tokio::task::spawn_blocking(move || {
-            services::stop_configured(&svc_names, &|msg| {
+            services::uninstall_configured(&svc_names, &|msg| {
                 svc_proxy.set_phase(Stage::Installing, "正在处理服务...", msg, None);
             })
         })
         .await
-        .unwrap_or_default()
-    };
+        .ok();
+    }
 
     // 安装
     let target_dir = install_dir(&cfg.app_name, &m.version);
@@ -300,7 +298,6 @@ async fn run_update_flow(cfg: &ResolvedConfig, m: &manifest::FlatManifest, proxy
         Arc::new(move |msg, pct| install_proxy.set_phase(Stage::Installing, "正在安装更新...", msg, pct));
     if let Err(e) = install::install(&zip_path, &target_dir, install_cb).await {
         eprintln!("[更新器] 安装失败: {}", e);
-        services::start_all(&stopped_services);
         proxy.set_phase(Stage::Error, "更新安装失败", &e, None);
         return Err(e);
     }
@@ -317,16 +314,12 @@ async fn run_update_flow(cfg: &ResolvedConfig, m: &manifest::FlatManifest, proxy
     .await
     {
         eprintln!("[更新器] 本地版本记录写入失败: {}", e);
-        services::start_all(&stopped_services);
         proxy.set_phase(Stage::Error, "本地版本记录写入失败", &e, None);
         return Err(e);
     }
 
     // 清理旧版本目录（旧目录即回滚资产，保留 max_versions 个）
     cleanup::cleanup_old_versions(&install_root(&cfg.app_name), &m.version, cfg.max_versions).await;
-
-    // 恢复更新前停止的服务（先于目标程序拉起：客户端可能依赖后端服务）
-    services::start_all(&stopped_services);
 
     // 更新完成后拉起目标程序并退出；手动模式则保留窗口由用户关闭
     match &cfg.launch {
