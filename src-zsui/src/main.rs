@@ -12,6 +12,7 @@ mod config;
 mod download;
 mod install;
 mod manifest;
+mod services;
 mod ui;
 mod updater;
 

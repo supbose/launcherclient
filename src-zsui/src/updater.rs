@@ -1,4 +1,4 @@
-﻿//! 更新流程编排：读取配置 → 检查 → 下载（SHA256 校验）→ 安装 → 拉起目标程序。
+//! 更新流程编排：读取配置 → 检查 → 下载（SHA256 校验）→ 安装 → 拉起目标程序。
 //!
 //! 与 Tauri 版的差异：窗口前完成启动决策——无更新且 launch 模式直接静默退出
 //! （进程从未创建窗口）；需要 UI 时返回启动上下文，下载流程由后台线程执行，
@@ -16,6 +16,7 @@ use crate::config;
 use crate::download;
 use crate::install;
 use crate::manifest;
+use crate::services;
 use crate::ui::{format_bytes, SharedUi, Stage, UiProxy, UiSnapshot};
 
 /// 默认服务器 manifest 地址（按序故障转移，第一个失败自动切换下一个）
@@ -36,6 +37,8 @@ pub struct ResolvedConfig {
     pub launch: Option<String>,
     /// 保留的版本目录数量（含当前版本）
     pub max_versions: usize,
+    /// 更新前需停止、更新后恢复的 Windows 服务名列表
+    pub services: Vec<String>,
 }
 
 /// 启动决策：窗口创建前确定是否需要 UI
@@ -90,6 +93,12 @@ pub fn resolve_config(args: &CliArgs) -> ResolvedConfig {
             .max_versions
             .filter(|v| *v > 0)
             .unwrap_or(config::DEFAULT_MAX_VERSIONS),
+        services: settings
+            .services
+            .unwrap_or_default()
+            .into_iter()
+            .filter(|s| !s.trim().is_empty())
+            .collect(),
     }
 }
 
@@ -269,6 +278,21 @@ async fn run_update_flow(cfg: &ResolvedConfig, m: &manifest::FlatManifest, proxy
     }
     eprintln!("[更新器] 更新包校验通过: {}", zip_path.display());
 
+    // 安装前停止用户配置的服务（运行中的才停；停止失败自动卸载兜底）
+    let stopped_services: Vec<String> = if cfg.services.is_empty() {
+        Vec::new()
+    } else {
+        let svc_names = cfg.services.clone();
+        let svc_proxy = proxy.clone();
+        tokio::task::spawn_blocking(move || {
+            services::stop_configured(&svc_names, &|msg| {
+                svc_proxy.set_phase(Stage::Installing, "正在处理服务...", msg, None);
+            })
+        })
+        .await
+        .unwrap_or_default()
+    };
+
     // 安装
     let target_dir = install_dir(&cfg.app_name, &m.version);
     let install_proxy = proxy.clone();
@@ -276,6 +300,7 @@ async fn run_update_flow(cfg: &ResolvedConfig, m: &manifest::FlatManifest, proxy
         Arc::new(move |msg, pct| install_proxy.set_phase(Stage::Installing, "正在安装更新...", msg, pct));
     if let Err(e) = install::install(&zip_path, &target_dir, install_cb).await {
         eprintln!("[更新器] 安装失败: {}", e);
+        services::start_all(&stopped_services);
         proxy.set_phase(Stage::Error, "更新安装失败", &e, None);
         return Err(e);
     }
@@ -292,12 +317,16 @@ async fn run_update_flow(cfg: &ResolvedConfig, m: &manifest::FlatManifest, proxy
     .await
     {
         eprintln!("[更新器] 本地版本记录写入失败: {}", e);
+        services::start_all(&stopped_services);
         proxy.set_phase(Stage::Error, "本地版本记录写入失败", &e, None);
         return Err(e);
     }
 
     // 清理旧版本目录（旧目录即回滚资产，保留 max_versions 个）
     cleanup::cleanup_old_versions(&install_root(&cfg.app_name), &m.version, cfg.max_versions).await;
+
+    // 恢复更新前停止的服务（先于目标程序拉起：客户端可能依赖后端服务）
+    services::start_all(&stopped_services);
 
     // 更新完成后拉起目标程序并退出；手动模式则保留窗口由用户关闭
     match &cfg.launch {

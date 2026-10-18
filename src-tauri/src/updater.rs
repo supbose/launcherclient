@@ -1,4 +1,4 @@
-﻿//! 更新流程编排：读取配置 → 检查 → 下载（SHA256 校验）→ 安装 → 拉起目标程序。
+//! 更新流程编排：读取配置 → 检查 → 下载（SHA256 校验）→ 安装 → 拉起目标程序。
 //! 无更新时静默拉起目标程序并退出，出错时显示窗口提示。
 
 use std::path::{Path, PathBuf};
@@ -14,6 +14,7 @@ use crate::config;
 use crate::download;
 use crate::install;
 use crate::manifest;
+use crate::services;
 
 /// 默认服务器 manifest 地址（按序故障转移，第一个失败自动切换下一个）
 const DEFAULT_MANIFEST_URLS: &[&str] = &["https://qsc.cdn.qcsm.ltd/update/qsm/version.json","https://qsw.us.ci/update/qsm/version.json"];
@@ -32,6 +33,8 @@ struct ResolvedConfig {
     launch: Option<String>,
     /// 保留的版本目录数量（含当前版本）
     max_versions: usize,
+    /// 更新前需停止、更新后恢复的 Windows 服务名列表
+    services: Vec<String>,
 }
 
 /// 过滤空字符串配置项（update.json 中 "" 视为未配置）
@@ -68,6 +71,12 @@ pub fn resolve_config(args: &CliArgs) -> ResolvedConfig {
             .max_versions
             .filter(|v| *v > 0)
             .unwrap_or(config::DEFAULT_MAX_VERSIONS),
+        services: settings
+            .services
+            .unwrap_or_default()
+            .into_iter()
+            .filter(|s| !s.trim().is_empty())
+            .collect(),
     }
 }
 
@@ -243,6 +252,21 @@ pub async fn run_check(app: AppHandle, args: CliArgs) {
     }
     eprintln!("[更新器] 更新包校验通过: {}", zip_path.display());
 
+    // 安装前停止用户配置的服务（运行中的才停；停止失败自动卸载兜底）
+    let stopped_services: Vec<String> = if cfg.services.is_empty() {
+        Vec::new()
+    } else {
+        let svc_app = app.clone();
+        let svc_names = cfg.services.clone();
+        tokio::task::spawn_blocking(move || {
+            services::stop_configured(&svc_names, &|msg| {
+                emit_phase(&svc_app, "installing", "正在处理服务...", msg, None);
+            })
+        })
+        .await
+        .unwrap_or_default()
+    };
+
     // 安装
     let target_dir = install_dir(&cfg.app_name, &m.version);
     let install_app = app.clone();
@@ -251,6 +275,7 @@ pub async fn run_check(app: AppHandle, args: CliArgs) {
     });
     if let Err(e) = install::install(&zip_path, &target_dir, install_cb).await {
         eprintln!("[更新器] 安装失败: {}", e);
+        services::start_all(&stopped_services);
         emit_phase(&app, "error", "更新安装失败", &e, None);
         return;
     }
@@ -267,6 +292,7 @@ pub async fn run_check(app: AppHandle, args: CliArgs) {
     .await
     {
         eprintln!("[更新器] 本地版本记录写入失败: {}", e);
+        services::start_all(&stopped_services);
         emit_phase(&app, "error", "本地版本记录写入失败", &e, None);
         return;
     }
@@ -274,6 +300,9 @@ pub async fn run_check(app: AppHandle, args: CliArgs) {
     // 清理旧版本目录（旧目录即回滚资产，保留 max_versions 个）
     cleanup::cleanup_old_versions(&install_root(&cfg.app_name), &m.version, cfg.max_versions)
         .await;
+
+    // 恢复更新前停止的服务（先于目标程序拉起：客户端可能依赖后端服务）
+    services::start_all(&stopped_services);
 
     emit_phase(
         &app,

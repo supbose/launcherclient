@@ -50,6 +50,8 @@ qsltdupdater-zsui.exe --app-name <名称> [--check-only] [--launch <目标程序
 | `--manifest` | 服务器 manifest（version.json）地址，覆盖 update.json 与默认地址 | 内置默认地址 |
 | `--current-version` | 当前已安装版本，覆盖本地 app.json 记录 | 自动探测 |
 
+服务处理（`update.json` 的 `services` 数组）：确定安装后、解压前停止运行中的服务；停止失败自动卸载兜底；更新完成后自动重启恢复（未安装/已停止的服务跳过）。
+
 优先级：命令行参数 > update.json > 内置默认值。
 
 ## 配置文件 update.json
@@ -62,13 +64,15 @@ qsltdupdater-zsui.exe --app-name <名称> [--check-only] [--launch <目标程序
   "app_name": "qsm",
   "launch": "",
   "current_version": "",
-  "max_versions": 2
+  "max_versions": 2,
+  "services": ["server", "qsmserver"]
 }
 ```
 
 - `manifest_url`：单地址字符串或地址数组（数组按序故障转移）
 - `launch`：留空为仅检测模式（目标程序拉起场景）
 - `max_versions`：保留的版本目录数量（含当前版本，旧目录即回滚资产）
+- `services`：更新前需停止的 Windows 服务名数组（如 `["server","qsmserver"]`，可多个）；运行中的才停止，停止失败自动卸载兜底，更新完成后自动重启恢复；空或缺省不处理
 
 ## 更新流程与 UI
 
@@ -78,8 +82,9 @@ qsltdupdater-zsui.exe --app-name <名称> [--check-only] [--launch <目标程序
 2. **发现新版本**：窗口显示"发现新版本"，后台线程开始下载，UI 切换到下载阶段
 3. **下载**：分卷（`parts`）或单包（`url`）模式；连接超时 10s、读空闲超时 60s（弱网防挂死）；300ms 节流推送进度，速度指数平滑；已下载包校验通过则复用（断点续传思想）
 4. **校验**：整体 SHA256 比对
-5. **安装**：解压到临时目录 → 原子重命名为 `app_<版本>` 目录（版本目录隔离，不影响正在运行的旧版本）
-6. **收尾**：写本地版本记录 app.json → 清理旧版本目录（保留 `max_versions` 个）→ launch 模式拉起目标程序并退出；仅检测模式显示"更新完成"等待关闭
+5. **服务处理**：停止 `services` 中运行中的服务（15s 停止超时 → 卸载兜底），UI 显示"正在处理服务..."
+6. **安装**：解压到临时目录 → 原子重命名为 `app_<版本>` 目录（版本目录隔离，不影响正在运行的旧版本）
+7. **收尾**：写本地版本记录 app.json → 清理旧版本目录（保留 `max_versions` 个）→ 恢复更新前停止的服务 → launch 模式拉起目标程序并退出；仅检测模式显示"更新完成"等待关闭
 
 UI 界面（440×300，置顶）：状态徽标 + 主提示 + 副说明 + 进度条/关闭按钮。
 
@@ -155,6 +160,6 @@ fn spawn_update_check() {
 | `src/main.rs` | 入口：CLI 解析 → `--check-only` 纯检测分支 → 启动决策 → 进入 UI 循环 |
 | `src/updater.rs` | 流程编排：`run_startup` 决策、`run_check_only` 纯检测（退出码 0/1/2）、后台线程下载流程、进度节流与速度平滑 |
 | `src/ui.rs` | zsui State/Msg/View：共享快照 + 居中布局视图（7 阶段） |
-| `src/cli.rs` `src/config.rs` `src/manifest.rs` `src/download.rs` `src/install.rs` `src/cleanup.rs` | 纯后端模块，与 `src-tauri` 版逐字相同 |
+| `src/cli.rs` `src/config.rs` `src/manifest.rs` `src/download.rs` `src/install.rs` `src/cleanup.rs` `src/services.rs` | 纯后端模块，与 `src-tauri` 版逐字相同 |
 
 架构要点：启动决策在窗口创建前完成（无更新 + launch 模式不创建窗口；check-only 全程无窗口）；下载在 `std::thread` + 独立 tokio runtime 执行，通过 `UiProxy`（`Arc<Mutex<UiSnapshot>>` + `request_rebuild`）驱动视图刷新，UI 线程零阻塞。

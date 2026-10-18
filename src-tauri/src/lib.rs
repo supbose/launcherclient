@@ -4,6 +4,7 @@ mod config;
 mod download;
 mod install;
 mod manifest;
+mod services;
 mod updater;
 
 pub fn run() {

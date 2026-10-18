@@ -53,6 +53,10 @@ pub struct UpdateSettings {
     /// 保留的版本目录数量（含当前版本，旧目录即回滚资产），0 或缺省用默认值
     #[serde(default)]
     pub max_versions: Option<usize>,
+    /// 更新前需停止的 Windows 服务名列表（运行中的才停；停止失败自动卸载兜底；
+    /// 更新完成后自动重启恢复；空或缺省不处理）
+    #[serde(default)]
+    pub services: Option<Vec<String>>,
 }
 
 /// max_versions 默认值：当前版本 + 1 个旧版本（回滚资产）
@@ -99,13 +103,15 @@ fn generate_default_template(dir: &std::path::Path) -> bool {
             "app_name": "应用名称，决定配置/下载/安装目录（%APPDATA%\\<app_name>）",
             "launch": "更新完成后拉起的目标程序；相对路径按安装目录解析；留空为手动模式（只显示结果不拉起）",
             "current_version": "强制指定当前版本；留空自动从本地 app.json 探测",
-            "max_versions": "保留的版本目录数量（含当前版本，旧目录即回滚资产），默认 2"
+            "max_versions": "保留的版本目录数量（含当前版本，旧目录即回滚资产），默认 2",
+            "services": "更新前需停止的 Windows 服务名数组；运行中的才停止，停止失败自动卸载兜底；更新完成后自动重启恢复"
         },
         "manifest_url": ["https://qsc.cdn.qcsm.ltd/update/qsm/version.json","https://qsw.us.ci/update/qsm/version.json"],
         "app_name": "qsm",
         "launch": "qsm.exe",
         "current_version": "",
-        "max_versions": DEFAULT_MAX_VERSIONS
+        "max_versions": DEFAULT_MAX_VERSIONS,
+        "services": ["QsmServer"]
     });
     let Ok(content) = serde_json::to_string_pretty(&template) else {
         eprintln!("[配置] 默认模板序列化失败");
