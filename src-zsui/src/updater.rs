@@ -529,7 +529,12 @@ fn launch_target(cfg: &ResolvedConfig, installed_path: Option<&Path>) {
         .map(|p| p.to_path_buf())
         .unwrap_or_else(|| std::env::current_dir().unwrap_or_default());
 
-    match std::process::Command::new(&exe_path).current_dir(workdir).spawn() {
+    match std::process::Command::new(&exe_path)
+        .current_dir(workdir)
+        // 标记"本次启动由更新器拉回"，客户端用它防止启动检测重入循环
+        .env("QSLTD_FROM_UPDATER", "1")
+        .spawn()
+    {
         Ok(_) => eprintln!("[更新器] 已拉起目标程序: {}", exe_path.display()),
         Err(e) => eprintln!("[更新器] 拉起目标程序失败: {}", e),
     }

@@ -83,43 +83,38 @@ UI 界面（440×300，置顶）：状态徽标 + 主提示 + 副说明 + 进度
 
 ## 客户端集成（demo.exe + update.exe 场景）
 
-入口是**客户端 demo.exe 本身**：demo 启动第一行拉起更新器做后台检测，demo 继续自己的启动流程。
+入口是**客户端 demo.exe 本身**：demo 启动即把流程交接给更新器并退出自身，由更新器接管检测与拉回。
 
 ```
 启动 demo.exe
-   │ spawn update.exe（不等待，异步）
-   ├─ demo 继续启动 → 后续窗口正常出现
+   │ spawn qsltdupdater.exe --launch <demo自身>（demo 随即退出）
    │
-   └─ update.exe 后台检测
-        ├─ 无更新 → 静默退出（demo 全程无感知）
+   └─ qsltdupdater.exe 检测
+        ├─ 无更新 → 静默拉回 demo（带 QSLTD_FROM_UPDATER=1 标记，demo 不再重入检测）→ 退出
         └─ 有更新 → 弹出更新窗口 → 下载安装到新版本目录
-                  → 显示"更新完成"，重启 demo 后生效
+                  → 自动重启 demo（带标记）→ 退出
 ```
 
-demo.exe 侧（Rust 示例，放在 `main()` 最前面）：
+防重入机制：更新器 `launch_target` 拉起目标程序时注入环境变量 `QSLTD_FROM_UPDATER=1`；客户端启动检测前检查该变量，存在则跳过（否则"拉回 → 再交接 → 再拉回"会无限循环）。
+
+已在 [launcherclient-demo](../../launcherclient-demo)（Tauri 2 客户端）中实装并验证：`src-tauri/src/lib.rs` 的 `spawn_update_check()` 在 `run()` 的 `setup` 钩子中调用——spawn 更新器成功后 demo 延迟 500ms 退出；更新器定位失败（开发环境未部署）或 spawn 失败时 demo 不退出、正常启动。
+
+demo.exe 侧（Rust 示例，放在 `main()`/`setup` 中）：
 
 ```rust
-// 拉起同目录（或 exe 父目录）的更新器做后台检测，不等待不阻塞
 fn spawn_update_check() {
-    let updater = std::env::current_exe().ok().and_then(|exe| {
-        let dir = exe.parent()?;
-        // 更新器与 demo 同目录部署；版本目录部署时更新器在上一级
-        [dir.join("update.exe"), dir.parent()?.join("update.exe")]
-            .into_iter()
-            .find(|p| p.exists())
-    });
-    if let Some(updater) = updater {
-        let _ = std::process::Command::new(updater)
-            .arg("--app-name")
-            .arg("demo")
-            .spawn();
+    // 由更新器拉回的启动不再重复检测，防止循环
+    if std::env::var("QSLTD_FROM_UPDATER").is_ok() {
+        return;
     }
+    // spawn qsltdupdater.exe --launch <自身> --app-name <名称>
+    // 成功后延迟 500ms 退出自身，由更新器检测后拉回或更新
 }
 ```
 
-更新器 exe 需与 demo.exe 同目录（或 demo 版本目录的上一级）部署，并放置同名的 `update.json` 配置（`app_name` 与 demo 一致）。
+部署约定：`qsltdupdater.exe` 与 `demo.exe` 同目录，旁边放 `update.json`（`app_name` 与 demo 一致；`--launch` 由 demo 命令行传入优先级最高，update.json 的 `launch` 仅在更新器单独运行时生效）。
 
-另一种集成：**更新器先行模式**——快捷方式指向 `update.exe --launch demo.exe`，检测无更新时由更新器拉起 demo。适合不希望改 demo 代码的场景。
+另一种集成：**仅检测模式**——demo spawn 更新器时不带 `--launch` 且不退出自身：无更新更新器静默退出，有更新弹窗下载安装（不占用正在运行的 demo），重启 demo 后生效。适合不希望 demo 中途退出的场景。
 
 ## 数据目录
 
