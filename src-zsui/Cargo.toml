@@ -1,4 +1,4 @@
-[package]
+﻿[package]
 name = "qsltdupdater-zsui"
 version = "0.1.0"
 description = "QsLtd 独立更新程序（zsui 原生 UI 版）"
@@ -24,7 +24,7 @@ sha2 = "0.10"
 hex = "0.4"
 zip = "2"
 # 独立更新核心库（qcsm 派生版，无需服务）：复用 LocalManifest 本地版本记录
-qsltd-update = { path = "../../cargo-project/qsltd-update" }
+qingshu = { path = "../../../qingshu.work/rust/qingshu", features = ["update"] }
 
 [lints.rust]
 unused_imports = "allow"

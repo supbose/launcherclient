@@ -227,19 +227,37 @@ where
 /// - `part_paths`: 分卷路径列表（按序）
 /// - `dest`: 合并输出路径
 /// - `expected_sha256`: 完整 zip 的期望 SHA256（空则跳过整体校验）
-pub async fn merge_parts(
+/// - `on_progress`: 合并进度回调（已合并字节, 总字节），供 UI 展示实时进度
+pub async fn merge_parts<F>(
     part_paths: &[PathBuf],
     dest: &Path,
     expected_sha256: &Option<String>,
-) -> Result<(), String> {
+    on_progress: F,
+) -> Result<(), String>
+where
+    F: Fn(u64, u64),
+{
     use tokio::io::AsyncReadExt;
+
+    let total_bytes: u64 = {
+        let mut sum = 0u64;
+        for part in part_paths {
+            sum += tokio::fs::metadata(part)
+                .await
+                .map(|m| m.len())
+                .unwrap_or(0);
+        }
+        sum
+    };
 
     let mut out = tokio::fs::File::create(dest)
         .await
         .map_err(|e| format!("创建合并文件失败 {}: {}", dest.display(), e))?;
     let mut hasher = Sha256::new();
+    let mut merged: u64 = 0;
+    on_progress(0, total_bytes);
 
-    for part in part_paths {
+    for (idx, part) in part_paths.iter().enumerate() {
         let mut file = tokio::fs::File::open(part)
             .await
             .map_err(|e| format!("打开分卷失败 {}: {}", part.display(), e))?;
@@ -256,15 +274,20 @@ pub async fn merge_parts(
             out.write_all(&buf[..n])
                 .await
                 .map_err(|e| format!("写入合并文件失败: {}", e))?;
+            merged += n as u64;
+            on_progress(merged, total_bytes);
         }
+        eprintln!("[合并] 卷 {}/{} 完成", idx + 1, part_paths.len());
     }
-
+    eprintln!("[合并] 读取循环全部完成，开始 flush");
     out.flush()
         .await
         .map_err(|e| format!("合并文件刷新失败: {}", e))?;
+    eprintln!("[合并] flush 完成，开始 sync_all");
     out.sync_all()
         .await
         .map_err(|e| format!("合并文件落盘失败: {}", e))?;
+    eprintln!("[合并] sync_all 完成，开始 SHA256 校验");
 
     // 整体 SHA256 校验
     if let Some(expected) = expected_sha256.as_deref().map(str::trim).filter(|s| !s.is_empty()) {

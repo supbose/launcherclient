@@ -2,11 +2,15 @@
   <div class="updater-root">
     <MinTitleBar />
     <div class="updater-body">
-      <!-- 检查中 -->
+      <!-- 检查/合并中 -->
       <template v-if="stage === 'checking'">
         <div class="spinner"></div>
         <div class="status-text">{{ message || '正在检查更新...' }}</div>
         <div class="status-sub" v-if="subText">{{ subText }}</div>
+        <!-- 合并阶段带进度条 -->
+        <div class="progress-track" v-if="subText && progressPercent > 0">
+          <div class="progress-fill" :style="{ width: progressPercent + '%' }"></div>
+        </div>
       </template>
 
       <!-- 下载中 -->
@@ -27,6 +31,10 @@
         <div class="spinner"></div>
         <div class="status-text">{{ message }}</div>
         <div class="status-sub">{{ subText }}</div>
+        <!-- 解压进度条 -->
+        <div class="progress-track" v-if="progressPercent > 0">
+          <div class="progress-fill" :style="{ width: progressPercent + '%' }"></div>
+        </div>
       </template>
 
       <!-- 已是最新 -->

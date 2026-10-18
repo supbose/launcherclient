@@ -216,8 +216,8 @@ fn view(state: &UiState) -> ViewNode<Msg> {
         ));
     }
 
-    // 下载进度条
-    if stage == Stage::Downloading {
+    // 进度条：下载/合并/安装阶段均展示（有百分比即渲染）
+    if matches!(stage, Stage::Downloading | Stage::Checking | Stage::Installing) {
         let value = snapshot.percent.unwrap_or(0.0).clamp(0.0, 100.0) as f32;
         children.push(
             progress_bar(value, ProgressRange::new(0.0, 100.0)).width(Dp::new(PROGRESS_WIDTH)),

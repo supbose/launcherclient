@@ -31,8 +31,8 @@ futures-util = "0.3"
 sha2 = "0.10"
 hex = "0.4"
 zip = "2"
-# 独立更新核心库（qcsm 派生版，无需服务）：复用 LocalManifest 本地版本记录
-qsltd-update = { path = "../../cargo-project/qsltd-update" }
+# 统一能力库（自有封装）：update 模块提供 LocalManifest 本地版本记录与 get_myapp_dir
+qingshu = { path = "../../../qingshu.work/rust/qingshu", features = ["update"] }
 
 [lints.rust]
 unused_imports = "allow"

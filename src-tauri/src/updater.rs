@@ -1,7 +1,8 @@
-//! 更新流程编排：读取配置 → 检查 → 下载（SHA256 校验）→ 安装 → 拉起目标程序。
+﻿//! 更新流程编排：读取配置 → 检查 → 下载（SHA256 校验）→ 安装 → 拉起目标程序。
 //! 无更新时静默拉起目标程序并退出，出错时显示窗口提示。
 
 use std::path::{Path, PathBuf};
+use std::sync::Arc;
 use std::time::{Duration, Instant};
 
 use serde::Serialize;
@@ -15,7 +16,7 @@ use crate::install;
 use crate::manifest;
 
 /// 默认服务器 manifest 地址（按序故障转移，第一个失败自动切换下一个）
-const DEFAULT_MANIFEST_URLS: &[&str] = &["https://qsw.us.ci/update/qsm/version.json"];
+const DEFAULT_MANIFEST_URLS: &[&str] = &["https://qsc.cdn.qcsm.ltd/update/qsm/version.json","https://qsw.us.ci/update/qsm/version.json"];
 
 /// 默认应用名称（决定配置/下载/安装目录）
 const DEFAULT_APP_NAME: &str = "qsm";
@@ -72,12 +73,12 @@ fn resolve_config(args: &CliArgs) -> ResolvedConfig {
 
 /// 按 app_name 派生下载目录
 fn download_dir(app_name: &str) -> PathBuf {
-    qsltd_update::get_myapp_dir(Some(app_name)).join("downloads")
+    qingshu::update::get_myapp_dir(Some(app_name)).join("downloads")
 }
 
 /// 按 app_name 派生版本根目录（各版本目录的父目录）
 fn install_root(app_name: &str) -> PathBuf {
-    qsltd_update::get_myapp_dir(Some(app_name)).join("app")
+    qingshu::update::get_myapp_dir(Some(app_name)).join("app")
 }
 
 /// 按 app_name 派生版本安装目录（app_{version}）
@@ -87,7 +88,7 @@ fn install_dir(app_name: &str, version: &str) -> PathBuf {
 
 /// 本地版本记录 app.json 路径
 fn local_manifest_path(app_name: &str) -> PathBuf {
-    qsltd_update::get_myapp_dir(Some(app_name)).join("app.json")
+    qingshu::update::get_myapp_dir(Some(app_name)).join("app.json")
 }
 
 /// 更新检查与执行主流程
@@ -201,11 +202,11 @@ pub async fn run_check(app: AppHandle, args: CliArgs) {
 
     // 安装
     let target_dir = install_dir(&cfg.app_name, &m.version);
-    if let Err(e) = install::install(&zip_path, &target_dir, |msg| {
-        emit_phase(&app, "installing", "正在安装更新...", &msg, None);
-    })
-    .await
-    {
+    let install_app = app.clone();
+    let install_cb: install::StageCallback = Arc::new(move |msg, pct| {
+        emit_phase(&install_app, "installing", "正在安装更新...", msg, pct);
+    });
+    if let Err(e) = install::install(&zip_path, &target_dir, install_cb).await {
         eprintln!("[更新器] 安装失败: {}", e);
         emit_phase(&app, "error", "更新安装失败", &e, None);
         return;
@@ -298,11 +299,31 @@ async fn run_download_parts(
         })
         .await?;
 
-    emit_phase(app, "checking", "正在合并分卷...", "", None);
+    emit_phase(app, "checking", "正在合并分卷...", "", Some(0.0));
     eprintln!("[更新器] 合并 {} 个分卷...", result.part_paths.len());
-    download::merge_parts(&result.part_paths, zip_path, &m.sha256).await?;
+    let merge_app = app.clone();
+    download::merge_parts(&result.part_paths, zip_path, &m.sha256, move |done, total| {
+        let pct = if total > 0 {
+            (done as f64 / total as f64 * 100.0).min(100.0)
+        } else {
+            0.0
+        };
+        emit_phase(
+            &merge_app,
+            "checking",
+            "正在合并分卷...",
+            &format!("{} / {}", fmt_mb(done), fmt_mb(total)),
+            Some(pct),
+        );
+    })
+    .await?;
     eprintln!("[更新器] 分卷合并完成: {}", zip_path.display());
     Ok(())
+}
+
+/// 字节数格式化为 MB 显示（保留 1 位小数）
+fn fmt_mb(bytes: u64) -> String {
+    format!("{:.1} MB", bytes as f64 / 1024.0 / 1024.0)
 }
 
 /// 执行下载：本地已有同名包且校验通过则复用，否则流式下载并推送进度
@@ -444,7 +465,7 @@ async fn resolve_current_version(args: &CliArgs, app_name: &str) -> String {
     }
     let path = local_manifest_path(app_name);
     if path.exists() {
-        match qsltd_update::LocalManifest::load(&path).await {
+        match qingshu::update::LocalManifest::load(&path).await {
             Ok(Some(m)) if !m.version.is_empty() => {
                 // 校验安装目录是否存在，缺失则自恢复重装
                 if !m.installed_path.is_empty() && !Path::new(&m.installed_path).exists() {
@@ -528,7 +549,7 @@ async fn read_installed_path(app_name: &str) -> Option<String> {
     if !path.exists() {
         return None;
     }
-    match qsltd_update::LocalManifest::load(&path).await {
+    match qingshu::update::LocalManifest::load(&path).await {
         Ok(Some(m)) if !m.installed_path.is_empty() => Some(m.installed_path),
         _ => None,
     }
