@@ -1,4 +1,10 @@
 
+
+## v0.1.1-beta.2 (2026-10-18)
+### 🚀 新增功能
+
+- [f3df1b3](/-/commit/f3df1b3184f620ced37c7a37b458a6a87daf7297) 新增(src-tauri): 为更新程序添加下载详情显示与配置模板生成 (src-tauri/Cargo.toml, src-tauri/src/config.rs, src-tauri/src/download.rs, src-tauri/src/manifest.rs, src-tauri/src/updater.rs, src-tauri/tauri.conf.json, src/App.vue)
+
 ## v0.1.1-beta.1 (2026-10-18)
 # Changelog
 
