@@ -5,6 +5,16 @@
 
 
 
+
+## v0.1.5 (2026-10-19)
+### 🚀 新增功能
+
+- [a815696](/-/commit/a8156964fd5b8263e574f0c6fdcb09c2dc810efb) 新增(src-zsui): 新增更新前后Windows服务自动管理功能 (src-tauri/src/config.rs, src-tauri/src/lib.rs, src-tauri/src/services.rs, src-tauri/src/updater.rs, src-zsui/README.md, src-zsui/src/config.rs, src-zsui/src/main.rs, src-zsui/src/services.rs, src-zsui/src/updater.rs)
+
+### ♻️ 代码重构
+
+- [138d4b4](/-/commit/138d4b483ce07c7ac403625a3f608c465716bdb6) 重构(src-zsui): 将更新前服务处理改为卸载而非停止并恢复 (src-tauri/src/config.rs, src-tauri/src/services.rs, src-tauri/src/updater.rs, src-zsui/README.md, src-zsui/src/config.rs, src-zsui/src/services.rs, src-zsui/src/updater.rs)
+
 ## v0.1.4 (2026-10-18)
 ## v0.1.3-beta.0 (2026-10-18)
 ### 🚀 新增功能
