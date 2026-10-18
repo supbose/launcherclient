@@ -84,9 +84,17 @@ pub async fn fetch_with_failover(urls: &[String]) -> Result<FlatManifest, String
     ))
 }
 
-/// 拉取并解析单个 manifest 地址
+/// 拉取并解析单个 manifest 地址（连接超时 3s / 总超时 5s，防弱网挂死拖慢启动）
 async fn fetch(url: &str) -> Result<FlatManifest, String> {
-    let response = reqwest::get(url)
+    let client = reqwest::Client::builder()
+        .connect_timeout(std::time::Duration::from_secs(3))
+        .timeout(std::time::Duration::from_secs(5))
+        .build()
+        .map_err(|e| format!("创建 HTTP 客户端失败: {}", e))?;
+
+    let response = client
+        .get(url)
+        .send()
         .await
         .map_err(|e| format!("请求 manifest 失败: {}", e))?;
 

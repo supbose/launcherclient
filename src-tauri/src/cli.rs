@@ -13,6 +13,9 @@ pub struct CliArgs {
     pub manifest_url: Option<String>,
     /// 当前已安装版本（可选，覆盖本地 app.json 记录）
     pub current_version: Option<String>,
+    /// 纯检测模式：只检查是否有更新，不建窗、不下载、不拉回目标程序。
+    /// 退出码：0=无更新 1=检测失败 2=有更新（供客户端快速分支）
+    pub check_only: bool,
 }
 
 /// 解析命令行参数，未知参数仅打印警告不中断
@@ -21,6 +24,7 @@ pub fn parse() -> CliArgs {
     let mut launch: Option<String> = None;
     let mut manifest_url: Option<String> = None;
     let mut current_version: Option<String> = None;
+    let mut check_only = false;
 
     let argv: Vec<String> = std::env::args().skip(1).collect();
     let mut i = 0;
@@ -56,6 +60,7 @@ pub fn parse() -> CliArgs {
                 }
                 None => eprintln!("[参数] --current-version 缺少值，忽略该参数"),
             },
+            "--check-only" => check_only = true,
             other => eprintln!("[参数] 未知参数: {}，已忽略", other),
         }
         i += 1;
@@ -66,5 +71,6 @@ pub fn parse() -> CliArgs {
         launch,
         manifest_url,
         current_version,
+        check_only,
     }
 }

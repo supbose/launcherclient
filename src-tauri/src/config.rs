@@ -101,9 +101,9 @@ fn generate_default_template(dir: &std::path::Path) -> bool {
             "current_version": "强制指定当前版本；留空自动从本地 app.json 探测",
             "max_versions": "保留的版本目录数量（含当前版本，旧目录即回滚资产），默认 2"
         },
-        "manifest_url": ["https://qsw.us.ci/update/qsm/version.json"],
+        "manifest_url": ["https://qsc.cdn.qcsm.ltd/update/qsm/version.json","https://qsw.us.ci/update/qsm/version.json"],
         "app_name": "qsm",
-        "launch": "",
+        "launch": "qsm.exe",
         "current_version": "",
         "max_versions": DEFAULT_MAX_VERSIONS
     });

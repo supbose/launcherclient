@@ -39,7 +39,15 @@ pub async fn download_file<F>(
 where
     F: Fn(DownloadProgress) + Send + Sync + 'static,
 {
-    let response = reqwest::get(url)
+    // 弱网防护：连接超时 10s（握手挂起快速失败）。不设整体超时 ——
+    // 大文件慢速下载可能合理超过任何固定上限，中途断流由下方读空闲超时兜底。
+    let client = reqwest::Client::builder()
+        .connect_timeout(std::time::Duration::from_secs(10))
+        .build()
+        .map_err(|e| format!("创建下载客户端失败: {}", e))?;
+    let response = client
+        .get(url)
+        .send()
         .await
         .map_err(|e| format!("下载请求失败: {}", e))?;
 
@@ -56,7 +64,12 @@ where
     let mut hasher = Sha256::new();
     let mut downloaded: u64 = 0;
 
-    while let Some(chunk) = stream.next().await {
+    // 读空闲超时：60 秒未收到任何新数据视为断流，报错退出（防止无限挂死）
+    while let Some(chunk) =
+        tokio::time::timeout(std::time::Duration::from_secs(60), stream.next())
+            .await
+            .map_err(|_| "下载数据流超时（60 秒无新数据）".to_string())?
+    {
         let chunk = chunk.map_err(|e| format!("下载数据流中断: {}", e))?;
         hasher.update(&chunk);
         file.write_all(&chunk)

@@ -1,5 +1,5 @@
 [package]
-name = "qsltdupdater"
+name = "launcherclient"
 version = "0.1.0"
 description = "QsLtd 独立更新程序 - 无需服务的更新器"
 authors = ["supbose <supbose@qq.com>"]

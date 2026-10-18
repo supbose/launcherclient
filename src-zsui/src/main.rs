@@ -27,6 +27,18 @@ fn main() {
         cfg.manifest_urls.join(" → ")
     );
 
+    // --check-only 纯检测：输出结果后按退出码结束（0=无更新 1=失败 2=有更新），不进 UI
+    if args.check_only {
+        let code = match tokio::runtime::Builder::new_multi_thread().enable_all().build() {
+            Ok(rt) => rt.block_on(updater::run_check_only(&args, &cfg)),
+            Err(e) => {
+                eprintln!("[更新器] 创建异步运行时失败: {}", e);
+                1
+            }
+        };
+        std::process::exit(code);
+    }
+
     // 启动决策在窗口创建前完成：无更新 + launch 模式全程无窗口
     let decision = match tokio::runtime::Builder::new_multi_thread().enable_all().build() {
         Ok(rt) => rt.block_on(updater::run_startup(&args, &cfg)),

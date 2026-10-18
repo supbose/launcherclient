@@ -40,7 +40,7 @@ fn non_empty(s: Option<String>) -> Option<String> {
 }
 
 /// 合并命令行参数与 update.json 配置
-fn resolve_config(args: &CliArgs) -> ResolvedConfig {
+pub fn resolve_config(args: &CliArgs) -> ResolvedConfig {
     let settings = config::load();
 
     let app_name = if args.app_name != "QsLtd" {
@@ -89,6 +89,49 @@ fn install_dir(app_name: &str, version: &str) -> PathBuf {
 /// 本地版本记录 app.json 路径
 fn local_manifest_path(app_name: &str) -> PathBuf {
     qingshu::update::get_myapp_dir(Some(app_name)).join("app.json")
+}
+
+/// --check-only 入口（供 lib.rs 调用）：合并配置 → 纯检测 → 返回退出码
+pub fn check_only_exit(args: &CliArgs) -> i32 {
+    let cfg = resolve_config(args);
+    match tokio::runtime::Builder::new_multi_thread().enable_all().build() {
+        Ok(rt) => rt.block_on(run_check_only(args, &cfg)),
+        Err(e) => {
+            eprintln!("[更新器] 创建异步运行时失败: {}", e);
+            1
+        }
+    }
+}
+
+/// --check-only 纯检测模式：只判断是否有更新，不建窗、不下载、不拉回目标程序。
+///
+/// 退出码：0 = 无更新，1 = 检测失败，2 = 有更新。
+/// 供客户端快速分支：无更新时客户端自己继续启动（单次启动，无交接开销），
+/// 有更新时客户端退出并改用 --launch 模式交接更新器。
+pub async fn run_check_only(args: &CliArgs, cfg: &ResolvedConfig) -> i32 {
+    // 先清理上次删除失败的残留目录
+    let app_root = install_root(&cfg.app_name);
+    cleanup::cleanup_pending(&app_root).await;
+
+    let current_version = resolve_current_version(args, &cfg.app_name).await;
+    eprintln!("[更新器] 当前版本: {}", current_version);
+
+    eprintln!("[更新器] 开始拉取 manifest...");
+    let m = match manifest::fetch_with_failover(&cfg.manifest_urls).await {
+        Ok(m) => m,
+        Err(e) => {
+            eprintln!("[更新器] 检查更新失败: {}", e);
+            return 1;
+        }
+    };
+
+    if manifest::need_update(&current_version, &m) {
+        eprintln!("[更新器] 发现新版本: {} → {}", current_version, m.version);
+        2
+    } else {
+        eprintln!("[更新器] 已是最新版本: {}", current_version);
+        0
+    }
 }
 
 /// 更新检查与执行主流程

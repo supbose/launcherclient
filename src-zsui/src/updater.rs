@@ -113,6 +113,40 @@ fn local_manifest_path(app_name: &str) -> PathBuf {
     qingshu::update::get_myapp_dir(Some(app_name)).join("app.json")
 }
 
+/// --check-only 纯检测模式：只判断是否有更新，不建窗、不下载、不拉回目标程序。
+///
+/// 退出码：0 = 无更新，1 = 检测失败，2 = 有更新。
+/// 供客户端快速分支：无更新时客户端自己继续启动（单次启动，无交接开销），
+/// 有更新时客户端退出并改用 --launch 模式交接更新器。
+pub async fn run_check_only(args: &CliArgs, cfg: &ResolvedConfig) -> i32 {
+    // 先清理上次删除失败的残留目录
+    let app_root = install_root(&cfg.app_name);
+    cleanup::cleanup_pending(&app_root).await;
+
+    let current_version = resolve_current_version(args, &cfg.app_name).await;
+    eprintln!("[更新器] 当前版本: {}", current_version);
+
+    eprintln!("[更新器] 开始拉取 manifest...");
+    let m = match manifest::fetch_with_failover(&cfg.manifest_urls).await {
+        Ok(m) => m,
+        Err(e) => {
+            eprintln!("[更新器] 检查更新失败: {}", e);
+            return 1;
+        }
+    };
+
+    if manifest::need_update(&current_version, &m) {
+        eprintln!(
+            "[更新器] 发现新版本: {} → {}",
+            current_version, m.version
+        );
+        2
+    } else {
+        eprintln!("[更新器] 已是最新版本: {}", current_version);
+        0
+    }
+}
+
 /// 启动阶段（窗口创建前）：清理残留 → 解析当前版本 → 拉取 manifest → 更新判断
 pub async fn run_startup(args: &CliArgs, cfg: &ResolvedConfig) -> StartupDecision {
     // 先清理上次删除失败的残留目录
