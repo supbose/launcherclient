@@ -2,9 +2,12 @@
 //! 无更新时拉起目标程序并退出，出错时显示窗口提示。
 //!
 //! 窗口可见性策略：
-//! - 直接运行（无 --launch 交接参数）：检测阶段即显示「正在检查更新」窗口，
-//!   避免双击后长时间无任何反馈、疑似程序未启动或卡死
-//! - 被目标程序以 --launch 交接：全程静默，直到发现新版本或出错才显示窗口
+//! - 直接运行（无 --launch 交接参数）：先显示 splash 启动加载页（lib.rs
+//!   动态创建，纯静态零 JS，首帧快），检测期全程有界面反馈；主窗口在
+//!   「发现新版本」或「出错」时才显示，且遵循「先 show main、等其首帧
+//!   渲染、再撤 splash」的顺序，避免空窗闪动
+//! - 被目标程序以 --launch 交接：全程静默（连 splash 都不创建），
+//!   直到发现新版本或出错才显示窗口
 //! - `--check-only` 模式不进 Tauri，无窗口
 
 use std::path::{Path, PathBuf};
@@ -22,6 +25,11 @@ use qsltd_updater_core::download;
 use qsltd_updater_core::install;
 use qsltd_updater_core::manifest;
 use qsltd_updater_core::services;
+
+/// splash 启动加载窗口 label。
+/// 仅直接运行模式由 lib.rs 的 setup 动态创建（交接模式全程静默不建窗），
+/// 检测期提供「正在检查更新」反馈，主窗口显示前由本模块负责撤掉。
+pub const SPLASH_LABEL: &str = "splash";
 
 /// 配置合并后的生效配置（优先级：命令行 > update.json > 默认值）
 pub(crate) struct ResolvedConfig {
@@ -161,13 +169,9 @@ pub async fn run_check(app: AppHandle, args: CliArgs) {
 
     emit_phase(&app, "checking", "正在检查更新...", "", None);
 
-    // 直接运行（未带 --launch 交接参数，如双击启动器）时立即显示窗口：
-    // 让用户明确看到「正在检查更新」，避免双击后长时间无反馈、疑似卡死。
-    // 被目标程序以 --launch 交接时保持静默，直到发现新版本或出错才显示
-    // （见下方 need_update / error 分支的 show_main_window）。
-    if args.launch.is_none() {
-        show_main_window(&app);
-    }
+    // 检测期的界面反馈由 splash 承担（lib.rs 在直接运行模式已创建；
+    // 交接模式保持静默）。主窗口直到发现新版本或出错才显示 ——
+    // 见下方 need_update / error 分支的 show_main_and_close_splash。
 
     eprintln!("[更新器] 开始拉取 manifest...");
     let m = match manifest::fetch_with_failover(&cfg.manifest_urls).await {
@@ -175,15 +179,18 @@ pub async fn run_check(app: AppHandle, args: CliArgs) {
         Err(e) => {
             eprintln!("[更新器] 检查更新失败: {}", e);
             emit_phase(&app, "error", "更新检查失败", &e, None);
-            show_main_window(&app);
+            show_main_and_close_splash(&app).await;
             return;
         }
     };
 
     if !manifest::need_update(&current_version, &m) {
         eprintln!("[更新器] 已是最新版本: {}", current_version);
+        // 检测期由 splash 提供反馈，此时先撤 splash 再退出：
+        // 无更新无需用户任何操作，主窗口全程不显示（含交接模式的静默退出）
+        close_splash(&app);
         match &cfg.launch {
-            // 拉起目标程序后退出（直接运行时检测期间窗口已可见，随拉起一并关闭）
+            // 拉起目标程序后退出
             Some(_) => {
                 // 安装目录从本地 app.json 读取（相对路径 launch 按此目录解析）
                 let installed = read_installed_path(&cfg.app_name).await;
@@ -217,7 +224,7 @@ pub async fn run_check(app: AppHandle, args: CliArgs) {
         &format!("{} → {}", current_version, m.version),
         None,
     );
-    show_main_window(&app);
+    show_main_and_close_splash(&app).await;
 
     // 下载：分卷模式（parts 存在）或单包模式
     let zip_path = download_dir(&cfg.app_name).join(format!("update_{}.zip", m.version));
@@ -775,4 +782,24 @@ fn show_main_window(app: &AppHandle) {
         let _ = win.show();
         let _ = win.set_focus();
     }
+}
+
+/// 关闭 splash 窗口（不存在时静默跳过 —— 交接模式从未创建 splash）。
+fn close_splash(app: &AppHandle) {
+    if let Some(win) = app.get_webview_window(SPLASH_LABEL) {
+        if let Err(e) = win.close() {
+            eprintln!("[更新器] 关闭 splash 失败: {e}");
+        }
+    }
+}
+
+/// 显示主窗口并关闭 splash（顺序照搬 qsm：先 show main，等其首帧，再撤 splash）。
+///
+/// 反过来会出现「主窗口还没绘制完，splash 已消失」的空窗闪动 ——
+/// main 是 Vue 应用，show 到首帧渲染有几百毫秒，这段时间必须由 splash 撑着。
+async fn show_main_and_close_splash(app: &AppHandle) {
+    show_main_window(app);
+    // 等主窗口首帧渲染出来再撤 splash，避免闪空
+    tokio::time::sleep(Duration::from_millis(150)).await;
+    close_splash(app);
 }
