@@ -20,18 +20,21 @@ pub fn run() {
         .setup(move |app| {
             let handle = app.handle().clone();
 
-            // 直接运行（双击启动器，命令行未带 --launch 交接参数）时先创建
-            // splash 启动加载窗口：纯静态零 JS 页面，首帧远快于 main 的 Vue
-            // 应用，用于消除 manifest 检测期间（多地址故障转移，最坏 5s×N）
-            // 的「无界面」空档——此前该阶段只有 main 的 visible:false 窗口，
-            // 双击后像没启动/卡死。
+            // splash 窗口由 tauri.conf.json 静态声明「声明即创建」（qsm 同款）：
+            // Tauri 的 setup() 先创建 app.windows 配置的窗口、再执行本回调
+            // （tauri-2.12.4 src/app.rs:2691-2699），splash 首帧早于任何动态
+            // 创建，且本回调里操作它时窗口必然已存在（无竞态）。
             //
-            // 被目标程序以 --launch 交接时保持完全静默：不创建任何窗口，
-            // 仍只在发现新版本或出错时显示 main（见 updater::run_check）。
+            // 关闭方式照搬 qsm（main.rs show_main_and_close_splash）：检测有
+            // 更新/出错时先 show main、等其首帧渲染、再撤 splash，见
+            // updater::run_check；无更新时补足最短展示时长后退出。
             //
-            // 创建失败不阻塞更新流程：splash 是体验增强，main 窗口兜底。
-            if args.launch.is_none() {
-                create_splash(&handle);
+            // 交接模式（--launch）要求全程静默（本项目特有约束，qsm 无此
+            // 模式）：splash 被配置无条件创建，这里立即关闭。
+            if args.launch.is_some() {
+                updater::close_splash(&handle);
+            } else {
+                updater::mark_splash_shown();
             }
 
             tauri::async_runtime::spawn(async move {
@@ -41,30 +44,4 @@ pub fn run() {
         })
         .run(tauri::generate_context!())
         .expect("Tauri 应用运行失败");
-}
-
-/// 创建 splash 启动加载窗口（仅直接运行模式调用，交接模式不建任何窗口）。
-///
-/// 页面为 `public/splash.html`：Vite 原样拷入 dist 的纯静态页，
-/// 不经前端构建产物，WebView 拿到即可绘制首帧。
-fn create_splash(app: &tauri::AppHandle) {
-    use tauri::{WebviewUrl, WebviewWindowBuilder};
-
-    let result = WebviewWindowBuilder::new(
-        app,
-        updater::SPLASH_LABEL,
-        WebviewUrl::App("splash.html".into()),
-    )
-    .title("更新程序")
-    .inner_size(280.0, 160.0)
-    .center()
-    .decorations(false)
-    .always_on_top(true)
-    .skip_taskbar(true)
-    .visible(true)
-    .build();
-
-    if let Err(e) = result {
-        eprintln!("[更新器] splash 窗口创建失败（继续无 splash 运行）: {e}");
-    }
 }

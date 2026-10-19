@@ -14,10 +14,12 @@
   - splash 不经前端构建产物，Tauri/WebView 拿到 HTML 就能画首帧；
   - 纯 CSS 动画无 JS 开销、零 IPC，不与更新流程抢启动资源。
 
-  创建时机：仅「直接运行」（双击启动器，命令行未带 --launch）时由
-  lib.rs 的 setup 动态创建；--launch 交接模式全程静默，不创建本窗口。
+  创建时机：由 tauri.conf.json 静态声明「声明即创建」（qsm 同款，
+  Tauri 的 setup() 先建配置窗口再执行 setup 回调，首帧早于动态创建）；
+  --launch 交接模式由 lib.rs 的 setup 立即关闭，保持全程静默。
   退出时机：updater.rs 的 run_check —— 发现新版本/出错时先显示主窗口、
-  等其首帧渲染后再关闭 splash；无更新时直接关闭 splash 并退出。
+  等其首帧渲染后再关闭 splash（qsm show_main_and_close_splash 同款顺序）；
+  无更新时补足最短展示时长（1s）后退出。
 -->
 <html lang="zh-CN">
 

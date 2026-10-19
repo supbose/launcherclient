@@ -1,13 +1,15 @@
 //! 更新流程编排：读取配置 → 检查 → 下载（SHA256 校验）→ 安装 → 拉起目标程序。
 //! 无更新时拉起目标程序并退出，出错时显示窗口提示。
 //!
-//! 窗口可见性策略：
-//! - 直接运行（无 --launch 交接参数）：先显示 splash 启动加载页（lib.rs
-//!   动态创建，纯静态零 JS，首帧快），检测期全程有界面反馈；主窗口在
-//!   「发现新版本」或「出错」时才显示，且遵循「先 show main、等其首帧
-//!   渲染、再撤 splash」的顺序，避免空窗闪动
-//! - 被目标程序以 --launch 交接：全程静默（连 splash 都不创建），
-//!   直到发现新版本或出错才显示窗口
+//! 窗口可见性策略（loading 方案对齐 qsm）：
+//! - 直接运行（无 --launch 交接参数）：splash 启动加载页由
+//!   tauri.conf.json 静态声明「声明即创建」（纯静态零 JS，首帧快），
+//!   检测期全程有界面反馈 —— 对应 qsm「等服务端连接」期间显示 loading；
+//!   主窗口在「发现新版本」或「出错」时才显示，且遵循「先 show main、
+//!   等其首帧渲染、再撤 splash」的顺序（qsm show_main_and_close_splash
+//!   同款），避免空窗闪动
+//! - 被目标程序以 --launch 交接：全程静默（splash 由配置无条件创建，
+//!   lib.rs setup 立即关闭），直到发现新版本或出错才显示窗口
 //! - `--check-only` 模式不进 Tauri，无窗口
 
 use std::path::{Path, PathBuf};
@@ -27,9 +29,42 @@ use qsltd_updater_core::manifest;
 use qsltd_updater_core::services;
 
 /// splash 启动加载窗口 label。
-/// 仅直接运行模式由 lib.rs 的 setup 动态创建（交接模式全程静默不建窗），
-/// 检测期提供「正在检查更新」反馈，主窗口显示前由本模块负责撤掉。
+/// 由 tauri.conf.json 静态声明（qsm 同款「声明即创建」），交接模式由
+/// lib.rs setup 立即关闭；检测期提供「正在检查更新」反馈，
+/// 主窗口显示前由本模块按 qsm 同款顺序撤掉。
 pub const SPLASH_LABEL: &str = "splash";
+
+/// splash 最短展示时长（毫秒）。
+///
+/// 无更新等秒级路径下，若 splash 刚出现就关闭退出，用户只看到
+/// 「窗口一闪而过」甚至以为双击没生效。补足到该时长，
+/// 保证「正在检查更新」的加载反馈可感知（已是最新也会停满该时长）。
+pub(crate) const MIN_SPLASH_DISPLAY_MS: u64 = 1000;
+
+/// splash 对用户可见的时刻。
+///
+/// 由 lib.rs setup 在直接运行模式下登记（静态窗口先于 setup 回调创建，
+/// 登记时刻与用户可见时刻相差在毫秒级）；交接模式不登记 —— splash
+/// 已被立即关闭，无需补足。
+static SPLASH_SHOWN_AT: OnceLock<Instant> = OnceLock::new();
+
+/// 登记 splash 已展示（lib.rs setup 中直接运行模式调用）。
+pub(crate) fn mark_splash_shown() {
+    let _ = SPLASH_SHOWN_AT.set(Instant::now());
+}
+
+/// 补足 splash 最短展示时长（无更新静默退出前调用）。
+///
+/// 未登记（交接模式）或已展示足够久时立即返回，不引入额外等待。
+pub(crate) async fn ensure_min_splash_display() {
+    if let Some(at) = SPLASH_SHOWN_AT.get() {
+        let shown = Duration::from_millis(MIN_SPLASH_DISPLAY_MS);
+        let elapsed = at.elapsed();
+        if elapsed < shown {
+            tokio::time::sleep(shown - elapsed).await;
+        }
+    }
+}
 
 /// 配置合并后的生效配置（优先级：命令行 > update.json > 默认值）
 pub(crate) struct ResolvedConfig {
@@ -186,6 +221,11 @@ pub async fn run_check(app: AppHandle, args: CliArgs) {
 
     if !manifest::need_update(&current_version, &m) {
         eprintln!("[更新器] 已是最新版本: {}", current_version);
+        // 先补足 splash 最短展示时长，再关闭退出：manifest 秒回时 splash
+        // 刚出现，不补足就是「一闪而过」，用户看不到加载反馈（曾反馈
+        // 「没有更新时没有 loading 页面」）。交接模式未登记展示时刻
+        // （lib.rs setup 已关 splash 且不登记），此处立即返回，静默不受影响。
+        ensure_min_splash_display().await;
         // 检测期由 splash 提供反馈，此时先撤 splash 再退出：
         // 无更新无需用户任何操作，主窗口全程不显示（含交接模式的静默退出）
         close_splash(&app);
@@ -785,7 +825,7 @@ fn show_main_window(app: &AppHandle) {
 }
 
 /// 关闭 splash 窗口（不存在时静默跳过 —— 交接模式从未创建 splash）。
-fn close_splash(app: &AppHandle) {
+pub(crate) fn close_splash(app: &AppHandle) {
     if let Some(win) = app.get_webview_window(SPLASH_LABEL) {
         if let Err(e) = win.close() {
             eprintln!("[更新器] 关闭 splash 失败: {e}");

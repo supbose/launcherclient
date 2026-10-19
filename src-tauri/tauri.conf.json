@@ -12,6 +12,21 @@
   "app": {
     "windows": [
       {
+        "label": "splash",
+        "title": "正在启动",
+        "url": "splash.html",
+        "width": 280,
+        "height": 160,
+        "resizable": false,
+        "center": true,
+        "decorations": false,
+        "shadow": false,
+        "alwaysOnTop": true,
+        "skipTaskbar": true,
+        "hiddenTitle": true,
+        "visible": true
+      },
+      {
         "label": "main",
         "title": "更新程序",
         "width": 440,
