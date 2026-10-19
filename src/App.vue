@@ -56,7 +56,7 @@
         <div class="status-dot ok"></div>
         <div class="status-text">{{ message }}</div>
         <div class="status-sub">{{ subText }}</div>
-        <button class="btn-close" @click="closeApp">完成</button>
+        <button class="btn-close" @click="finishUpdate">完成</button>
       </template>
 
       <!-- 错误 -->
@@ -109,30 +109,39 @@ const speedText = computed(() => {
 
 let unlisten = null;
 
+// 应用一次阶段状态（事件推送与初始查询共用）
+const applyPhase = (p) => {
+  stage.value = p.stage || 'checking';
+  message.value = p.message || '';
+  subText.value = p.sub || '';
+  // 后端携带字节数时用字节计算精确百分比，未携带时保留后端百分比
+  if (typeof p.downloaded_bytes === 'number' && typeof p.total_bytes === 'number' && p.total_bytes > 0) {
+    percent.value = (p.downloaded_bytes / p.total_bytes) * 100;
+    downloadedBytes.value = p.downloaded_bytes;
+    totalBytes.value = p.total_bytes;
+    speedBps.value = typeof p.speed_bps === 'number' ? p.speed_bps : 0;
+  } else if (typeof p.percent === 'number') {
+    percent.value = p.percent;
+  }
+  // 离开下载阶段时清空下载详情
+  if (p.stage !== 'downloading') {
+    downloadedBytes.value = 0;
+    totalBytes.value = 0;
+    speedBps.value = 0;
+  }
+};
+
 onMounted(async () => {
   try {
     const { listen } = await import('@tauri-apps/api/event');
     unlisten = await listen('update-phase', (event) => {
-      const p = event.payload || {};
-      stage.value = p.stage || 'checking';
-      message.value = p.message || '';
-      subText.value = p.sub || '';
-      // 后端携带字节数时用字节计算精确百分比，未携带时保留后端百分比
-      if (typeof p.downloaded_bytes === 'number' && typeof p.total_bytes === 'number' && p.total_bytes > 0) {
-        percent.value = (p.downloaded_bytes / p.total_bytes) * 100;
-        downloadedBytes.value = p.downloaded_bytes;
-        totalBytes.value = p.total_bytes;
-        speedBps.value = typeof p.speed_bps === 'number' ? p.speed_bps : 0;
-      } else if (typeof p.percent === 'number') {
-        percent.value = p.percent;
-      }
-      // 离开下载阶段时清空下载详情
-      if (p.stage !== 'downloading') {
-        downloadedBytes.value = 0;
-        totalBytes.value = 0;
-        speedBps.value = 0;
-      }
+      applyPhase(event.payload || {});
     });
+    // 监听建立后主动拉取一次当前阶段：
+    // 本地小更新包可能秒级走完全流程，早期事件在监听建立前已 emit 完毕
+    const { invoke } = await import('@tauri-apps/api/core');
+    const cur = await invoke('current_phase');
+    if (cur) applyPhase(cur);
   } catch (e) {
     console.error('事件监听初始化失败:', e);
   }
@@ -149,6 +158,18 @@ const closeApp = async () => {
   } catch (e) {
     console.error('关闭窗口失败:', e);
   }
+};
+
+// 「完成」：先后端启动更新后的应用（command 内部 exit），再兜底关窗
+const finishUpdate = async () => {
+  try {
+    const { invoke } = await import('@tauri-apps/api/core');
+    await invoke('finish_and_launch');
+  } catch (e) {
+    // command 内 app.exit(0) 会中断 IPC，reject 属预期，静默即可
+    console.log('finish_and_launch 返回:', e);
+  }
+  await closeApp();
 };
 </script>
 

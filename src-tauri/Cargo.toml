@@ -37,9 +37,6 @@ dead_code = "allow"
 unwrap_used = "deny"
 expect_used = "warn"
 print_stdout = "warn"
-unused_imports = "allow"
-unused_variables = "allow"
-dead_code = "allow"
 
 [profile.dev]
 debug = true

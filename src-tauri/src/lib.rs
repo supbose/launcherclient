@@ -13,6 +13,10 @@ pub fn run() {
     }
 
     tauri::Builder::default()
+        .invoke_handler(tauri::generate_handler![
+            updater::finish_and_launch,
+            updater::current_phase
+        ])
         .setup(|app| {
             // 启动即解析命令行参数并执行更新检查
             let handle = app.handle().clone();

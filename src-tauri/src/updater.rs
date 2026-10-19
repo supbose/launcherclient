@@ -8,7 +8,7 @@
 //! - `--check-only` 模式不进 Tauri，无窗口
 
 use std::path::{Path, PathBuf};
-use std::sync::Arc;
+use std::sync::{Arc, Mutex, OnceLock};
 use std::time::{Duration, Instant};
 
 use serde::Serialize;
@@ -205,7 +205,7 @@ pub async fn run_check(app: AppHandle, args: CliArgs) {
         current_version,
         m.version,
         if is_parts {
-            format!("分卷 {} 个", m.parts.as_ref().unwrap().len())
+            format!("分卷 {} 个", m.parts.as_ref().map_or(0, Vec::len))
         } else {
             format!("下载地址: {}", m.url)
         }
@@ -318,7 +318,7 @@ pub async fn run_check(app: AppHandle, args: CliArgs) {
             app.exit(0);
         }
         None => {
-            eprintln!("[更新器] 手动模式，更新完成，等待用户关闭");
+            eprintln!("[更新器] 手动模式，更新完成，等待用户点击「完成」启动应用");
         }
     }
 }
@@ -558,8 +558,10 @@ async fn resolve_current_version(args: &CliArgs, app_name: &str) -> String {
 /// 拉起目标程序
 ///
 /// `launch` 为绝对路径时直接使用；为相对路径（通常是文件名）时按以下顺序解析：
+///
 /// 1. 目标程序安装目录（版本目录，优先——目标程序由更新器安装在此）
 /// 2. 更新器 exe 所在目录（兜底）
+///
 /// 都不存在时打印错误
 ///
 /// - `installed_path`: 目标程序安装目录（更新完成分支传入本次安装目录；无更新分支从本地 app.json 读取）
@@ -614,6 +616,52 @@ fn launch_target(cfg: &ResolvedConfig, installed_path: Option<&Path>) {
     }
 }
 
+/// 以分离进程方式启动指定 exe（工作目录取 exe 所在目录）
+///
+/// 注入 `QSLTD_FROM_UPDATER=1`：客户端据此跳过启动检测，防止「拉回→再交接」循环
+fn spawn_detached(exe_path: &Path) {
+    let workdir = exe_path
+        .parent()
+        .map(|p| p.to_path_buf())
+        .unwrap_or_else(|| std::env::current_dir().unwrap_or_default());
+    match std::process::Command::new(exe_path)
+        .current_dir(workdir)
+        .env("QSLTD_FROM_UPDATER", "1")
+        .spawn()
+    {
+        Ok(_) => eprintln!("[更新器] 已启动: {}", exe_path.display()),
+        Err(e) => eprintln!("[更新器] 启动失败 {}: {}", exe_path.display(), e),
+    }
+}
+
+/// 「完成」按钮（前端 done 阶段调用）：启动更新后的应用并退出更新器
+///
+/// - launch 已配置（含 update.json）：走 [`launch_target`] 原解析逻辑
+/// - 手动模式（launch 未配置）：从安装目录定位主 exe 启动
+///   （见 `qsltd_updater_core::install::find_main_executable`）
+/// - 均找不到可执行文件时仅退出，不阻塞用户关闭窗口
+#[tauri::command]
+pub async fn finish_and_launch(app: AppHandle) {
+    let args = qsltd_updater_core::cli::parse();
+    let cfg = resolve_config(&args);
+    match read_installed_path(&cfg.app_name).await {
+        Some(dir) => match &cfg.launch {
+            Some(_) => launch_target(&cfg, Some(Path::new(&dir))),
+            None => {
+                match qsltd_updater_core::install::find_main_executable(
+                    Path::new(&dir),
+                    &cfg.app_name,
+                ) {
+                    Some(exe) => spawn_detached(&exe),
+                    None => eprintln!("[更新器] 安装目录中未找到可执行文件: {}", dir),
+                }
+            }
+        },
+        None => eprintln!("[更新器] 无本地版本记录，跳过启动"),
+    }
+    app.exit(0);
+}
+
 /// 读取本地 app.json 记录的安装目录（不存在或未记录时返回 None）
 async fn read_installed_path(app_name: &str) -> Option<String> {
     let path = local_manifest_path(app_name);
@@ -635,8 +683,8 @@ fn emit_download(
     total: Option<u64>,
     speed_bps: Option<u64>,
 ) {
-    let _ = app.emit(
-        "update-phase",
+    push_phase(
+        app,
         PhasePayload {
             stage: "downloading".to_string(),
             message: message.to_string(),
@@ -657,8 +705,8 @@ fn emit_phase(
     sub: &str,
     percent: Option<f64>,
 ) {
-    let _ = app.emit(
-        "update-phase",
+    push_phase(
+        app,
         PhasePayload {
             stage: stage.to_string(),
             message: message.to_string(),
@@ -671,9 +719,37 @@ fn emit_phase(
     );
 }
 
+/// 记录最新阶段快照并推送事件
+///
+/// 快照供 [`current_phase`] 查询：本地小更新包可能秒级走完全部流程，
+/// 前端 WebView 挂载 + 动态 import 监听建立存在时延，早期事件会错过，
+/// 界面将停在初始态。监听建立后主动拉取一次快照即可对齐。
+fn push_phase(app: &AppHandle, payload: PhasePayload) {
+    if let Ok(mut cell) = latest_phase_cell().lock() {
+        *cell = Some(payload.clone());
+    }
+    let _ = app.emit("update-phase", payload);
+}
+
+/// 最新阶段快照存储（进程级单例）
+static LATEST_PHASE: OnceLock<Mutex<Option<PhasePayload>>> = OnceLock::new();
+
+fn latest_phase_cell() -> &'static Mutex<Option<PhasePayload>> {
+    LATEST_PHASE.get_or_init(|| Mutex::new(None))
+}
+
+/// 前端 WebView 挂载后主动拉取当前阶段（弥补监听建立前错过的事件）
+#[tauri::command]
+pub fn current_phase() -> Option<PhasePayload> {
+    latest_phase_cell()
+        .lock()
+        .unwrap_or_else(|e| e.into_inner())
+        .clone()
+}
+
 /// 推送给前端的阶段事件载荷
 #[derive(Debug, Clone, Serialize)]
-struct PhasePayload {
+pub(crate) struct PhasePayload {
     /// 阶段：checking | downloading | installing | up-to-date | available | done | error
     stage: String,
     /// 主提示文本（中文）

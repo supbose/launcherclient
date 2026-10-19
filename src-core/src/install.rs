@@ -8,6 +8,61 @@ use qingshu::update::LocalManifest;
 /// 安装阶段回调：接收中文消息与可选进度百分比（0-100）
 pub type StageCallback = Arc<dyn Fn(&str, Option<f64>) + Send + Sync>;
 
+/// 更新器自身的可执行文件名（小写 stem），定位主程序时排除，避免误启动自己
+const SELF_EXE_STEMS: &[&str] = &["launcherclient", "qsltdupdater", "updater"];
+
+/// 在安装目录中定位主程序 exe（手动模式 launch 未配置时，供「完成」按钮启动用）
+///
+/// 选择规则（按优先级）：
+/// 1. 排除更新器自身文件名（launcherclient / qsltdupdater / updater，不区分大小写）
+/// 2. 文件名 stem 与 `app_name` 匹配（不区分大小写）优先
+/// 3. 唯一候选直接选用
+/// 4. 多个候选且无名称匹配时，取文件体积最大者（主程序通常最大）；
+///    读取元数据失败（大小均为 0）时返回 None，避免误启动
+pub fn find_main_executable(install_dir: &Path, app_name: &str) -> Option<PathBuf> {
+    let candidates: Vec<PathBuf> = std::fs::read_dir(install_dir)
+        .ok()?
+        .filter_map(|e| e.ok())
+        .map(|e| e.path())
+        .filter(|p| {
+            p.is_file()
+                && p.extension().is_some_and(|ext| ext.eq_ignore_ascii_case("exe"))
+                && !p.file_stem().is_some_and(|s| {
+                    let stem = s.to_string_lossy().to_lowercase();
+                    SELF_EXE_STEMS.contains(&stem.as_str())
+                })
+        })
+        .collect();
+    if candidates.is_empty() {
+        return None;
+    }
+    // 名称匹配优先（qsm.exe 之于 app_name=qsm）
+    let app_lower = app_name.to_lowercase();
+    if let Some(hit) = candidates
+        .iter()
+        .find(|p| {
+            p.file_stem()
+                .is_some_and(|s| s.to_string_lossy().to_lowercase() == app_lower)
+        })
+        .cloned()
+    {
+        return Some(hit);
+    }
+    if candidates.len() == 1 {
+        return candidates.into_iter().next();
+    }
+    // 多个候选：取体积最大者；全部读取失败时不猜
+    let mut best: Option<(PathBuf, u64)> = None;
+    for c in candidates {
+        let size = std::fs::metadata(&c).map(|m| m.len()).unwrap_or(0);
+        match &best {
+            Some((_, s)) if *s >= size => {}
+            _ => best = Some((c, size)),
+        }
+    }
+    best.filter(|(_, size)| *size > 0).map(|(p, _)| p)
+}
+
 /// 安装更新包
 ///
 /// - `zip_path`: 已下载并通过校验的更新包
@@ -152,4 +207,158 @@ fn extract_zip(zip_path: &Path, dest: &Path, on_stage: &StageCallback) -> Result
         );
     }
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::io;
+    use std::sync::atomic::{AtomicU32, Ordering};
+
+    static COUNTER: AtomicU32 = AtomicU32::new(0);
+
+    /// 造一个临时安装目录（tag 用于区分用例）
+    fn temp_install_dir(tag: &str) -> io::Result<PathBuf> {
+        let n = COUNTER.fetch_add(1, Ordering::SeqCst);
+        let dir = std::env::temp_dir().join(format!(
+            "qsltd_install_test_{}_{}_{}",
+            tag,
+            std::process::id(),
+            n
+        ));
+        std::fs::create_dir_all(&dir)?;
+        Ok(dir)
+    }
+
+    /// 在目录里造一个指定大小的假 exe
+    fn make_exe(dir: &Path, name: &str, size: u64) -> io::Result<()> {
+        let buf = vec![b'x'; size as usize];
+        std::fs::write(dir.join(name), &buf)
+    }
+
+    fn stem_of(p: &Path) -> String {
+        p.file_name()
+            .map(|n| n.to_string_lossy().to_lowercase())
+            .unwrap_or_default()
+    }
+
+    #[test]
+    fn find_main_prefers_app_name_match() -> io::Result<()> {
+        // qsm.exe 与 app_name 匹配，即使另一个文件更大也优先选 qsm.exe
+        let dir = temp_install_dir("name_match")?;
+        make_exe(&dir, "bigger.exe", 10_000)?;
+        make_exe(&dir, "qsm.exe", 100)?;
+        let hit = find_main_executable(&dir, "qsm");
+        assert_eq!(hit.as_deref().map(stem_of).as_deref(), Some("qsm.exe"));
+        let _ = std::fs::remove_dir_all(&dir);
+        Ok(())
+    }
+
+    #[test]
+    fn find_main_app_name_match_case_insensitive() -> io::Result<()> {
+        let dir = temp_install_dir("case_ins")?;
+        make_exe(&dir, "QSM.EXE", 100)?;
+        make_exe(&dir, "other.exe", 5_000)?;
+        let hit = find_main_executable(&dir, "qsm");
+        assert_eq!(hit.as_deref().map(stem_of).as_deref(), Some("qsm.exe"));
+        let _ = std::fs::remove_dir_all(&dir);
+        Ok(())
+    }
+
+    #[test]
+    fn find_main_single_exe_any_name() -> io::Result<()> {
+        // 唯一 exe 直接选用，不要求名称匹配
+        let dir = temp_install_dir("single")?;
+        make_exe(&dir, "whatever.exe", 100)?;
+        let hit = find_main_executable(&dir, "qsm");
+        assert_eq!(hit.as_deref().map(stem_of).as_deref(), Some("whatever.exe"));
+        let _ = std::fs::remove_dir_all(&dir);
+        Ok(())
+    }
+
+    #[test]
+    fn find_main_largest_when_ambiguous() -> io::Result<()> {
+        // 多个候选且无名称匹配：取体积最大者
+        let dir = temp_install_dir("largest")?;
+        make_exe(&dir, "small.exe", 100)?;
+        make_exe(&dir, "medium.exe", 5_000)?;
+        make_exe(&dir, "big.exe", 20_000)?;
+        let hit = find_main_executable(&dir, "qsm");
+        assert_eq!(hit.as_deref().map(stem_of).as_deref(), Some("big.exe"));
+        let _ = std::fs::remove_dir_all(&dir);
+        Ok(())
+    }
+
+    #[test]
+    fn find_main_excludes_updater_self() -> io::Result<()> {
+        // 更新器自身被排除；排除后唯一候选胜出
+        let dir = temp_install_dir("exclude_self")?;
+        make_exe(&dir, "launcherclient.exe", 99_000)?;
+        make_exe(&dir, "qsltdupdater.exe", 99_000)?;
+        make_exe(&dir, "qsm.exe", 100)?;
+        let hit = find_main_executable(&dir, "qsm");
+        assert_eq!(hit.as_deref().map(stem_of).as_deref(), Some("qsm.exe"));
+        let _ = std::fs::remove_dir_all(&dir);
+        Ok(())
+    }
+
+    #[test]
+    fn find_main_excludes_updater_self_case_insensitive() -> io::Result<()> {
+        let dir = temp_install_dir("exclude_self_ci")?;
+        make_exe(&dir, "QsLtdUpdater.exe", 50)?;
+        make_exe(&dir, "client.exe", 10)?;
+        let hit = find_main_executable(&dir, "qsm");
+        assert_eq!(hit.as_deref().map(stem_of).as_deref(), Some("client.exe"));
+        let _ = std::fs::remove_dir_all(&dir);
+        Ok(())
+    }
+
+    #[test]
+    fn find_main_none_when_no_exe() -> io::Result<()> {
+        let dir = temp_install_dir("no_exe")?;
+        make_exe(&dir, "readme.txt", 100)?;
+        make_exe(&dir, "data.dll", 100)?;
+        assert!(find_main_executable(&dir, "qsm").is_none());
+        let _ = std::fs::remove_dir_all(&dir);
+        Ok(())
+    }
+
+    #[test]
+    fn find_main_none_when_only_updater_self() -> io::Result<()> {
+        // 排除更新器自身后无候选
+        let dir = temp_install_dir("only_self")?;
+        make_exe(&dir, "launcherclient.exe", 100)?;
+        assert!(find_main_executable(&dir, "qsm").is_none());
+        let _ = std::fs::remove_dir_all(&dir);
+        Ok(())
+    }
+
+    #[test]
+    fn find_main_none_when_all_zero_size() -> io::Result<()> {
+        // 全部候选大小为 0（元数据异常/空文件）时不猜，返回 None
+        let dir = temp_install_dir("zero_size")?;
+        make_exe(&dir, "a.exe", 0)?;
+        make_exe(&dir, "b.exe", 0)?;
+        assert!(find_main_executable(&dir, "qsm").is_none());
+        let _ = std::fs::remove_dir_all(&dir);
+        Ok(())
+    }
+
+    #[test]
+    fn find_main_none_for_missing_dir() {
+        let dir = std::env::temp_dir().join("qsltd_install_test_not_exist_12345");
+        assert!(find_main_executable(&dir, "qsm").is_none());
+    }
+
+    #[test]
+    fn find_main_ignores_subdirectory_exes() -> io::Result<()> {
+        // 只扫顶层，不递归子目录
+        let dir = temp_install_dir("no_recurse")?;
+        let sub = dir.join("bin");
+        std::fs::create_dir_all(&sub)?;
+        make_exe(&sub, "qsm.exe", 100)?;
+        assert!(find_main_executable(&dir, "qsm").is_none());
+        let _ = std::fs::remove_dir_all(&dir);
+        Ok(())
+    }
 }
