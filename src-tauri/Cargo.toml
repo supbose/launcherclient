@@ -45,3 +45,7 @@ opt-level = 0
 [profile.release]
 opt-level = 3
 lto = true
+# 剥离调试符号与 panic 位置信息：减小体积、降低杀软启发式误报率
+#（未签名 + 大体积 + 符号中大量路径字符串是 GenInjector 类误报的放大器）
+strip = true
+codegen-units = 1
