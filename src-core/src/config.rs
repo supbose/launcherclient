@@ -11,8 +11,9 @@
 //! }
 //! ```
 //!
-//! 优先级：命令行参数 > update.json > 内置默认值
+//! 优先级：命令行参数 > update.json > 内置默认值（见 [`crate::defaults`]）
 
+use crate::defaults;
 use serde::Deserialize;
 
 /// manifest 地址配置项（兼容单地址字符串或多地址数组，多地址按序故障转移）
@@ -105,8 +106,8 @@ fn generate_default_template(dir: &std::path::Path) -> bool {
             "max_versions": "保留的版本目录数量（含当前版本，旧目录即回滚资产），默认 2",
             "services": "更新前需卸载的 Windows 服务名数组；运行中的先停止后卸载，卸载后不恢复不重启"
         },
-        "manifest_url": ["https://qsc.cdn.qcsm.ltd/update/qsm/version.json","https://qsw.us.ci/update/qsm/version.json"],
-        "app_name": "qsm",
+        "manifest_url": defaults::DEFAULT_MANIFEST_URLS,
+        "app_name": defaults::DEFAULT_APP_NAME,
         "launch": "qsm.exe",
         "current_version": "",
         "max_versions": DEFAULT_MAX_VERSIONS,

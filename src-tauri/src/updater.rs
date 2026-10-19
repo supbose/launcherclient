@@ -11,19 +11,11 @@ use tauri::{AppHandle, Emitter, Manager};
 use qsltd_updater_core::cleanup;
 use qsltd_updater_core::cli::CliArgs;
 use qsltd_updater_core::config;
+use qsltd_updater_core::defaults::{DEFAULT_APP_NAME, DEFAULT_MANIFEST_URLS, PROGRESS_INTERVAL_MS};
 use qsltd_updater_core::download;
 use qsltd_updater_core::install;
 use qsltd_updater_core::manifest;
 use qsltd_updater_core::services;
-
-/// 默认服务器 manifest 地址（按序故障转移，第一个失败自动切换下一个）
-const DEFAULT_MANIFEST_URLS: &[&str] = &["https://qsc.cdn.qcsm.ltd/update/qsm/version.json","https://qsw.us.ci/update/qsm/version.json"];
-
-/// 默认应用名称（决定配置/下载/安装目录）
-const DEFAULT_APP_NAME: &str = "qsm";
-
-/// 进度事件推送间隔（毫秒）
-const PROGRESS_INTERVAL_MS: u64 = 300;
 
 /// 配置合并后的生效配置（优先级：命令行 > update.json > 默认值）
 pub(crate) struct ResolvedConfig {

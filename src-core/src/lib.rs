@@ -10,6 +10,7 @@
 pub mod cli;
 pub mod cleanup;
 pub mod config;
+pub mod defaults;
 pub mod download;
 pub mod install;
 pub mod manifest;
