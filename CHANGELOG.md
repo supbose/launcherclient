@@ -6,6 +6,29 @@
 
 
 
+
+## v0.1.6 (2026-10-20)
+### 🚀 新增功能
+
+- [36f80ad](/-/commit/36f80ad6dea89d54fa548c46d23f85736ffe1302) 新增(tauri): 直接运行时检测阶段显示「正在检查更新」窗口 (src-tauri/src/updater.rs)
+
+### 🩹 修复 Bug
+
+- [567da42](/-/commit/567da42f5e19e78cd383f16bf0a12751ef94f210) 修复(tauri): 手动模式点「完成」启动更新后的应用，并修复阶段事件竞态 (src-core/src/install.rs, src-tauri/Cargo.toml, src-tauri/src/lib.rs, src-tauri/src/updater.rs, src/App.vue)
+
+### ♻️ 代码重构
+
+- [9bc579b](/-/commit/9bc579bb5e8fd36139359168c44c8c46b12aa326) 重构(core): 内置默认值收敛到 src-core/defaults.rs 单一来源 (src-core/src/config.rs, src-core/src/defaults.rs, src-core/src/lib.rs, src-tauri/src/updater.rs, src-zsui/src/updater.rs)
+- [b74c6d8](/-/commit/b74c6d8d87f6cccf2421f09f4237847ffd74df6e) 重构(core): 抽离共享核心 crate src-core，消除两套实现的后端重复 (src-core/Cargo.lock, src-core/Cargo.toml, src-core/src/cleanup.rs, src-core/src/cli.rs, src-core/src/config.rs, src-core/src/download.rs, src-core/src/install.rs, src-core/src/lib.rs, src-core/src/manifest.rs, src-core/src/services.rs, src-tauri/Cargo.lock, src-tauri/Cargo.toml, src-tauri/src/lib.rs, src-tauri/src/updater.rs, src-zsui/Cargo.lock, src-zsui/Cargo.toml, src-zsui/src/cleanup.rs, src-zsui/src/cli.rs, src-zsui/src/config.rs, src-zsui/src/download.rs, src-zsui/src/install.rs, src-zsui/src/main.rs, src-zsui/src/manifest.rs, src-zsui/src/services.rs, src-zsui/src/updater.rs)
+
+### 📝 文档更新
+
+- [1a1d034](/-/commit/1a1d0347299a1ff0f712ca90c554be92c0cd5d5f) 文档(.workbuddy): 添加2026-10-19项目分析与重构备忘文档 (.workbuddy/memory/2026-10-19.md)
+
+### ✅ 测试用例
+
+- [21f799f](/-/commit/21f799fdad8c4430a380c40cff38d58288c56d99) 测试(services): 抽象 ScRunner 隔离破坏性测试，补 22 个纯单元测试 (src-core/Cargo.toml, src-core/src/services.rs, src-tauri/src/updater.rs, src-zsui/src/updater.rs)
+
 ## v0.1.5 (2026-10-19)
 ### 🚀 新增功能
 
