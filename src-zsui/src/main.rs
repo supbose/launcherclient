@@ -5,21 +5,17 @@
 //!
 //! 流程：命令行解析 → 窗口前启动决策（无更新 + launch 模式静默退出）→
 //! 需要时进入 zsui UI 循环，后台线程执行下载/安装并驱动视图刷新。
+//!
+//! 后端模块已抽离至共享 crate `qsltd-updater-core`（src-core），
+//! 本 crate 只保留 zsui 视图层与 UI 编排层。
 
-mod cleanup;
-mod cli;
-mod config;
-mod download;
-mod install;
-mod manifest;
-mod services;
 mod ui;
 mod updater;
 
 use std::sync::{Arc, Mutex};
 
 fn main() {
-    let args = cli::parse();
+    let args = qsltd_updater_core::cli::parse();
     let cfg = updater::resolve_config(&args);
     eprintln!(
         "[更新器] 启动，应用: {}，manifest 地址 {} 个: {}",

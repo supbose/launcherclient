@@ -22,17 +22,11 @@ tauri-build = { version = "2", features = [] }
 [dependencies]
 tauri = { version = "2", features = [] }
 serde = { version = "1", features = ["derive"] }
-serde_json = "1"
-reqwest = { version = "0.12", features = ["json", "stream"] }
-semver = "1"
-# 下载与安装
 tokio = { version = "1", features = ["full"] }
-futures-util = "0.3"
-sha2 = "0.10"
-hex = "0.4"
-zip = "2"
 # 统一能力库（自有封装）：update 模块提供 LocalManifest 本地版本记录与 get_myapp_dir
 qingshu = { path = "../../../qingshu.work/rust/qingshu", features = ["update"] }
+# 共享核心：cli/config/manifest/download/install/cleanup/services（无 UI）
+qsltd-updater-core = { path = "../src-core" }
 
 [lints.rust]
 unused_imports = "allow"

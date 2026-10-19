@@ -10,13 +10,13 @@ use std::time::Instant;
 
 use zsui::UiInvalidationHandle;
 
-use crate::cleanup;
-use crate::cli::CliArgs;
-use crate::config;
-use crate::download;
-use crate::install;
-use crate::manifest;
-use crate::services;
+use qsltd_updater_core::cleanup;
+use qsltd_updater_core::cli::CliArgs;
+use qsltd_updater_core::config;
+use qsltd_updater_core::download;
+use qsltd_updater_core::install;
+use qsltd_updater_core::manifest;
+use qsltd_updater_core::services;
 use crate::ui::{format_bytes, SharedUi, Stage, UiProxy, UiSnapshot};
 
 /// 默认服务器 manifest 地址（按序故障转移，第一个失败自动切换下一个）

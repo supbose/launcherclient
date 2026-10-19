@@ -2065,18 +2065,12 @@ dependencies = [
 name = "launcherclient"
 version = "0.1.0"
 dependencies = [
- "futures-util",
- "hex",
  "qingshu",
- "reqwest 0.12.28",
- "semver",
+ "qsltd-updater-core",
  "serde",
- "serde_json",
- "sha2",
  "tauri",
  "tauri-build",
  "tokio",
- "zip",
 ]
 
 [[package]]
@@ -2945,6 +2939,22 @@ dependencies = [
  "tracing-log",
  "tracing-subscriber",
  "winapi",
+ "zip",
+]
+
+[[package]]
+name = "qsltd-updater-core"
+version = "0.1.0"
+dependencies = [
+ "futures-util",
+ "hex",
+ "qingshu",
+ "reqwest 0.12.28",
+ "semver",
+ "serde",
+ "serde_json",
+ "sha2",
+ "tokio",
  "zip",
 ]
 

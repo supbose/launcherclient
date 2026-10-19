@@ -8,13 +8,13 @@ use std::time::{Duration, Instant};
 use serde::Serialize;
 use tauri::{AppHandle, Emitter, Manager};
 
-use crate::cleanup;
-use crate::cli::CliArgs;
-use crate::config;
-use crate::download;
-use crate::install;
-use crate::manifest;
-use crate::services;
+use qsltd_updater_core::cleanup;
+use qsltd_updater_core::cli::CliArgs;
+use qsltd_updater_core::config;
+use qsltd_updater_core::download;
+use qsltd_updater_core::install;
+use qsltd_updater_core::manifest;
+use qsltd_updater_core::services;
 
 /// 默认服务器 manifest 地址（按序故障转移，第一个失败自动切换下一个）
 const DEFAULT_MANIFEST_URLS: &[&str] = &["https://qsc.cdn.qcsm.ltd/update/qsm/version.json","https://qsw.us.ci/update/qsm/version.json"];
@@ -26,7 +26,7 @@ const DEFAULT_APP_NAME: &str = "qsm";
 const PROGRESS_INTERVAL_MS: u64 = 300;
 
 /// 配置合并后的生效配置（优先级：命令行 > update.json > 默认值）
-struct ResolvedConfig {
+pub(crate) struct ResolvedConfig {
     app_name: String,
     /// manifest 地址列表（按序故障转移）
     manifest_urls: Vec<String>,

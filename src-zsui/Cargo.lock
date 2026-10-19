@@ -2412,7 +2412,7 @@ dependencies = [
 ]
 
 [[package]]
-name = "qsltdupdater-zsui"
+name = "qsltd-updater-core"
 version = "0.1.0"
 dependencies = [
  "futures-util",
@@ -2425,6 +2425,16 @@ dependencies = [
  "sha2",
  "tokio",
  "zip",
+]
+
+[[package]]
+name = "qsltdupdater-zsui"
+version = "0.1.0"
+dependencies = [
+ "qingshu",
+ "qsltd-updater-core",
+ "serde",
+ "tokio",
  "zsui",
 ]
 
