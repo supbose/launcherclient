@@ -1,5 +1,11 @@
 //! 更新流程编排：读取配置 → 检查 → 下载（SHA256 校验）→ 安装 → 拉起目标程序。
-//! 无更新时静默拉起目标程序并退出，出错时显示窗口提示。
+//! 无更新时拉起目标程序并退出，出错时显示窗口提示。
+//!
+//! 窗口可见性策略：
+//! - 直接运行（无 --launch 交接参数）：检测阶段即显示「正在检查更新」窗口，
+//!   避免双击后长时间无任何反馈、疑似程序未启动或卡死
+//! - 被目标程序以 --launch 交接：全程静默，直到发现新版本或出错才显示窗口
+//! - `--check-only` 模式不进 Tauri，无窗口
 
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
@@ -155,6 +161,14 @@ pub async fn run_check(app: AppHandle, args: CliArgs) {
 
     emit_phase(&app, "checking", "正在检查更新...", "", None);
 
+    // 直接运行（未带 --launch 交接参数，如双击启动器）时立即显示窗口：
+    // 让用户明确看到「正在检查更新」，避免双击后长时间无反馈、疑似卡死。
+    // 被目标程序以 --launch 交接时保持静默，直到发现新版本或出错才显示
+    // （见下方 need_update / error 分支的 show_main_window）。
+    if args.launch.is_none() {
+        show_main_window(&app);
+    }
+
     eprintln!("[更新器] 开始拉取 manifest...");
     let m = match manifest::fetch_with_failover(&cfg.manifest_urls).await {
         Ok(m) => m,
@@ -169,14 +183,14 @@ pub async fn run_check(app: AppHandle, args: CliArgs) {
     if !manifest::need_update(&current_version, &m) {
         eprintln!("[更新器] 已是最新版本: {}", current_version);
         match &cfg.launch {
-            // 被目标程序拉起：静默拉起目标程序后退出，窗口全程不显示
+            // 拉起目标程序后退出（直接运行时检测期间窗口已可见，随拉起一并关闭）
             Some(_) => {
                 // 安装目录从本地 app.json 读取（相对路径 launch 按此目录解析）
                 let installed = read_installed_path(&cfg.app_name).await;
                 launch_target(&cfg, installed.as_deref().map(Path::new));
                 app.exit(0);
             }
-            // 仅检测模式（由目标程序启动时拉起）：无更新静默退出，不打扰目标程序
+            // 手动模式（无 launch 配置）：无更新静默退出，不打扰用户
             None => {
                 app.exit(0);
             }
