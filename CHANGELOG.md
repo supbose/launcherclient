@@ -8,6 +8,17 @@
 
 
 
+
+## v0.1.8 (2026-10-20)
+### 🚀 新增功能
+
+- [a97ec4c](/-/commit/a97ec4ce102c2b7c0fa48ef8f4b21754f6238226) 新增(.workbuddy): 对齐 qsm 方案优化 splash 启动加载逻辑 (.workbuddy/memory/2026-10-19.md, .workbuddy/memory/2026-10-20.md)
+- [5c6139c](/-/commit/5c6139ca6ef004104d079ceeffa6433ac975e814) 新增(tauri): splash 改静态声明对齐 qsm，无更新补足最短展示 (public/splash.html, src-tauri/src/lib.rs, src-tauri/src/updater.rs, src-tauri/tauri.conf.json)
+
+### 📦 构建系统
+
+- [e309a88](/-/commit/e309a8851698686d1d5c51d8f66ef6f9930e8fc3) 构建(release): 加固 release profile 降低杀软启发式误报率 (src-tauri/Cargo.toml)
+
 ## v0.1.7-beta.0 (2026-10-20)
 ### 🚀 新增功能
 

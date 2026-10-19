@@ -19,5 +19,5 @@
     "tauri:dev": "tauri dev"
   },
   "type": "module",
-  "version": "0.1.7-beta.0"
+  "version": "0.1.8"
 }
