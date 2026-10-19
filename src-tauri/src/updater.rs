@@ -257,7 +257,7 @@ pub async fn run_check(app: AppHandle, args: CliArgs) {
         let svc_app = app.clone();
         let svc_names = cfg.services.clone();
         tokio::task::spawn_blocking(move || {
-            services::uninstall_configured(&svc_names, &|msg| {
+            services::uninstall_configured(&services::SystemScRunner, &svc_names, &|msg| {
                 emit_phase(&svc_app, "installing", "正在处理服务...", msg, None);
             })
         })

@@ -283,7 +283,7 @@ async fn run_update_flow(cfg: &ResolvedConfig, m: &manifest::FlatManifest, proxy
         let svc_names = cfg.services.clone();
         let svc_proxy = proxy.clone();
         tokio::task::spawn_blocking(move || {
-            services::uninstall_configured(&svc_names, &|msg| {
+            services::uninstall_configured(&services::SystemScRunner, &svc_names, &|msg| {
                 svc_proxy.set_phase(Stage::Installing, "正在处理服务...", msg, None);
             })
         })

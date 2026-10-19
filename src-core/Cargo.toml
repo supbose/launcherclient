@@ -26,6 +26,8 @@ zip = "2"
 # 统一能力库（自有封装）：update 模块提供 LocalManifest 本地版本记录与 get_myapp_dir
 qingshu = { path = "../../../qingshu.work/rust/qingshu", features = ["update"] }
 
+# 注意：unused_imports / unused_variables / dead_code 是 rustc lint，
+# 必须放在 [lints.rust]；放进 [lints.clippy] 会触发 unknown lint 警告且不生效
 [lints.rust]
 unused_imports = "allow"
 unused_variables = "allow"
@@ -35,6 +37,3 @@ dead_code = "allow"
 unwrap_used = "deny"
 expect_used = "warn"
 print_stdout = "warn"
-unused_imports = "allow"
-unused_variables = "allow"
-dead_code = "allow"
