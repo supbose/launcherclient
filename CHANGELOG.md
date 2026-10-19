@@ -7,6 +7,13 @@
 
 
 
+
+## v0.1.7-beta.0 (2026-10-20)
+### 🚀 新增功能
+
+- [09baec3](/-/commit/09baec346ada18a934d1130600f5843795a25bd5) 新增(.workbuddy): 为启动页添加动态 splash 加载逻辑 (.workbuddy/memory/2026-10-19.md)
+- [dfbd360](/-/commit/dfbd360f5a4b9a8de097f4f7353b77025ac84094) 新增(tauri): 引入 qsm 同款 splash 启动加载页，消除检测期无界面空档 (public/splash.html, src-tauri/src/lib.rs, src-tauri/src/updater.rs)
+
 ## v0.1.6 (2026-10-20)
 ### 🚀 新增功能
 
