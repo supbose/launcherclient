@@ -13,6 +13,7 @@
 //! - `--check-only` 模式不进 Tauri，无窗口
 
 use std::path::{Path, PathBuf};
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex, OnceLock};
 use std::time::{Duration, Instant};
 
@@ -689,6 +690,13 @@ fn spawn_detached(exe_path: &Path) {
     }
 }
 
+/// 「完成」按钮重入守卫。
+///
+/// Tauri command 并发执行：「完成」被快速双击或 IPC 重试时，两次
+/// `finish_and_launch` 可能都走到 spawn_detached，启动两个应用实例。
+/// 首次调用后置位，后续调用直接退出。
+static FINISH_CALLED: AtomicBool = AtomicBool::new(false);
+
 /// 「完成」按钮（前端 done 阶段调用）：启动更新后的应用并退出更新器
 ///
 /// - launch 已配置（含 update.json）：走 [`launch_target`] 原解析逻辑
@@ -697,6 +705,11 @@ fn spawn_detached(exe_path: &Path) {
 /// - 均找不到可执行文件时仅退出，不阻塞用户关闭窗口
 #[tauri::command]
 pub async fn finish_and_launch(app: AppHandle) {
+    // 重入守卫：已处理过一次则不再启动，直接退出（见 FINISH_CALLED 注释）
+    if FINISH_CALLED.swap(true, Ordering::SeqCst) {
+        app.exit(0);
+        return;
+    }
     let args = qsltd_updater_core::cli::parse();
     let cfg = resolve_config(&args);
     match read_installed_path(&cfg.app_name).await {
