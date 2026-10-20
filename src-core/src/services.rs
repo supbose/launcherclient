@@ -3,7 +3,8 @@
 //! 通过系统自带 sc.exe 交互，零额外依赖：
 //! - 未安装的服务跳过
 //! - 运行中的服务先 `sc stop` 并等待停止完成（15s 超时，失败也继续卸载）
-//! - `sc delete` 卸载；卸载失败仅记录，不阻塞更新
+//! - `sc delete` 卸载；卸载失败返回错误由编排层决定（tauri 版：安装前终止，
+//!   避免「服务仍注册旧路径、新版本却已装完」的半更新状态）
 //!
 //! sc.exe 调用经 [`ScRunner`] 抽象：生产用 [`SystemScRunner`]，测试用内存 mock，
 //! 避免单元测试触碰真实系统服务。真实冒烟测试 gate 在 `integration` feature 下。
@@ -140,11 +141,18 @@ fn stop_service(runner: &dyn ScRunner, name: &str, on_event: &dyn Fn(&str)) -> b
 /// 卸载单个服务：运行中先停止（失败也继续），然后 `sc delete`。未安装跳过。
 ///
 /// - `stop_timeout`: 停止等待时长；测试可传 [`Duration::ZERO`] 实现零等待
-fn uninstall_one(runner: &dyn ScRunner, name: &str, on_event: &dyn Fn(&str), stop_timeout: Duration) {
+///
+/// 返回：Ok = 已卸载或本就未安装；Err = 卸载失败详情（交由编排层处置）
+fn uninstall_one(
+    runner: &dyn ScRunner,
+    name: &str,
+    on_event: &dyn Fn(&str),
+    stop_timeout: Duration,
+) -> Result<(), String> {
     match query_state(runner, name) {
         ServiceState::NotInstalled => {
             eprintln!("[服务] {name} 未安装，跳过");
-            return;
+            return Ok(());
         }
         ServiceState::Stopped => {}
         ServiceState::Running | ServiceState::Other => {
@@ -153,20 +161,41 @@ fn uninstall_one(runner: &dyn ScRunner, name: &str, on_event: &dyn Fn(&str), sto
     }
     on_event(&format!("正在卸载服务 {name}..."));
     match runner.run(&["delete", name]) {
-        Ok(o) if o.success => eprintln!("[服务] {name} 已卸载"),
-        Ok(o) => eprintln!("[服务] {name} 卸载失败（exit {:?}），继续更新", o.success),
-        Err(e) => eprintln!("[服务] {name} 卸载执行失败: {e}，继续更新"),
+        Ok(o) if o.success => {
+            eprintln!("[服务] {name} 已卸载");
+            Ok(())
+        }
+        Ok(o) => Err(format!(
+            "服务 {name} 卸载失败（sc delete 退出码非零: {}）",
+            o.success
+        )),
+        Err(e) => Err(format!("服务 {name} 卸载执行失败: {e}")),
     }
 }
 
 /// 卸载配置的服务列表（安装前调用，阻塞，编排层用 spawn_blocking 包裹）。
 ///
+/// 全部服务都会尝试卸载（单个失败不中断剩余项），最终聚合返回：
+/// Ok = 全部成功或未安装；Err = 失败详情列表（非空）。
+///
 /// - `runner`: sc.exe 执行器（生产传 [`SystemScRunner`]，测试可传 mock）
 /// - `on_event`: 用于 UI 阶段文案；卸载后不恢复、不重启。
-pub fn uninstall_configured(runner: &dyn ScRunner, services: &[String], on_event: &dyn Fn(&str)) {
+pub fn uninstall_configured(
+    runner: &dyn ScRunner,
+    services: &[String],
+    on_event: &dyn Fn(&str),
+) -> Result<(), Vec<String>> {
     let stop_timeout = Duration::from_secs(STOP_TIMEOUT_SECS);
+    let mut failures = Vec::new();
     for name in services {
-        uninstall_one(runner, name, on_event, stop_timeout);
+        if let Err(e) = uninstall_one(runner, name, on_event, stop_timeout) {
+            failures.push(e);
+        }
+    }
+    if failures.is_empty() {
+        Ok(())
+    } else {
+        Err(failures)
     }
 }
 
@@ -369,29 +398,34 @@ mod tests {
     fn uninstall_skips_not_installed_service() {
         let sc = FakeSc::new(vec![ScOutput::failed()]);
         let events = std::cell::RefCell::new(Vec::new());
-        uninstall_configured(&sc, &[SVC.to_string()], &|e| events.borrow_mut().push(e.to_string()));
+        let result =
+            uninstall_configured(&sc, &[SVC.to_string()], &|e| events.borrow_mut().push(e.to_string()));
         assert_eq!(sc.calls(), vec![vec!["query", SVC]]);
         assert!(events.into_inner().is_empty(), "未安装时不应推送任何事件");
+        assert!(result.is_ok(), "服务未安装应视为成功跳过");
     }
 
     #[test]
     fn uninstall_deletes_stopped_service_directly() {
         let sc = FakeSc::new(vec![ScOutput::query_state(1)]);
         let events = std::cell::RefCell::new(Vec::new());
-        uninstall_configured(&sc, &[SVC.to_string()], &|e| events.borrow_mut().push(e.to_string()));
+        let result =
+            uninstall_configured(&sc, &[SVC.to_string()], &|e| events.borrow_mut().push(e.to_string()));
         assert_eq!(
             sc.calls(),
             vec![vec!["query", SVC], vec!["delete", SVC]],
             "已停止的服务应直接卸载，不应先 stop"
         );
         assert_eq!(events.into_inner(), vec!["正在卸载服务 qs_test_svc...".to_string()]);
+        assert!(result.is_ok());
     }
 
     #[test]
     fn uninstall_stops_then_deletes_running_service() {
         let sc = FakeSc::new(vec![ScOutput::query_state(4), ScOutput::query_state(1)]);
         let events = std::cell::RefCell::new(Vec::new());
-        uninstall_configured(&sc, &[SVC.to_string()], &|e| events.borrow_mut().push(e.to_string()));
+        let result =
+            uninstall_configured(&sc, &[SVC.to_string()], &|e| events.borrow_mut().push(e.to_string()));
         assert_eq!(
             sc.calls(),
             vec![vec!["query", SVC], vec!["stop", SVC], vec!["query", SVC], vec!["delete", SVC]]
@@ -399,6 +433,7 @@ mod tests {
         let events = events.into_inner();
         assert_eq!(events[0], "正在停止服务 qs_test_svc...");
         assert_eq!(events[1], "正在卸载服务 qs_test_svc...");
+        assert!(result.is_ok());
     }
 
     #[test]
@@ -406,7 +441,7 @@ mod tests {
         // 停止超时后仍继续卸载：query(运行) → stop → query(仍运行) → 超时 → delete
         let sc = FakeSc::new(vec![ScOutput::query_state(4), ScOutput::query_state(4)]);
         let events = std::cell::RefCell::new(Vec::new());
-        uninstall_one(&sc, SVC, &|e| events.borrow_mut().push(e.to_string()), Duration::ZERO);
+        let result = uninstall_one(&sc, SVC, &|e| events.borrow_mut().push(e.to_string()), Duration::ZERO);
         assert_eq!(
             sc.calls(),
             vec![vec!["query", SVC], vec!["stop", SVC], vec!["query", SVC], vec!["delete", SVC]],
@@ -415,20 +450,60 @@ mod tests {
         let events = events.into_inner();
         assert!(events.iter().any(|e| e.contains("正在停止服务")), "应推送停止事件");
         assert!(events.iter().any(|e| e.contains("正在卸载服务")), "应推送卸载事件");
+        assert!(result.is_ok(), "delete 成功则整体成功");
     }
 
     #[test]
-    fn uninstall_delete_failure_does_not_panic() {
-        // sc delete 返回非零退出码：仅记录，不向上抛错
+    fn uninstall_delete_failure_returns_err() {
+        // sc delete 返回非零退出码：不再静默「继续更新」，返回错误交由编排层终止
         let sc = FakeSc::new(vec![ScOutput::query_state(1)]);
         {
             let mut guard = sc.delete_ok.lock().unwrap_or_else(|e| e.into_inner());
             *guard = false;
         }
         let events = std::cell::RefCell::new(Vec::new());
-        uninstall_configured(&sc, &[SVC.to_string()], &|e| events.borrow_mut().push(e.to_string()));
+        let result =
+            uninstall_configured(&sc, &[SVC.to_string()], &|e| events.borrow_mut().push(e.to_string()));
         assert_eq!(sc.calls(), vec![vec!["query", SVC], vec!["delete", SVC]]);
         assert_eq!(events.into_inner(), vec!["正在卸载服务 qs_test_svc...".to_string()]);
+        let failures = match result {
+            Err(f) => f,
+            Ok(()) => panic!("卸载失败必须返回 Err"),
+        };
+        assert_eq!(failures.len(), 1);
+        assert!(failures[0].contains(SVC), "错误详情应含服务名: {}", failures[0]);
+    }
+
+    #[test]
+    fn uninstall_continues_after_delete_failure_and_aggregates() {
+        // 一个服务卸载失败不中断剩余项：两个服务都应执行 delete，
+        // 最终 Err 聚合全部失败（此处 1 条）
+        let sc = FakeSc::new(vec![ScOutput::query_state(1), ScOutput::query_state(1)]);
+        {
+            let mut guard = sc.delete_ok.lock().unwrap_or_else(|e| e.into_inner());
+            *guard = false;
+        }
+        let names = vec!["svc-a".to_string(), "svc-b".to_string()];
+        let result = uninstall_configured(&sc, &names, &|_| {});
+        assert_eq!(
+            sc.calls(),
+            vec![
+                vec!["query", "svc-a"],
+                vec!["delete", "svc-a"],
+                vec!["query", "svc-b"],
+                vec!["delete", "svc-b"],
+            ],
+            "单个失败后仍必须卸载剩余服务"
+        );
+        // mock 的 delete_ok 是全局开关：svc-a 与 svc-b 都失败 → 聚合 2 条。
+        // 真实场景下按服务分别失败，此处验证聚合数量与调用序列。
+        let failures = match result {
+            Err(f) => f,
+            Ok(()) => panic!("两个都失败应返回 Err"),
+        };
+        assert_eq!(failures.len(), 2);
+        assert!(failures.iter().any(|f| f.contains("svc-a")));
+        assert!(failures.iter().any(|f| f.contains("svc-b")));
     }
 
     #[test]
@@ -439,7 +514,7 @@ mod tests {
             ScOutput::query_state(1), // svc-b 已停止
         ]);
         let names = vec!["svc-a".to_string(), "svc-b".to_string()];
-        uninstall_configured(&sc, &names, &|_| {});
+        let result = uninstall_configured(&sc, &names, &|_| {});
         assert_eq!(
             sc.calls(),
             vec![
@@ -451,13 +526,15 @@ mod tests {
                 vec!["delete", "svc-b"],
             ]
         );
+        assert!(result.is_ok());
     }
 
     #[test]
     fn uninstall_configured_empty_list_makes_no_calls() {
         let sc = FakeSc::new(vec![]);
-        uninstall_configured(&sc, &[], &|_| {});
+        let result = uninstall_configured(&sc, &[], &|_| {});
         assert!(sc.calls().is_empty());
+        assert!(result.is_ok());
     }
 
     #[test]
@@ -524,13 +601,16 @@ mod integration_tests {
 
         // 卸载（事件文案被推送）→ 服务不存在
         let events = std::cell::RefCell::new(Vec::new());
-        uninstall_configured(&runner, &[NAME.to_string()], &|e| events.borrow_mut().push(e.to_string()));
+        let result =
+            uninstall_configured(&runner, &[NAME.to_string()], &|e| events.borrow_mut().push(e.to_string()));
         let events = events.into_inner();
         assert_eq!(query_state(&runner, NAME), ServiceState::NotInstalled, "卸载后服务应不存在");
         assert!(events.iter().any(|e| e.contains("正在卸载服务")), "应推送卸载事件文案");
+        assert!(result.is_ok(), "真实卸载应成功");
 
         // 对已卸载的服务再次执行 → 未安装跳过，不报错
-        uninstall_configured(&runner, &[NAME.to_string()], &|_| {});
+        let again = uninstall_configured(&runner, &[NAME.to_string()], &|_| {});
+        assert!(again.is_ok(), "已卸载的服务应跳过而非报错");
         assert_eq!(query_state(&runner, NAME), ServiceState::NotInstalled);
     }
 }

@@ -275,9 +275,12 @@ async fn run_update_flow(cfg: &ResolvedConfig, m: &manifest::FlatManifest, proxy
         let svc_names = cfg.services.clone();
         let svc_proxy = proxy.clone();
         tokio::task::spawn_blocking(move || {
-            services::uninstall_configured(&services::SystemScRunner, &svc_names, &|msg| {
+            // 冻结版（2026-10-20 起不再同步修）：维持原语义——卸载失败仅
+            // 记录、不终止更新。core 已改为返回 Result<(), Vec<String>>，
+            // 此处显式忽略以恢复编译（src-zsui/README.md「维护状态」节）。
+            let _ = services::uninstall_configured(&services::SystemScRunner, &svc_names, &|msg| {
                 svc_proxy.set_phase(Stage::Installing, "正在处理服务...", msg, None);
-            })
+            });
         })
         .await
         .ok();

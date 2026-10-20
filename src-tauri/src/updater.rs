@@ -306,17 +306,32 @@ pub async fn run_check(app: AppHandle, args: CliArgs) {
     }
     eprintln!("[更新器] 更新包校验通过: {}", zip_path.display());
 
-    // 安装前卸载用户配置的服务（运行中先停止；卸载后不恢复、不重启）
+    // 安装前卸载用户配置的服务（运行中先停止；卸载后不恢复、不重启）。
+    // 卸载失败必须在此终止：否则服务仍注册指向旧路径而新版本已装完，
+    // 形成「半更新」状态（服务是旧的、文件是新的）；且 release 无控制台，
+    // 失败仅写 stderr，现场对「服务没更新」完全无感知。
     if !cfg.services.is_empty() {
         let svc_app = app.clone();
         let svc_names = cfg.services.clone();
-        tokio::task::spawn_blocking(move || {
+        let svc_result = tokio::task::spawn_blocking(move || {
             services::uninstall_configured(&services::SystemScRunner, &svc_names, &|msg| {
                 emit_phase(&svc_app, "installing", "正在处理服务...", msg, None);
             })
         })
-        .await
-        .ok();
+        .await;
+        let svc_detail = match svc_result {
+            // 任务内全部成功（含未安装跳过）
+            Ok(Ok(())) => None,
+            // 有服务卸载失败（详情已聚合）
+            Ok(Err(failures)) => Some(failures.join("；")),
+            // 任务本身异常（阻塞线程 panic 被 JoinError 捕获）
+            Err(e) => Some(format!("服务卸载任务异常: {e}")),
+        };
+        if let Some(detail) = svc_detail {
+            eprintln!("[更新器] 服务卸载失败，终止更新: {}", detail);
+            emit_phase(&app, "error", "服务卸载失败，更新已终止", &detail, None);
+            return;
+        }
     }
 
     // 安装
