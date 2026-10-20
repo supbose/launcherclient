@@ -1,5 +1,17 @@
 # qsltdupdater-zsui 使用说明
 
+> **维护状态：实验版，已冻结（2026-10-20 起）**
+>
+> 本版（zsui 原生 UI）为功能对等的参考实现，**不再同步新功能与 bug 修复**。
+> 主维护版为 `../src-tauri`（Tauri 2 + Vue 版），所有修复与迭代以该版为准。
+>
+> 唯一例外：`src-core`（共享核心 crate）的公开 API 变更若导致本版编译失败，
+> 只做「恢复编译」的最小改动，不顺带做功能同步。
+>
+> 冻结原因：流程编排逻辑（启动决策/下载编排/进度节流）曾与 src-tauri 版各存一份，
+> 修复一次要改两处（竞态 bug 就曾只修了 tauri 版）。经评估不为消除该重复
+> 做编排层抽取（方案 A），而是冻结本版收敛维护面。历史价值保留：UI 框架对比参考。
+
 QsLtd 独立更新程序的 **zsui 原生 UI 版**，与 `src-tauri/`（Tauri 2 + Vue 版）功能对等：检查更新 → 下载（SHA256 校验、分卷支持）→ 安装 → 拉起目标程序。
 
 ## 环境要求
@@ -160,6 +172,6 @@ fn spawn_update_check() {
 | `src/main.rs` | 入口：CLI 解析 → `--check-only` 纯检测分支 → 启动决策 → 进入 UI 循环 |
 | `src/updater.rs` | 流程编排：`run_startup` 决策、`run_check_only` 纯检测（退出码 0/1/2）、后台线程下载流程、进度节流与速度平滑 |
 | `src/ui.rs` | zsui State/Msg/View：共享快照 + 居中布局视图（7 阶段） |
-| `src/cli.rs` `src/config.rs` `src/manifest.rs` `src/download.rs` `src/install.rs` `src/cleanup.rs` `src/services.rs` | 纯后端模块，与 `src-tauri` 版逐字相同 |
+| `../src-core/src/*` | 纯后端模块（cli/config/manifest/download/install/cleanup/services/defaults），与 `src-tauri` 版共用同一 crate，**源码唯一处在 src-core，本目录不再保留副本** |
 
 架构要点：启动决策在窗口创建前完成（无更新 + launch 模式不创建窗口；check-only 全程无窗口）；下载在 `std::thread` + 独立 tokio runtime 执行，通过 `UiProxy`（`Arc<Mutex<UiSnapshot>>` + `request_rebuild`）驱动视图刷新，UI 线程零阻塞。
