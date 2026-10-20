@@ -2413,7 +2413,7 @@ dependencies = [
 
 [[package]]
 name = "qsltd-updater-core"
-version = "0.1.0"
+version = "0.1.8"
 dependencies = [
  "futures-util",
  "hex",
@@ -2429,7 +2429,7 @@ dependencies = [
 
 [[package]]
 name = "qsltdupdater-zsui"
-version = "0.1.0"
+version = "0.1.8"
 dependencies = [
  "qingshu",
  "qsltd-updater-core",
