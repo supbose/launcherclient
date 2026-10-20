@@ -14,10 +14,12 @@
 //! }
 //! ```
 
-use serde::Deserialize;
+use serde::{Deserialize, Serialize};
+use std::path::{Path, PathBuf};
+use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
 /// 平铺 manifest 结构
-#[derive(Debug, Clone, Deserialize)]
+#[derive(Debug, Clone, Deserialize, Serialize)]
 pub struct FlatManifest {
     /// 最新版本号
     pub version: String,
@@ -107,8 +109,7 @@ async fn fetch(url: &str) -> Result<FlatManifest, String> {
 
 /// 判断是否需要更新：manifest.update 为 false 时直接返回 false；
 /// 双方版本均可按 semver 解析时用 semver 比较，否则以版本号字符串不等作为更新依据
-pub fn need_update(current_version: &str, manifest: &FlatManifest) -> bool {
-    if !manifest.update {
+pub fn need_update(current_version: &str, manifest: &FlatManifest) -> bool {    if !manifest.update {
         return false;
     }
     match (
@@ -117,6 +118,91 @@ pub fn need_update(current_version: &str, manifest: &FlatManifest) -> bool {
     ) {
         (Ok(cur), Ok(latest)) => cur < latest,
         _ => current_version.trim() != manifest.version.trim(),
+    }
+}
+
+// ---------- manifest TTL 缓存 ----------
+
+/// manifest 缓存 TTL：5 分钟。
+///
+/// 更新器每次启动跑一次检测，「已是最新」是最高频路径。无缓存时
+/// 该路径每次必联网（弱网/服务端故障时最坏 5s×N 才进入无更新态）。
+/// TTL 内重复启动直接用缓存判定；版本发布节奏远大于 5 分钟，
+/// 新版本延迟可见性可接受。`--check-only` 模式不读缓存（准确优先）。
+const MANIFEST_CACHE_TTL: Duration = Duration::from_secs(5 * 60);
+
+/// 缓存文件条目：拉取时刻 + manifest 原文
+#[derive(Debug, Clone, Deserialize, Serialize)]
+struct CacheEntry {
+    /// 拉取时的 Unix 时间戳（秒）
+    fetched_at: u64,
+    /// manifest 原文
+    manifest: FlatManifest,
+}
+
+/// 带 TTL 缓存的 manifest 拉取（缓存按 app_name 隔离）
+///
+/// - TTL 内命中：直接用缓存，不联网
+/// - 未命中/过期：走 [`fetch_with_failover`]，成功后刷新缓存
+///   （失败不写，保留旧缓存——下次仍在 TTL 外，重新联网）
+///
+/// 与 `--check-only` 的分工：check_only 要最新判定，保持全量联网；
+/// 本函数供 UI 版 run_check 使用（双击运行/手动启动场景真正受益，
+/// 且通常刚被 check_only 预热过，命中即免一次往返）。
+pub async fn fetch_with_cache(urls: &[String], app_name: &str) -> Result<FlatManifest, String> {
+    let cache_path = manifest_cache_path(app_name);
+    if let Some(cached) = load_fresh_cache(&cache_path) {
+        eprintln!(
+            "[更新器] 使用 manifest 缓存（{} 秒内刚检测过，跳过联网）",
+            MANIFEST_CACHE_TTL.as_secs()
+        );
+        return Ok(cached);
+    }
+    let m = fetch_with_failover(urls).await?;
+    save_cache(&cache_path, &m);
+    Ok(m)
+}
+
+/// manifest 缓存文件路径（按 app_name 隔离，避免不同应用的 manifest 互相覆盖）
+fn manifest_cache_path(app_name: &str) -> PathBuf {
+    qingshu::update::get_myapp_dir(Some(app_name)).join("manifest_cache.json")
+}
+
+/// 读取未过期的缓存（过期/损坏/不存在均返回 None）
+fn load_fresh_cache(path: &Path) -> Option<FlatManifest> {
+    let data = std::fs::read(path).ok()?;
+    let entry: CacheEntry = serde_json::from_slice(&data).ok()?;
+    let now = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .map(|d| d.as_secs())
+        .unwrap_or(0);
+    // saturating_sub 防系统时钟回拨导致 age 下溢
+    let age = now.saturating_sub(entry.fetched_at);
+    if age <= MANIFEST_CACHE_TTL.as_secs() {
+        Some(entry.manifest)
+    } else {
+        None
+    }
+}
+
+/// 写入缓存（失败静默：缓存只是加速，不影响主流程）
+fn save_cache(path: &Path, m: &FlatManifest) {
+    let fetched_at = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .map(|d| d.as_secs())
+        .unwrap_or(0);
+    let entry = CacheEntry {
+        fetched_at,
+        manifest: m.clone(),
+    };
+    let Ok(json) = serde_json::to_vec(&entry) else {
+        return;
+    };
+    if let Some(parent) = path.parent() {
+        let _ = std::fs::create_dir_all(parent);
+    }
+    if let Err(e) = std::fs::write(path, json) {
+        eprintln!("[更新器] manifest 缓存写入失败（忽略）: {}", e);
     }
 }
 
@@ -270,5 +356,65 @@ mod tests {
             serde_json::from_str(r#"{"version": "1.0.0", "future_field": 42}"#)
                 .expect("未知字段应被忽略");
         assert_eq!(m.version, "1.0.0");
+    }
+
+    // ---------- TTL 缓存 ----------
+
+    fn temp_cache_path(tag: &str) -> PathBuf {
+        std::env::temp_dir().join(format!(
+            "qsltd_manifest_cache_test_{}_{}.json",
+            tag,
+            std::process::id()
+        ))
+    }
+
+    fn write_entry(path: &Path, fetched_at: u64, manifest: &FlatManifest) {
+        let entry = CacheEntry {
+            fetched_at,
+            manifest: manifest.clone(),
+        };
+        std::fs::write(path, serde_json::to_vec(&entry).expect("序列化测试数据"))
+            .expect("写测试缓存");
+    }
+
+    #[test]
+    fn cache_roundtrip_fresh() {
+        let path = temp_cache_path("fresh");
+        let _ = std::fs::remove_file(&path);
+        save_cache(&path, &m("2.1.2", true));
+        let loaded = load_fresh_cache(&path).expect("刚写入的缓存应立即命中");
+        assert_eq!(loaded.version, "2.1.2");
+        let _ = std::fs::remove_file(&path);
+    }
+
+    #[test]
+    fn cache_stale_rejected() {
+        let path = temp_cache_path("stale");
+        let _ = std::fs::remove_file(&path);
+        write_entry(&path, 1, &m("9.9.9", true)); // 1970 年，远超 TTL
+        assert!(load_fresh_cache(&path).is_none(), "远古缓存必须判过期");
+        let _ = std::fs::remove_file(&path);
+    }
+
+    #[test]
+    fn cache_at_ttl_boundary_passes() {
+        // age 恰等于 TTL：判定为 <= 放行（边界含端点）
+        let path = temp_cache_path("boundary");
+        let now = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .map(|d| d.as_secs())
+            .unwrap_or(0);
+        let _ = std::fs::remove_file(&path);
+        write_entry(&path, now.saturating_sub(MANIFEST_CACHE_TTL.as_secs()), &m("1.0.0", true));
+        assert!(load_fresh_cache(&path).is_some(), "age == TTL 应仍命中");
+        let _ = std::fs::remove_file(&path);
+    }
+
+    #[test]
+    fn cache_corrupt_file_returns_none() {
+        let path = temp_cache_path("corrupt");
+        std::fs::write(&path, b"not a json").expect("写损坏缓存");
+        assert!(load_fresh_cache(&path).is_none(), "损坏缓存必须静默视为未命中");
+        let _ = std::fs::remove_file(&path);
     }
 }

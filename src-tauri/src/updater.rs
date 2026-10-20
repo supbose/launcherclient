@@ -249,7 +249,10 @@ pub async fn run_check(app: AppHandle, args: CliArgs) {
     // 见下方 need_update / error 分支的 show_main_and_close_splash。
 
     eprintln!("[更新器] 开始拉取 manifest...");
-    let m = match manifest::fetch_with_failover(&cfg.manifest_urls).await {
+    // manifest 拉取走 TTL 缓存（5 分钟内重复启动免联网）：本路径频率低
+    // （客户端先经 --check-only 判定有更新才交接过来），缓存主要服务
+    // 双击运行/手动启动场景。check_only 不读缓存（准确优先）。
+    let m = match manifest::fetch_with_cache(&cfg.manifest_urls, &cfg.app_name).await {
         Ok(m) => m,
         Err(e) => {
             eprintln!("[更新器] 检查更新失败: {}", e);
