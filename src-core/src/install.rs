@@ -2,6 +2,7 @@
 
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
+use std::io::Read as _; // Read::take（流式截断，防 zip bomb 闸 2）
 
 use qingshu::update::LocalManifest;
 
@@ -166,18 +167,57 @@ pub async fn save_local_manifest(
         .map_err(|e| format!("保存本地版本记录失败 {}: {}", path.display(), e))
 }
 
+/// 解压总量硬顶：8GB。
+///
+/// 超出即判定为异常包（zip bomb 或 manifest 指错地址），立即中止，
+/// 防止解压写满用户磁盘。正常更新包（主 exe + 资源）远低于此限。
+const MAX_EXTRACT_TOTAL_BYTES: u64 = 8 * 1024 * 1024 * 1024;
+
+/// 单条目硬顶：512MB。
+///
+/// 流式截断的兜底额度：条目头部声明的未压缩大小可造假，按声明值放行后
+/// 实际最多写出「上限 + 1」字节即被截断判定。
+const MAX_EXTRACT_ENTRY_BYTES: u64 = 512 * 1024 * 1024;
+
 /// 解压 zip 到目标目录（阻塞函数，请在 spawn_blocking 中调用）
 ///
 /// 通过 `on_stage` 按条目推送解压进度（第 N/M 项 + 百分比）
 fn extract_zip(zip_path: &Path, dest: &Path, on_stage: &StageCallback) -> Result<(), String> {
+    extract_zip_with_limits(
+        zip_path,
+        dest,
+        on_stage,
+        MAX_EXTRACT_TOTAL_BYTES,
+        MAX_EXTRACT_ENTRY_BYTES,
+    )
+}
+
+/// 解压 zip 到目标目录，带写入量上限（阻塞函数，请在 spawn_blocking 中调用）
+///
+/// 防 zip bomb 三道闸（上限可由测试注入小值验证）：
+/// 1. **写前预检**：条目头部声明的未压缩大小超单条目上限、或累计超总量
+///    上限时，在创建文件前直接拒绝（声明值可信时零磁盘浪费）
+/// 2. **流式截断**：读取用 `take(max_entry + 1)` 限制——头部声明可造假，
+///    实际数据超出上限即被截断，写出量判定后报错
+/// 3. **写后累计**：每条目写完后复核总量，超出立即中止
+///
+/// 路径穿越防护不变：`enclosed_name` 拒绝 `../` 等非法条目（跳过）。
+fn extract_zip_with_limits(
+    zip_path: &Path,
+    dest: &Path,
+    on_stage: &StageCallback,
+    max_total: u64,
+    max_entry: u64,
+) -> Result<(), String> {
     let file = std::fs::File::open(zip_path)
         .map_err(|e| format!("打开更新包失败 {}: {}", zip_path.display(), e))?;
     let mut archive =
         zip::ZipArchive::new(file).map_err(|e| format!("读取更新包结构失败: {}", e))?;
     let total = archive.len() as f64;
+    let mut written: u64 = 0;
 
     for i in 0..archive.len() {
-        let mut entry = archive
+        let entry = archive
             .by_index(i)
             .map_err(|e| format!("读取更新包条目 {} 失败: {}", i, e))?;
 
@@ -191,18 +231,63 @@ fn extract_zip(zip_path: &Path, dest: &Path, on_stage: &StageCallback) -> Result
             std::fs::create_dir_all(&out_path)
                 .map_err(|e| format!("创建目录失败 {}: {}", out_path.display(), e))?;
         } else {
+            // 闸 1a：单条目声明大小预检（创建文件前拒绝）
+            let declared = entry.size();
+            if declared > max_entry {
+                return Err(format!(
+                    "更新包条目过大已中止: {}（声明 {} 字节，上限 {} 字节）",
+                    out_path.display(),
+                    declared,
+                    max_entry
+                ));
+            }
+            // 闸 1b：累计预检
+            if written + declared > max_total {
+                return Err(format!(
+                    "更新包解压总量超限已中止: 第 {} 项后累计将达 {} 字节（上限 {} 字节）",
+                    i + 1,
+                    written + declared,
+                    max_total
+                ));
+            }
+
             if let Some(parent) = out_path.parent() {
                 std::fs::create_dir_all(parent)
                     .map_err(|e| format!("创建目录失败 {}: {}", out_path.display(), e))?;
             }
             let mut out_file = std::fs::File::create(&out_path)
                 .map_err(|e| format!("创建文件失败 {}: {}", out_path.display(), e))?;
-            std::io::copy(&mut entry, &mut out_file)
+
+            // unix 权限位需在 take() 移动 entry 前取出
+            #[cfg(unix)]
+            let unix_mode = entry.unix_mode();
+
+            // 闸 2：流式截断（头部声明可能小于实际数据量）
+            let mut limited = entry.take(max_entry + 1);
+            let copied = std::io::copy(&mut limited, &mut out_file)
                 .map_err(|e| format!("解压文件失败 {}: {}", out_path.display(), e))?;
+            written += copied;
+
+            // 闸 2 判定：读满 max_entry+1 说明实际数据超出单条目上限
+            if copied > max_entry {
+                return Err(format!(
+                    "更新包条目过大已中止: {}（实际超过 {} 字节）",
+                    out_path.display(),
+                    max_entry
+                ));
+            }
+            // 闸 3：写后累计复核
+            if written > max_total {
+                return Err(format!(
+                    "更新包解压总量超限已中止: 已写出 {} 字节（上限 {} 字节）",
+                    written, max_total
+                ));
+            }
+
             #[cfg(unix)]
             {
                 use std::os::unix::fs::PermissionsExt;
-                if let Some(mode) = entry.unix_mode() {
+                if let Some(mode) = unix_mode {
                     let _ = std::fs::set_permissions(&out_path, std::fs::Permissions::from_mode(mode));
                 }
             }
@@ -400,5 +485,112 @@ mod tests {
     fn temp_dir_stays_in_same_parent() {
         let d = Path::new("/apps/qsm/app/app_1.0.0");
         assert_eq!(temp_dir_for(d).parent(), d.parent());
+    }
+
+    // ---------- extract_zip_with_limits ----------
+
+    use std::io::Write as _;
+
+    /// 造一个测试用 zip（zip crate 是正式依赖，测试模块可直接用）
+    fn make_test_zip(path: &Path, entries: &[(&str, &[u8])]) -> io::Result<()> {
+        let file = std::fs::File::create(path)?;
+        let mut writer = zip::ZipWriter::new(file);
+        for (name, data) in entries {
+            writer
+                .start_file(*name, zip::write::SimpleFileOptions::default())
+                .map_err(|e| io::Error::other(e.to_string()))?;
+            writer.write_all(data)?;
+        }
+        writer
+            .finish()
+            .map_err(|e| io::Error::other(e.to_string()))?;
+        Ok(())
+    }
+
+    /// 无操作进度回调
+    fn noop_stage() -> StageCallback {
+        Arc::new(|_msg: &str, _pct: Option<f64>| {})
+    }
+
+    #[test]
+    fn extract_normal_within_limits() -> io::Result<()> {
+        let dir = temp_install_dir("extract_ok")?;
+        let zip = dir.join("update.zip");
+        make_test_zip(&zip, &[("a.txt", b"hello"), ("sub/b.bin", &[0u8; 64])])?;
+        let out = dir.join("out");
+        std::fs::create_dir_all(&out)?;
+        extract_zip(&zip, &out, &noop_stage())
+            .map_err(io::Error::other)?;
+        assert_eq!(std::fs::read(out.join("a.txt"))?, b"hello");
+        assert_eq!(std::fs::read(out.join("sub/b.bin"))?.len(), 64);
+        let _ = std::fs::remove_dir_all(&dir);
+        Ok(())
+    }
+
+    #[test]
+    fn extract_entry_at_limit_boundary_passes() -> io::Result<()> {
+        // 声明大小恰等于上限：100 > 100 为假，应放行
+        let dir = temp_install_dir("extract_boundary")?;
+        let zip = dir.join("update.zip");
+        make_test_zip(&zip, &[("exact.txt", &[b'a'; 100])])?;
+        let out = dir.join("out");
+        std::fs::create_dir_all(&out)?;
+        extract_zip_with_limits(&zip, &out, &noop_stage(), 1_000, 100)
+            .map_err(io::Error::other)?;
+        assert_eq!(std::fs::read(out.join("exact.txt"))?.len(), 100);
+        let _ = std::fs::remove_dir_all(&dir);
+        Ok(())
+    }
+
+    #[test]
+    fn extract_rejects_entry_over_limit() -> io::Result<()> {
+        // 闸 1a：声明 200 字节 > 上限 100，创建文件前即拒绝
+        let dir = temp_install_dir("extract_entry_limit")?;
+        let zip = dir.join("update.zip");
+        make_test_zip(&zip, &[("big.txt", &[b'a'; 200])])?;
+        let out = dir.join("out");
+        std::fs::create_dir_all(&out)?;
+        match extract_zip_with_limits(&zip, &out, &noop_stage(), 1_000, 100) {
+            Err(e) => {
+                assert!(e.contains("条目过大"), "错误信息应说明条目过大: {e}");
+                assert!(!out.join("big.txt").exists(), "超限条目不应落盘");
+            }
+            Ok(()) => panic!("超限条目必须解压失败"),
+        }
+        let _ = std::fs::remove_dir_all(&dir);
+        Ok(())
+    }
+
+    #[test]
+    fn extract_rejects_total_over_limit() -> io::Result<()> {
+        // 闸 1b：两个 80 字节条目，总量上限 100，第二个条目累计 160 超限
+        let dir = temp_install_dir("extract_total_limit")?;
+        let zip = dir.join("update.zip");
+        make_test_zip(&zip, &[("p1.bin", &[b'a'; 80]), ("p2.bin", &[b'b'; 80])])?;
+        let out = dir.join("out");
+        std::fs::create_dir_all(&out)?;
+        match extract_zip_with_limits(&zip, &out, &noop_stage(), 100, 1_000) {
+            Err(e) => assert!(e.contains("总量超限"), "错误信息应说明总量超限: {e}"),
+            Ok(()) => panic!("总量超限必须解压失败"),
+        }
+        let _ = std::fs::remove_dir_all(&dir);
+        Ok(())
+    }
+
+    #[test]
+    fn extract_skips_path_traversal_entry() -> io::Result<()> {
+        // 路径穿越条目被 enclosed_name 拒绝（跳过），dest 外不落盘
+        let dir = temp_install_dir("extract_traversal")?;
+        let zip = dir.join("update.zip");
+        make_test_zip(&zip, &[("../evil.txt", b"evil"), ("ok.txt", b"fine")])?;
+        let out = dir.join("out");
+        std::fs::create_dir_all(&out)?;
+        extract_zip(&zip, &out, &noop_stage())
+            .map_err(io::Error::other)?;
+        assert!(out.join("ok.txt").exists(), "正常条目应解压");
+        assert!(!out.join("evil.txt").exists(), "穿越条目不应写入 dest");
+        assert!(!dir.join("evil.txt").exists(), "穿越条目不应写入 dest 之外");
+        let _ = std::fs::remove_dir_all(&dir);
+        Ok(())
     }
 }
