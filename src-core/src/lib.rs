@@ -9,6 +9,7 @@
 
 pub mod cli;
 pub mod cleanup;
+pub mod client;
 pub mod config;
 pub mod defaults;
 pub mod download;

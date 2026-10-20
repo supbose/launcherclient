@@ -85,15 +85,11 @@ pub async fn fetch_with_failover(urls: &[String]) -> Result<FlatManifest, String
 }
 
 /// 拉取并解析单个 manifest 地址
+///
+/// 使用共享 Client（连接 3s + 总超时 5s，见 [`crate::client::manifest_client`]）：
+/// 故障转移的多个地址复用同一连接池，避免每地址一次完整 TLS 握手。
 async fn fetch(url: &str) -> Result<FlatManifest, String> {
-    // 连接超时 3s / 总超时 5s，防弱网挂死拖慢启动（故障转移最多 2 地址 × 5s）
-    let client = reqwest::Client::builder()
-        .connect_timeout(std::time::Duration::from_secs(3))
-        .timeout(std::time::Duration::from_secs(5))
-        .build()
-        .map_err(|e| format!("创建 HTTP 客户端失败: {}", e))?;
-
-    let response = client
+    let response = crate::client::manifest_client()
         .get(url)
         .send()
         .await

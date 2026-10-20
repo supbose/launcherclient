@@ -30,6 +30,10 @@ impl DownloadProgress {
 /// - `dest`: 目标文件路径（父目录需已存在）
 /// - `on_progress`: 进度回调（每收到数据块即触发，调用方自行节流）
 ///
+/// 使用共享 Client（连接 10s、无总超时，见 [`crate::client::download_client`]）：
+/// 连接池与 TLS 会话跨请求复用。大文件慢速下载可能合理超过任何固定
+/// 上限，故不设整体超时——中途断流由下方读空闲超时兜底。
+///
 /// 返回：(文件路径, SHA256 十六进制值)
 pub async fn download_file<F>(
     url: &str,
@@ -39,13 +43,7 @@ pub async fn download_file<F>(
 where
     F: Fn(DownloadProgress) + Send + Sync + 'static,
 {
-    // 弱网防护：连接超时 10s（握手挂起快速失败）。不设整体超时 ——
-    // 大文件慢速下载可能合理超过任何固定上限，中途断流由下方读空闲超时兜底。
-    let client = reqwest::Client::builder()
-        .connect_timeout(std::time::Duration::from_secs(10))
-        .build()
-        .map_err(|e| format!("创建下载客户端失败: {}", e))?;
-    let response = client
+    let response = crate::client::download_client()
         .get(url)
         .send()
         .await
