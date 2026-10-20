@@ -870,6 +870,39 @@ pub fn current_phase() -> Option<PhasePayload> {
         .clone()
 }
 
+/// 关闭放行标志：用户在关键阶段确认中断后置位，允许随后的 close 真正执行
+static ALLOW_CLOSE: AtomicBool = AtomicBool::new(false);
+
+/// 当前是否处于「不可中断」的关键阶段（检测中 / 下载中 / 安装中）
+///
+/// 关闭窗口默认直接退出进程。若发生在下载/安装中途，可能留下
+/// 「服务已卸载但 app.json 未写入」的不一致态（下次启动时本地版本
+/// 记录与实际文件对不上）；检测期关窗则浪费一次已发起的检测。
+/// 这些阶段关闭前必须弹确认框（见 lib.rs 的 on_window_event）。
+///
+/// available/done/error 阶段关闭无副作用，直接放行。
+pub fn is_critical_phase() -> bool {
+    let guard = latest_phase_cell()
+        .lock()
+        .unwrap_or_else(|e| e.into_inner());
+    let stage = guard
+        .as_ref()
+        .map(|p| p.stage.as_str())
+        .unwrap_or("");
+    matches!(stage, "checking" | "downloading" | "installing")
+}
+
+/// 关键阶段的关闭是否已被用户确认放行（确认后 close 会再次触发
+/// CloseRequested，靠此标志避免无限递归拦截）
+pub fn close_allowed() -> bool {
+    ALLOW_CLOSE.load(Ordering::SeqCst)
+}
+
+/// 放行关闭（用户在关键阶段确认对话框中点了「确定」）
+pub fn allow_close() {
+    ALLOW_CLOSE.store(true, Ordering::SeqCst);
+}
+
 /// 推送给前端的阶段事件载荷
 #[derive(Debug, Clone, Serialize)]
 pub(crate) struct PhasePayload {

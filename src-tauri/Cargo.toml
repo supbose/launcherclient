@@ -21,6 +21,7 @@ tauri-build = { version = "2", features = [] }
 
 [dependencies]
 tauri = { version = "2", features = [] }
+tauri-plugin-dialog = "2"
 serde = { version = "1", features = ["derive"] }
 tokio = { version = "1", features = ["full"] }
 # 统一能力库（自有封装）：update 模块提供 LocalManifest 本地版本记录与 get_myapp_dir
