@@ -117,3 +117,158 @@ async fn remove_dir_smart(dir: &Path) {
         }
     }
 }
+
+// 测试里构造失败即用例本身失败，按 clippy 惯例局部放行 expect_used
+#[allow(clippy::expect_used)]
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::sync::atomic::{AtomicU32, Ordering};
+
+    static COUNTER: AtomicU32 = AtomicU32::new(0);
+
+    /// 造一个唯一的临时版本根目录
+    fn temp_app_dir(tag: &str) -> std::io::Result<PathBuf> {
+        let n = COUNTER.fetch_add(1, Ordering::SeqCst);
+        let dir = std::env::temp_dir().join(format!(
+            "qsltd_cleanup_test_{}_{}_{}",
+            tag,
+            std::process::id(),
+            n
+        ));
+        std::fs::create_dir_all(&dir)?;
+        Ok(dir)
+    }
+
+    /// 在版本根目录下造一个版本目录（带一个标记文件）
+    fn make_version_dir(root: &Path, name: &str) -> std::io::Result<()> {
+        let d = root.join(name);
+        std::fs::create_dir_all(&d)?;
+        std::fs::write(d.join("marker.txt"), name.as_bytes())?;
+        Ok(())
+    }
+
+    fn exists(root: &Path, name: &str) -> bool {
+        root.join(name).exists()
+    }
+
+    #[tokio::test]
+    async fn keep_zero_deletes_nothing() {
+        // keep=0 防御性不删（避免配置错误清空所有版本）
+        let root = temp_app_dir("keep0").expect("建目录");
+        make_version_dir(&root, "app_1.0.0").expect("造版本目录");
+        cleanup_old_versions(&root, "1.0.0", 0).await;
+        assert!(exists(&root, "app_1.0.0"));
+        let _ = std::fs::remove_dir_all(&root);
+    }
+
+    #[tokio::test]
+    async fn within_keep_deletes_nothing() {
+        let root = temp_app_dir("within").expect("建目录");
+        make_version_dir(&root, "app_1.0.0").expect("造版本目录");
+        make_version_dir(&root, "app_1.1.0").expect("造版本目录");
+        cleanup_old_versions(&root, "1.1.0", 2).await;
+        assert!(exists(&root, "app_1.0.0"));
+        assert!(exists(&root, "app_1.1.0"));
+        let _ = std::fs::remove_dir_all(&root);
+    }
+
+    #[tokio::test]
+    async fn deletes_oldest_beyond_keep() {
+        let root = temp_app_dir("oldest").expect("建目录");
+        for v in ["1.0.0", "1.1.0", "1.2.0"] {
+            make_version_dir(&root, &format!("app_{v}")).expect("造版本目录");
+        }
+        cleanup_old_versions(&root, "1.2.0", 2).await;
+        assert!(!exists(&root, "app_1.0.0"), "最旧版本应被删");
+        assert!(exists(&root, "app_1.1.0"));
+        assert!(exists(&root, "app_1.2.0"));
+        let _ = std::fs::remove_dir_all(&root);
+    }
+
+    #[tokio::test]
+    async fn current_version_never_deleted_even_if_oldest() {
+        // keep 配置过小时的防御：当前版本目录不清理
+        let root = temp_app_dir("current").expect("建目录");
+        make_version_dir(&root, "app_1.0.0").expect("造版本目录"); // 当前版本，且最旧
+        make_version_dir(&root, "app_2.0.0").expect("造版本目录");
+        cleanup_old_versions(&root, "1.0.0", 1).await;
+        assert!(exists(&root, "app_1.0.0"), "当前版本不删");
+        assert!(exists(&root, "app_2.0.0"), "无更旧可删时不动其他");
+        let _ = std::fs::remove_dir_all(&root);
+    }
+
+    #[tokio::test]
+    async fn semver_ordering_not_string_ordering() {
+        // 字符串排序会判 "1.10.0" < "1.9.0"；semver 排序必须删 1.9.0
+        let root = temp_app_dir("semver").expect("建目录");
+        for v in ["1.9.0", "1.10.0", "1.11.0"] {
+            make_version_dir(&root, &format!("app_{v}")).expect("造版本目录");
+        }
+        cleanup_old_versions(&root, "1.11.0", 2).await;
+        assert!(!exists(&root, "app_1.9.0"), "最旧应按 semver 判定");
+        assert!(exists(&root, "app_1.10.0"), "1.10.0 比 1.9.0 新，应保留");
+        let _ = std::fs::remove_dir_all(&root);
+    }
+
+    #[tokio::test]
+    async fn unparsable_version_sorts_last_and_survives() {
+        // 版本号无法按 semver 解析时按目录名字符串排最后，不被优先删
+        let root = temp_app_dir("unparsable").expect("建目录");
+        make_version_dir(&root, "app_abc").expect("造版本目录");
+        make_version_dir(&root, "app_1.0.0").expect("造版本目录");
+        make_version_dir(&root, "app_1.1.0").expect("造版本目录");
+        cleanup_old_versions(&root, "1.1.0", 2).await;
+        assert!(!exists(&root, "app_1.0.0"), "最旧可解析版本被删");
+        assert!(exists(&root, "app_abc"), "不可解析版本排最后，保留");
+        let _ = std::fs::remove_dir_all(&root);
+    }
+
+    #[tokio::test]
+    async fn non_version_dirs_ignored() {
+        let root = temp_app_dir("nonver").expect("建目录");
+        make_version_dir(&root, "downloads").expect("造目录");
+        make_version_dir(&root, "app_").expect("造目录"); // 空前缀版本号，不算版本目录
+        make_version_dir(&root, "app_1.0.0").expect("造版本目录");
+        make_version_dir(&root, "app_1.1.0").expect("造版本目录");
+        cleanup_old_versions(&root, "1.1.0", 2).await;
+        assert!(exists(&root, "downloads"));
+        assert!(exists(&root, "app_"));
+        assert!(exists(&root, "app_1.0.0"), "有效版本目录仅 2 个，不超 keep");
+        let _ = std::fs::remove_dir_all(&root);
+    }
+
+    #[tokio::test]
+    async fn cleanup_pending_removes_del_prefixed_dirs_only() {
+        let root = temp_app_dir("pending").expect("建目录");
+        make_version_dir(&root, "_del_app_1.0.0").expect("造残留目录");
+        make_version_dir(&root, "app_1.1.0").expect("造版本目录");
+        cleanup_pending(&root).await;
+        assert!(!exists(&root, "_del_app_1.0.0"), "残留目录应被清");
+        assert!(exists(&root, "app_1.1.0"), "正常目录不动");
+        let _ = std::fs::remove_dir_all(&root);
+    }
+
+    #[tokio::test]
+    async fn cleanup_pending_tolerates_missing_root() {
+        let root = std::env::temp_dir().join("qsltd_cleanup_test_not_exist_98765");
+        cleanup_pending(&root).await; // 不 panic 即通过
+    }
+
+    #[tokio::test]
+    async fn remove_dir_smart_does_not_panic_on_failure() {
+        // 目录不存在：删除与重命名双失败，只记日志不 panic
+        let ghost = std::env::temp_dir().join("qsltd_cleanup_test_ghost_dir_12345");
+        remove_dir_smart(&ghost).await;
+    }
+
+    #[tokio::test]
+    async fn remove_dir_smart_deletes_existing_dir() {
+        let root = temp_app_dir("smart").expect("建目录");
+        let d = root.join("app_0.0.1");
+        make_version_dir(&root, "app_0.0.1").expect("造目录");
+        remove_dir_smart(&d).await;
+        assert!(!d.exists());
+        let _ = std::fs::remove_dir_all(&root);
+    }
+}

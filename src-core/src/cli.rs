@@ -20,13 +20,18 @@ pub struct CliArgs {
 
 /// 解析命令行参数，未知参数仅打印警告不中断
 pub fn parse() -> CliArgs {
+    let argv: Vec<String> = std::env::args().skip(1).collect();
+    parse_from(&argv)
+}
+
+/// 从给定参数列表解析（不含程序名本身），供测试注入
+pub fn parse_from(argv: &[String]) -> CliArgs {
     let mut app_name = String::from("QsLtd");
     let mut launch: Option<String> = None;
     let mut manifest_url: Option<String> = None;
     let mut current_version: Option<String> = None;
     let mut check_only = false;
 
-    let argv: Vec<String> = std::env::args().skip(1).collect();
     let mut i = 0;
     while i < argv.len() {
         let flag = argv[i].as_str();
@@ -72,5 +77,89 @@ pub fn parse() -> CliArgs {
         manifest_url,
         current_version,
         check_only,
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn args(items: &[&str]) -> Vec<String> {
+        items.iter().map(|s| s.to_string()).collect()
+    }
+
+    #[test]
+    fn parse_empty_uses_defaults() {
+        let c = parse_from(&[]);
+        assert_eq!(c.app_name, "QsLtd");
+        assert!(c.launch.is_none());
+        assert!(c.manifest_url.is_none());
+        assert!(c.current_version.is_none());
+        assert!(!c.check_only);
+    }
+
+    #[test]
+    fn parse_all_flags() {
+        let c = parse_from(&args(&[
+            "--app-name", "qsm",
+            "--launch", "D:/app/qsm.exe",
+            "--manifest", "https://example.com/version.json",
+            "--current-version", "1.2.3",
+            "--check-only",
+        ]));
+        assert_eq!(c.app_name, "qsm");
+        assert_eq!(c.launch.as_deref(), Some("D:/app/qsm.exe"));
+        assert_eq!(c.manifest_url.as_deref(), Some("https://example.com/version.json"));
+        assert_eq!(c.current_version.as_deref(), Some("1.2.3"));
+        assert!(c.check_only);
+    }
+
+    #[test]
+    fn parse_ignores_unknown_flag() {
+        let c = parse_from(&args(&["--whatever", "x", "--app-name", "qsm"]));
+        assert_eq!(c.app_name, "qsm");
+    }
+
+    #[test]
+    fn parse_launch_without_value_is_none() {
+        let c = parse_from(&args(&["--launch"]));
+        assert!(c.launch.is_none());
+    }
+
+    #[test]
+    fn parse_manifest_without_value_keeps_none() {
+        let c = parse_from(&args(&["--manifest"]));
+        assert!(c.manifest_url.is_none());
+    }
+
+    #[test]
+    fn parse_current_version_without_value_is_none() {
+        let c = parse_from(&args(&["--current-version"]));
+        assert!(c.current_version.is_none());
+    }
+
+    #[test]
+    fn parse_app_name_without_value_keeps_default() {
+        let c = parse_from(&args(&["--app-name"]));
+        assert_eq!(c.app_name, "QsLtd");
+    }
+
+    #[test]
+    fn parse_check_only_stands_alone() {
+        assert!(parse_from(&args(&["--check-only"])).check_only);
+        assert!(!parse_from(&args(&["--app-name", "qsm"])).check_only);
+    }
+
+    #[test]
+    fn parse_value_looking_like_flag_is_consumed_as_value() {
+        // --launch 的值即使以 -- 开头也按值消费（简单顺序解析的既定行为）
+        let c = parse_from(&args(&["--launch", "--weird"]));
+        assert_eq!(c.launch.as_deref(), Some("--weird"));
+    }
+
+    #[test]
+    fn parse_repeated_flag_takes_last() {
+        let c = parse_from(&args(&["--app-name", "a", "--app-name", "b"]));
+        assert_eq!(c.app_name, "b");
     }
 }

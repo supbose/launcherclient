@@ -123,3 +123,156 @@ pub fn need_update(current_version: &str, manifest: &FlatManifest) -> bool {
         _ => current_version.trim() != manifest.version.trim(),
     }
 }
+
+// 测试里构造失败即用例本身失败，按 clippy 惯例局部放行 expect/unwrap
+#[allow(clippy::expect_used, clippy::unwrap_used)]
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// 构造一个仅版本/更新开关可定的 manifest（其余字段用默认值）
+    fn m(version: &str, update: bool) -> FlatManifest {
+        FlatManifest {
+            version: version.to_string(),
+            update,
+            size_bytes: None,
+            sha256: None,
+            url: String::new(),
+            parts: None,
+            part_sha256: None,
+            release_date: None,
+            changelog: Vec::new(),
+        }
+    }
+
+    fn needs(cur: &str, latest: &str) -> bool {
+        need_update(cur, &m(latest, true))
+    }
+
+    // ---------- update 开关 ----------
+
+    #[test]
+    fn update_false_never_updates_even_if_newer() {
+        // 服务端强制关更新：即使版本更高也视为无更新
+        assert!(!need_update("1.0.0", &m("9.9.9", false)));
+    }
+
+    // ---------- semver 可解析：标准比较 ----------
+
+    #[test]
+    fn semver_patch_newer_needs_update() {
+        assert!(needs("1.0.0", "1.0.1"));
+    }
+
+    #[test]
+    fn semver_minor_newer_needs_update() {
+        assert!(needs("1.0.0", "1.1.0"));
+    }
+
+    #[test]
+    fn semver_major_newer_needs_update() {
+        assert!(needs("1.9.9", "2.0.0"));
+    }
+
+    #[test]
+    fn semver_equal_no_update() {
+        assert!(!needs("1.2.3", "1.2.3"));
+    }
+
+    #[test]
+    fn semver_downgrade_no_update() {
+        // 服务端版本更旧：不更新
+        assert!(!needs("2.0.0", "1.0.0"));
+    }
+
+    #[test]
+    fn semver_prerelease_is_older_than_release() {
+        // 1.0.0-alpha < 1.0.0：装了正式版后不应被预发布版拽回去
+        assert!(!needs("1.0.0", "1.0.0-alpha"));
+        assert!(needs("1.0.0-alpha", "1.0.0"));
+    }
+
+    #[test]
+    fn semver_surrounding_whitespace_is_trimmed() {
+        assert!(!needs(" 1.0.0 ", "1.0.0"));
+        assert!(needs(" 1.0.0", "1.0.1 "));
+    }
+
+    // ---------- semver 不可解析：字符串不等兜底 ----------
+
+    #[test]
+    fn unparsable_versions_fall_back_to_string_inequality() {
+        assert!(needs("abc", "abd"));
+        assert!(!needs("abc", "abc"));
+    }
+
+    #[test]
+    fn one_side_unparsable_falls_back_to_string_inequality() {
+        // 本地可解析、服务端不可解析：不相等即更新
+        assert!(needs("1.0.0", "v2.0"));
+        assert!(!needs("1.0.0", "1.0.0"));
+    }
+
+    #[test]
+    fn empty_latest_means_no_update() {
+        // manifest 缺 version 时反序列化会失败；此处覆盖空串边缘
+        assert!(!needs("", ""));
+        assert!(needs("", "1.0.0"));
+    }
+
+    // ---------- failover 入口 ----------
+
+    #[tokio::test]
+    async fn fetch_with_failover_empty_list_errors() {
+        // 空列表直接报错，不发任何请求
+        let err = fetch_with_failover(&[]).await.unwrap_err();
+        assert!(err.contains("为空"), "应提示地址列表为空: {err}");
+    }
+
+    // ---------- FlatManifest 反序列化 ----------
+
+    #[test]
+    fn manifest_minimal_json_uses_defaults() {
+        let m: FlatManifest =
+            serde_json::from_str(r#"{"version": "1.0.0"}"#).expect("最小 manifest 应可解析");
+        assert!(m.update, "update 缺省应为 true");
+        assert_eq!(m.url, "");
+        assert!(m.parts.is_none());
+        assert!(m.part_sha256.is_none());
+        assert!(m.size_bytes.is_none());
+        assert!(m.sha256.is_none());
+        assert!(m.changelog.is_empty());
+    }
+
+    #[test]
+    fn manifest_full_json_parses_parts() {
+        let m: FlatManifest = serde_json::from_str(
+            r#"{
+                "version": "2.0.0",
+                "update": false,
+                "size_bytes": 1024,
+                "sha256": "abc",
+                "url": "https://example.com/a.zip",
+                "parts": ["https://example.com/p1", "https://example.com/p2"],
+                "part_sha256": ["h1", "h2"],
+                "changelog": ["修复", "优化"]
+            }"#,
+        )
+        .expect("完整 manifest 应可解析");
+        assert!(!m.update);
+        assert_eq!(m.size_bytes, Some(1024));
+        assert_eq!(m.sha256.as_deref(), Some("abc"));
+        assert_eq!(m.parts.as_ref().map(Vec::len), Some(2));
+        assert_eq!(m.part_sha256.as_ref().map(Vec::len), Some(2));
+        assert_eq!(m.changelog, vec!["修复".to_string(), "优化".to_string()]);
+    }
+
+    #[test]
+    fn manifest_unknown_fields_are_ignored() {
+        // 服务端加字段不应阻塞老客户端
+        let m: FlatManifest =
+            serde_json::from_str(r#"{"version": "1.0.0", "future_field": 42}"#)
+                .expect("未知字段应被忽略");
+        assert_eq!(m.version, "1.0.0");
+    }
+}

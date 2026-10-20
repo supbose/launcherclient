@@ -323,3 +323,171 @@ where
 
     Ok(())
 }
+
+// 测试里构造失败即用例本身失败，按 clippy 惯例局部放行 expect/unwrap
+#[allow(clippy::expect_used, clippy::unwrap_used)]
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::sync::atomic::{AtomicU32, Ordering};
+
+    static COUNTER: AtomicU32 = AtomicU32::new(0);
+
+    /// 造一个唯一的临时文件路径（不创建文件）
+    fn temp_path(tag: &str, ext: &str) -> PathBuf {
+        let n = COUNTER.fetch_add(1, Ordering::SeqCst);
+        std::env::temp_dir().join(format!(
+            "qsltd_dl_test_{}_{}_{}.{}",
+            tag,
+            std::process::id(),
+            n,
+            ext
+        ))
+    }
+
+    /// 造一个指定内容的临时文件
+    fn write_temp(tag: &str, content: &[u8]) -> std::io::Result<PathBuf> {
+        let p = temp_path(tag, "bin");
+        std::fs::write(&p, content)?;
+        Ok(p)
+    }
+
+    /// 文件内容的 SHA256 十六进制
+    fn sha_of(content: &[u8]) -> String {
+        hex::encode(Sha256::digest(content))
+    }
+
+    // ---------- DownloadProgress::percent ----------
+
+    #[test]
+    fn percent_none_when_total_unknown() {
+        let p = DownloadProgress { downloaded: 100, total: None };
+        assert_eq!(p.percent(), None);
+    }
+
+    #[test]
+    fn percent_none_when_total_zero() {
+        // 服务器谎报 Content-Length: 0 时不应除零
+        let p = DownloadProgress { downloaded: 100, total: Some(0) };
+        assert_eq!(p.percent(), None);
+    }
+
+    #[test]
+    fn percent_computes_ratio() {
+        let p = DownloadProgress { downloaded: 25, total: Some(100) };
+        assert_eq!(p.percent(), Some(25.0));
+    }
+
+    // ---------- verify_sha256 ----------
+
+    #[test]
+    fn verify_passes_on_match() {
+        let p = write_temp("match", b"hello").expect("写临时文件");
+        assert!(verify_sha256(&p, &Some(sha_of(b"hello"))).is_ok());
+        let _ = std::fs::remove_file(&p);
+    }
+
+    #[test]
+    fn verify_passes_case_insensitive() {
+        let p = write_temp("case", b"hello").expect("写临时文件");
+        let upper = sha_of(b"hello").to_uppercase();
+        assert!(verify_sha256(&p, &Some(upper)).is_ok());
+        let _ = std::fs::remove_file(&p);
+    }
+
+    #[test]
+    fn verify_skipped_when_expected_empty_or_blank() {
+        // 期望值为空/空白：跳过校验直接通过（最终校验阶段的既定语义）
+        let p = write_temp("empty", b"hello").expect("写临时文件");
+        assert!(verify_sha256(&p, &None).is_ok());
+        assert!(verify_sha256(&p, &Some(String::new())).is_ok());
+        assert!(verify_sha256(&p, &Some("   ".to_string())).is_ok());
+        let _ = std::fs::remove_file(&p);
+    }
+
+    #[test]
+    fn verify_fails_on_mismatch() {
+        let p = write_temp("mismatch", b"hello").expect("写临时文件");
+        let err = verify_sha256(&p, &Some(sha_of(b"world"))).unwrap_err();
+        assert!(err.contains("校验不匹配"), "错误应说明不匹配: {err}");
+        let _ = std::fs::remove_file(&p);
+    }
+
+    #[test]
+    fn verify_fails_on_missing_file() {
+        let p = temp_path("missing", "bin");
+        assert!(verify_sha256(&p, &Some(sha_of(b"x"))).is_err());
+    }
+
+    // ---------- merge_parts ----------
+
+    #[tokio::test]
+    async fn merge_concatenates_in_order_and_verifies() {
+        let p1 = write_temp("part1", b"AAA").expect("写分卷1");
+        let p2 = write_temp("part2", b"BBBB").expect("写分卷2");
+        let out = temp_path("merged", "zip");
+        let expected = sha_of(b"AAABBBB");
+
+        merge_parts(&[p1.clone(), p2.clone()], &out, &Some(expected), |_, _| {})
+            .await
+            .expect("合并并校验应成功");
+
+        let merged = std::fs::read(&out).expect("读合并产物");
+        assert_eq!(merged, b"AAABBBB");
+        let _ = std::fs::remove_file(&p1);
+        let _ = std::fs::remove_file(&p2);
+        let _ = std::fs::remove_file(&out);
+    }
+
+    #[tokio::test]
+    async fn merge_fails_when_overall_hash_mismatch() {
+        let p1 = write_temp("bad1", b"AAA").expect("写分卷");
+        let out = temp_path("badmerged", "zip");
+        // 期望值对应别的内容 → 合并成功但整体校验失败
+        let err = merge_parts(std::slice::from_ref(&p1), &out, &Some(sha_of(b"ZZZ")), |_, _| {})
+            .await
+            .unwrap_err();
+        assert!(err.contains("整体 SHA256 校验不匹配"), "错误应说明整体不匹配: {err}");
+        let _ = std::fs::remove_file(&p1);
+        let _ = std::fs::remove_file(&out);
+    }
+
+    #[tokio::test]
+    async fn merge_skips_hash_when_expected_absent() {
+        let p1 = write_temp("nohash", b"AAA").expect("写分卷");
+        let out = temp_path("nohashmerged", "zip");
+        merge_parts(std::slice::from_ref(&p1), &out, &None, |_, _| {})
+            .await
+            .expect("无期望值时应跳过整体校验");
+        assert_eq!(std::fs::read(&out).expect("读合并产物"), b"AAA");
+        let _ = std::fs::remove_file(&p1);
+        let _ = std::fs::remove_file(&out);
+    }
+
+    #[tokio::test]
+    async fn merge_reports_progress_monotonic() {
+        let p1 = write_temp("prog1", b"AAA").expect("写分卷1");
+        let p2 = write_temp("prog2", b"BBB").expect("写分卷2");
+        let out = temp_path("progmerged", "zip");
+        let seen = std::sync::Mutex::new(Vec::new());
+        merge_parts(&[p1.clone(), p2.clone()], &out, &None, |done, total| {
+            seen.lock().unwrap_or_else(|e| e.into_inner()).push((done, total));
+        })
+        .await
+        .expect("合并应成功");
+        let seen = seen.into_inner().unwrap_or_else(|e| e.into_inner());
+        assert_eq!(seen.first().copied(), Some((0, 6)), "应从 0 开始");
+        assert_eq!(seen.last().copied(), Some((6, 6)), "应到总量");
+        assert!(seen.windows(2).all(|w| w[0].0 <= w[1].0), "进度应单调不减");
+        let _ = std::fs::remove_file(&p1);
+        let _ = std::fs::remove_file(&p2);
+        let _ = std::fs::remove_file(&out);
+    }
+
+    #[tokio::test]
+    async fn merge_fails_on_missing_part() {
+        let missing = temp_path("ghostpart", "bin");
+        let out = temp_path("ghostmerged", "zip");
+        assert!(merge_parts(&[missing], &out, &None, |_, _| {}).await.is_err());
+    }
+}

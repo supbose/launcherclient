@@ -142,3 +142,89 @@ fn candidate_dirs() -> Vec<std::path::PathBuf> {
     }
     dirs
 }
+
+// 测试里构造失败即用例本身失败，按 clippy 惯例局部放行 expect_used
+#[allow(clippy::expect_used)]
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn one_or_many_single_string() {
+        let v: OneOrMany =
+            serde_json::from_str(r#""https://example.com/version.json""#).expect("单地址应可解析");
+        assert_eq!(v.to_urls(), vec!["https://example.com/version.json".to_string()]);
+    }
+
+    #[test]
+    fn one_or_many_array_preserves_order() {
+        // 多地址按序故障转移，顺序即优先级，不得被打乱
+        let v: OneOrMany = serde_json::from_str(r#"["https://a/1", "https://b/2", "https://c/3"]"#)
+            .expect("地址数组应可解析");
+        assert_eq!(
+            v.to_urls(),
+            vec![
+                "https://a/1".to_string(),
+                "https://b/2".to_string(),
+                "https://c/3".to_string()
+            ]
+        );
+    }
+
+    #[test]
+    fn settings_empty_json_all_none() {
+        let s: UpdateSettings = serde_json::from_str("{}").expect("空配置应可解析");
+        assert!(s.manifest_url.is_none());
+        assert!(s.app_name.is_none());
+        assert!(s.launch.is_none());
+        assert!(s.current_version.is_none());
+        assert!(s.max_versions.is_none());
+        assert!(s.services.is_none());
+    }
+
+    #[test]
+    fn settings_full_json() {
+        let s: UpdateSettings = serde_json::from_str(
+            r#"{
+                "manifest_url": ["https://a/1", "https://b/2"],
+                "app_name": "qsm",
+                "launch": "qsm.exe",
+                "current_version": "1.2.3",
+                "max_versions": 3,
+                "services": ["QsmServer", "QsmHelper"]
+            }"#,
+        )
+        .expect("完整配置应可解析");
+        assert_eq!(s.app_name.as_deref(), Some("qsm"));
+        assert_eq!(s.launch.as_deref(), Some("qsm.exe"));
+        assert_eq!(s.current_version.as_deref(), Some("1.2.3"));
+        assert_eq!(s.max_versions, Some(3));
+        assert_eq!(
+            s.services,
+            Some(vec!["QsmServer".to_string(), "QsmHelper".to_string()])
+        );
+        assert_eq!(s.manifest_url.map(|m| m.to_urls()).map(|u| u.len()), Some(2));
+    }
+
+    #[test]
+    fn settings_unknown_fields_ignored() {
+        // 生成的模板带 _说明 文档字段（对象），读取时必须忽略
+        let s: UpdateSettings = serde_json::from_str(
+            r#"{"_说明": {"manifest_url": "..."}, "app_name": "qsm"}"#,
+        )
+        .expect("未知字段应被忽略");
+        assert_eq!(s.app_name.as_deref(), Some("qsm"));
+    }
+
+    #[test]
+    fn settings_max_versions_zero_is_parsed_not_defaulted() {
+        // 0 是合法解析值（是否回退默认由 resolve 层过滤，此处只验证解析）
+        let s: UpdateSettings = serde_json::from_str(r#"{"max_versions": 0}"#).expect("应可解析");
+        assert_eq!(s.max_versions, Some(0));
+    }
+
+    #[test]
+    fn default_max_versions_constant() {
+        assert_eq!(DEFAULT_MAX_VERSIONS, 2, "当前版本 + 1 个回滚资产");
+    }
+}
