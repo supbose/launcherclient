@@ -277,8 +277,17 @@ pub async fn run_check(app: AppHandle, args: CliArgs) {
             Some(_) => {
                 // 安装目录从本地 app.json 读取（相对路径 launch 按此目录解析）
                 let installed = read_installed_path(&cfg.app_name).await;
-                launch_target(&cfg, installed.as_deref().map(Path::new));
-                app.exit(0);
+                match launch_target(&cfg, installed.as_deref().map(Path::new)) {
+                    Ok(()) => app.exit(0),
+                    // 启动失败不能静默退出：交接模式下旧客户端已退出，
+                    // 无提示退出等于「应用凭空消失」。显示错误窗口让用户
+                    // 知道发生了什么（可重试或手动启动）。
+                    Err(e) => {
+                        eprintln!("[更新器] 无更新但启动失败: {}", e);
+                        emit_phase(&app, "error", "启动失败", &e, None);
+                        show_main_and_close_splash(&app).await;
+                    }
+                }
             }
             // 手动模式（无 launch 配置）：无更新静默退出，不打扰用户
             None => {
@@ -421,10 +430,17 @@ pub async fn run_check(app: AppHandle, args: CliArgs) {
 
     // 更新完成后拉起目标程序并退出；手动模式则保留窗口由用户关闭
     match &cfg.launch {
-        Some(_) => {
-            launch_target(&cfg, Some(&target_dir));
-            app.exit(0);
-        }
+        Some(_) => match launch_target(&cfg, Some(&target_dir)) {
+            Ok(()) => app.exit(0),
+            // 安装已成功（app.json 已写入新版本），仅启动失败：
+            // 保留窗口显示错误，用户可点「重试」重新走检测（无更新
+            // 分支会再次尝试启动）或手动启动。直接退出会让「更新完成」
+            // 的窗口一闪即逝，用户以为成功了但应用没回来。
+            Err(e) => {
+                eprintln!("[更新器] 更新完成但启动失败: {}", e);
+                emit_phase(&app, "error", "更新已完成，但启动应用失败", &e, None);
+            }
+        },
         None => {
             eprintln!("[更新器] 手动模式，更新完成，等待用户点击「完成」启动应用");
         }
@@ -671,6 +687,73 @@ async fn resolve_current_version(args: &CliArgs, app_name: &str) -> String {
     "0.0.0".to_string()
 }
 
+/// 解析启动目标 exe 的路径（纯函数，供单测）
+///
+/// 优先级（更新后要启动的是**新版本**，安装目录是权威来源）：
+/// 1. 安装目录内的目标程序：绝对路径取同名文件、相对路径按原相对
+///    结构拼接；直接拼接未命中时在安装目录内按文件名递归查找
+///    （限深 3 层，兼容 zip 根带一层目录的结构）
+/// 2. 绝对路径原样使用 —— 仅当安装目录内找不到时回退。
+///    **不能无条件优先**：交接模式下 `--launch` 是旧版客户端传入的
+///    自身绝对路径，原样使用会启动旧二进制（旧目录还在时）或直接
+///    启动失败（旧目录已被 max_versions 清理时）
+/// 3. 相对路径回退到更新器 exe 所在目录（客户端与更新器同目录部署
+///    的兜底，见 qsm main.rs 的定位逻辑）
+fn resolve_launch_exe(launch: &str, installed_path: Option<&Path>) -> PathBuf {
+    let raw = Path::new(launch);
+
+    if let Some(dir) = installed_path {
+        // 绝对路径只取文件名（Path::join 遇绝对路径会整体替换，丢失 dir）；
+        // 相对路径保留原相对结构
+        let direct = if raw.is_absolute() {
+            raw.file_name().map(|n| dir.join(n))
+        } else {
+            Some(dir.join(raw))
+        };
+        if let Some(p) = direct.filter(|p| p.exists()) {
+            return p;
+        }
+        // 嵌套结构兜底：安装目录内递归找同名文件
+        if let Some(name) = raw.file_name() {
+            if let Some(found) = find_file_by_name(dir, name, 3) {
+                return found;
+            }
+        }
+    }
+
+    if raw.is_absolute() {
+        return raw.to_path_buf();
+    }
+    std::env::current_exe()
+        .ok()
+        .and_then(|cur| cur.parent().map(|d| d.join(raw)))
+        .unwrap_or_else(|| raw.to_path_buf())
+}
+
+/// 在目录内按文件名递归查找（限深，防止异常目录树拖慢启动）
+fn find_file_by_name(dir: &Path, name: &std::ffi::OsStr, max_depth: usize) -> Option<PathBuf> {
+    if max_depth == 0 {
+        return None;
+    }
+    let entries = std::fs::read_dir(dir).ok()?;
+    for entry in entries.flatten() {
+        let path = entry.path();
+        if path.is_file() && path.file_name() == Some(name) {
+            return Some(path);
+        }
+    }
+    // 第二轮再递归（同名文件优先出现在浅层）
+    for entry in std::fs::read_dir(dir).ok()?.flatten() {
+        let path = entry.path();
+        if path.is_dir() {
+            if let Some(found) = find_file_by_name(&path, name, max_depth - 1) {
+                return Some(found);
+            }
+        }
+    }
+    None
+}
+
 /// 拉起目标程序
 ///
 /// `launch` 为绝对路径时直接使用；为相对路径（通常是文件名）时按以下顺序解析：
@@ -678,43 +761,23 @@ async fn resolve_current_version(args: &CliArgs, app_name: &str) -> String {
 /// 1. 目标程序安装目录（版本目录，优先——目标程序由更新器安装在此）
 /// 2. 更新器 exe 所在目录（兜底）
 ///
-/// 都不存在时打印错误
+/// 启动失败（目标不存在 / spawn 失败）返回 Err 详情，由调用方决定
+/// 是提示用户还是静默退出 —— 更新完成后静默失败会让用户「更新完
+/// 了应用却没回来」，交接模式下旧客户端已退出，现场无任何界面。
 ///
 /// - `installed_path`: 目标程序安装目录（更新完成分支传入本次安装目录；无更新分支从本地 app.json 读取）
-fn launch_target(cfg: &ResolvedConfig, installed_path: Option<&Path>) {
+fn launch_target(cfg: &ResolvedConfig, installed_path: Option<&Path>) -> Result<(), String> {
     let Some(exe) = &cfg.launch else {
-        return;
+        return Ok(());
     };
-    let raw = Path::new(exe);
-    let exe_path = if raw.is_absolute() {
-        raw.to_path_buf()
-    } else {
-        let mut candidates: Vec<PathBuf> = Vec::new();
-        if let Some(dir) = installed_path {
-            candidates.push(dir.join(raw));
-        }
-        if let Ok(cur) = std::env::current_exe() {
-            if let Some(dir) = cur.parent() {
-                candidates.push(dir.join(raw));
-            }
-        }
-        // 都不存在时回退第一个候选路径，用于生成错误信息
-        candidates
-            .into_iter()
-            .find(|p| p.exists())
-            .unwrap_or_else(|| {
-                installed_path
-                    .map(|d| d.join(raw))
-                    .unwrap_or_else(|| raw.to_path_buf())
-            })
-    };
+    let exe_path = resolve_launch_exe(exe, installed_path);
+
     if !exe_path.exists() {
-        eprintln!(
-            "[更新器] 目标程序不存在: {}（解析路径: {}）",
+        return Err(format!(
+            "目标程序不存在: {}（解析路径: {}）",
             exe,
             exe_path.display()
-        );
-        return;
+        ));
     }
     let workdir = exe_path
         .parent()
@@ -727,15 +790,22 @@ fn launch_target(cfg: &ResolvedConfig, installed_path: Option<&Path>) {
         .env("QSLTD_FROM_UPDATER", "1")
         .spawn()
     {
-        Ok(_) => eprintln!("[更新器] 已拉起目标程序: {}", exe_path.display()),
-        Err(e) => eprintln!("[更新器] 拉起目标程序失败: {}", e),
+        Ok(_) => {
+            eprintln!("[更新器] 已拉起目标程序: {}", exe_path.display());
+            Ok(())
+        }
+        Err(e) => Err(format!(
+            "拉起目标程序失败: {}（{}）",
+            exe_path.display(),
+            e
+        )),
     }
 }
 
 /// 以分离进程方式启动指定 exe（工作目录取 exe 所在目录）
 ///
 /// 注入 `QSLTD_FROM_UPDATER=1`：客户端据此跳过启动检测，防止「拉回→再交接」循环
-fn spawn_detached(exe_path: &Path) {
+fn spawn_detached(exe_path: &Path) -> Result<(), String> {
     let workdir = exe_path
         .parent()
         .map(|p| p.to_path_buf())
@@ -745,8 +815,11 @@ fn spawn_detached(exe_path: &Path) {
         .env("QSLTD_FROM_UPDATER", "1")
         .spawn()
     {
-        Ok(_) => eprintln!("[更新器] 已启动: {}", exe_path.display()),
-        Err(e) => eprintln!("[更新器] 启动失败 {}: {}", exe_path.display(), e),
+        Ok(_) => {
+            eprintln!("[更新器] 已启动: {}", exe_path.display());
+            Ok(())
+        }
+        Err(e) => Err(format!("启动失败 {}: {}", exe_path.display(), e)),
     }
 }
 
@@ -772,7 +845,9 @@ pub async fn finish_and_launch(app: AppHandle) {
     }
     let args = qsltd_updater_core::cli::parse();
     let cfg = resolve_config(&args);
-    match read_installed_path(&cfg.app_name).await {
+    // 启动结果：成功才退出；失败切错误态保留窗口（用户可重试或手动启动），
+    // 不能再静默 exit —— 那等于「点了完成，应用没出来，窗口也关了」
+    let outcome = match read_installed_path(&cfg.app_name).await {
         Some(dir) => match &cfg.launch {
             Some(_) => launch_target(&cfg, Some(Path::new(&dir))),
             None => {
@@ -781,13 +856,19 @@ pub async fn finish_and_launch(app: AppHandle) {
                     &cfg.app_name,
                 ) {
                     Some(exe) => spawn_detached(&exe),
-                    None => eprintln!("[更新器] 安装目录中未找到可执行文件: {}", dir),
+                    None => Err(format!("安装目录中未找到可执行文件: {}", dir)),
                 }
             }
         },
-        None => eprintln!("[更新器] 无本地版本记录，跳过启动"),
+        None => Err("无本地版本记录，无法定位已安装的应用".to_string()),
+    };
+    match outcome {
+        Ok(()) => app.exit(0),
+        Err(e) => {
+            eprintln!("[更新器] 「完成」启动失败: {}", e);
+            emit_phase(&app, "error", "启动失败", &e, None);
+        }
     }
-    app.exit(0);
 }
 
 /// 读取本地 app.json 记录的安装目录（不存在或未记录时返回 None）
@@ -895,6 +976,86 @@ pub fn is_critical_phase() -> bool {
         .map(|p| p.stage.as_str())
         .unwrap_or("");
     matches!(stage, "checking" | "downloading" | "installing")
+}
+
+// 测试里构造失败即用例本身失败，按 clippy 惯例局部放行 expect_used
+#[allow(clippy::expect_used)]
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn temp_dir(tag: &str) -> PathBuf {
+        let d = std::env::temp_dir().join(format!(
+            "qsltd_launch_test_{}_{}",
+            tag,
+            std::process::id()
+        ));
+        let _ = std::fs::remove_dir_all(&d);
+        std::fs::create_dir_all(&d).expect("建临时目录");
+        d
+    }
+
+    #[test]
+    fn absolute_launch_prefers_same_named_exe_in_install_dir() {
+        // 核心回归：交接模式下 --launch 是旧版客户端传入的自身绝对路径，
+        // 更新完成后必须启动新安装目录内的同名 exe —— 否则启动的是旧
+        // 二进制（旧目录还在时）或直接启动失败（旧目录被清理时）。
+        let install = temp_dir("prefer_new");
+        std::fs::write(install.join("qsm.exe"), b"new").expect("写新版本 exe");
+        let old = temp_dir("old_bin");
+        std::fs::write(old.join("qsm.exe"), b"old").expect("写旧版本 exe");
+
+        let resolved = resolve_launch_exe(&old.join("qsm.exe").to_string_lossy(), Some(&install));
+        assert_eq!(resolved, install.join("qsm.exe"), "必须解析到新安装目录");
+        let _ = std::fs::remove_dir_all(&install);
+        let _ = std::fs::remove_dir_all(&old);
+    }
+
+    #[test]
+    fn absolute_launch_falls_back_when_install_dir_lacks_exe() {
+        // 安装目录内没有同名 exe（launch 指向更新器外的其他程序，如
+        // 绝对路径指向独立工具）时才回退绝对路径原值
+        let install = temp_dir("fallback_abs");
+        let other = temp_dir("other_bin");
+        std::fs::write(other.join("tool.exe"), b"x").expect("写文件");
+
+        let resolved = resolve_launch_exe(&other.join("tool.exe").to_string_lossy(), Some(&install));
+        assert_eq!(resolved, other.join("tool.exe"));
+        let _ = std::fs::remove_dir_all(&install);
+        let _ = std::fs::remove_dir_all(&other);
+    }
+
+    #[test]
+    fn relative_launch_resolves_in_install_dir() {
+        let install = temp_dir("relative");
+        std::fs::write(install.join("qsm.exe"), b"new").expect("写 exe");
+        let resolved = resolve_launch_exe("qsm.exe", Some(&install));
+        assert_eq!(resolved, install.join("qsm.exe"));
+        let _ = std::fs::remove_dir_all(&install);
+    }
+
+    #[test]
+    fn nested_install_dir_found_by_name() {
+        // zip 根带一层目录：app_2.0.0/bin/qsm.exe，--launch 指旧版 bin 路径，
+        // 直接拼接未命中，应递归（限深）找到嵌套目录内的新 exe
+        let install = temp_dir("nested");
+        let bin = install.join("bin");
+        std::fs::create_dir_all(&bin).expect("建 bin");
+        std::fs::write(bin.join("qsm.exe"), b"new").expect("写 exe");
+        let old = temp_dir("old_nested");
+        std::fs::write(old.join("qsm.exe"), b"old").expect("写旧 exe");
+
+        let resolved = resolve_launch_exe(&old.join("qsm.exe").to_string_lossy(), Some(&install));
+        assert_eq!(resolved, bin.join("qsm.exe"), "应递归找到嵌套目录内的新 exe");
+        let _ = std::fs::remove_dir_all(&install);
+        let _ = std::fs::remove_dir_all(&old);
+    }
+
+    #[test]
+    fn absolute_launch_without_install_dir_used_verbatim() {
+        let p = PathBuf::from("D:/apps/qsm.exe");
+        assert_eq!(resolve_launch_exe(&p.to_string_lossy(), None), p);
+    }
 }
 
 /// 关键阶段的关闭是否已被用户确认放行（确认后 close 会再次触发
