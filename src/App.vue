@@ -64,7 +64,12 @@
         <div class="status-dot err"></div>
         <div class="status-text error">{{ message }}</div>
         <div class="status-sub error">{{ subText }}</div>
-        <button class="btn-close" @click="closeApp">关闭</button>
+        <div class="btn-row">
+          <button class="btn-primary" :disabled="retrying" @click="retryUpdate">
+            {{ retrying ? '正在重试...' : '重试' }}
+          </button>
+          <button class="btn-close" @click="closeApp">关闭</button>
+        </div>
       </template>
     </div>
   </div>
@@ -132,6 +137,26 @@ const applyPhase = (p) => {
     downloadedBytes.value = 0;
     totalBytes.value = 0;
     speedBps.value = 0;
+  }
+  // 收到任何非 error 阶段即视为重试已被受理（后端 run_check 首行
+  // emit checking），复位按钮禁用态
+  if (p.stage !== 'error') {
+    retrying.value = false;
+  }
+};
+
+const retrying = ref(false);
+
+// 错误态「重试」：相同命令行参数重走检测/更新流程
+//（后端 spawn_check 有运行中守卫，连点/IPC 重试不会双跑）
+const retryUpdate = async () => {
+  retrying.value = true;
+  try {
+    const { invoke } = await import('@tauri-apps/api/core');
+    await invoke('retry_check');
+  } catch (e) {
+    console.error('重试失败:', e);
+    retrying.value = false;
   }
 };
 
@@ -280,5 +305,32 @@ const finishUpdate = async () => {
 .btn-close:hover {
   background: rgba(255, 255, 255, 0.1);
   border-color: rgba(255, 255, 255, 0.35);
+}
+
+.btn-row {
+  display: flex;
+  gap: 10px;
+  margin-top: 8px;
+}
+
+.btn-primary {
+  padding: 7px 26px;
+  border: 1px solid #4a9eff;
+  border-radius: 6px;
+  background: #4a9eff;
+  color: #fff;
+  font-size: 13px;
+  cursor: pointer;
+  transition: background 0.2s, border-color 0.2s;
+}
+
+.btn-primary:hover:not(:disabled) {
+  background: #357ac9;
+  border-color: #357ac9;
+}
+
+.btn-primary:disabled {
+  opacity: 0.6;
+  cursor: default;
 }
 </style>

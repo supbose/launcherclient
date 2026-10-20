@@ -7,16 +7,22 @@ mod updater;
 
 pub fn run() {
     // --check-only 纯检测：不进 Tauri（不建窗口/WebView），输出结果后按退出码结束
-    let args = qsltd_updater_core::cli::parse();
+    let argv: Vec<String> = std::env::args().skip(1).collect();
+    let args = qsltd_updater_core::cli::parse_from(&argv);
     if args.check_only {
         std::process::exit(updater::check_only_exit(&args));
     }
+
+    // 登记原始参数供错误态「重试」使用（retry_check 重新解析，
+    // 保证重试与首次完全同参）
+    updater::register_cli_argv(argv);
 
     tauri::Builder::default()
         .plugin(tauri_plugin_dialog::init())
         .invoke_handler(tauri::generate_handler![
             updater::finish_and_launch,
-            updater::current_phase
+            updater::current_phase,
+            updater::retry_check
         ])
         .on_window_event(|window, event| {
             use tauri_plugin_dialog::{DialogExt, MessageDialogButtons, MessageDialogKind};
@@ -67,11 +73,10 @@ pub fn run() {
                 updater::mark_splash_shown();
             }
 
-            tauri::async_runtime::spawn(async move {
-                updater::run_check(handle, args).await;
-            });
+            // 经 spawn_check 统一入口（运行中守卫 + 完成后复位），
+            // 错误态「重试」与首次运行共用同一路径
+            updater::spawn_check(handle, args);
             Ok(())
-        })
-        .run(tauri::generate_context!())
+        })        .run(tauri::generate_context!())
         .expect("Tauri 应用运行失败");
 }

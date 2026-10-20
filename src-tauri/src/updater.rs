@@ -903,6 +903,49 @@ pub fn allow_close() {
     ALLOW_CLOSE.store(true, Ordering::SeqCst);
 }
 
+/// 更新流程运行中标志：首次运行与「重试」共用，防并发双跑
+static CHECK_RUNNING: AtomicBool = AtomicBool::new(false);
+
+/// 原始命令行参数（不含程序名）：错误态「重试」时用它重新解析
+/// （CliArgs 无需 Clone，且重试与首次完全同参）
+static CLI_ARGV: OnceLock<Vec<String>> = OnceLock::new();
+
+/// 登记原始命令行参数（lib.rs 启动时调用一次，重试时取用）
+pub fn register_cli_argv(argv: Vec<String>) {
+    let _ = CLI_ARGV.set(argv);
+}
+
+/// 启动一次更新流程（首次运行与错误态「重试」共用入口）
+///
+/// 运行中标志防并发：流程进行中再启动直接忽略（前端按钮会同时
+/// disabled，双保险；IPC 重试/脚本调用场景靠这里兜底）。
+pub fn spawn_check(app: AppHandle, args: CliArgs) {
+    if CHECK_RUNNING.swap(true, Ordering::SeqCst) {
+        eprintln!("[更新器] 已有更新流程在运行，忽略本次启动");
+        return;
+    }
+    tauri::async_runtime::spawn(async move {
+        run_check(app, args).await;
+        CHECK_RUNNING.store(false, Ordering::SeqCst);
+    });
+}
+
+/// 错误态「重试」按钮（前端 invoke）：用相同命令行参数重走一遍流程
+///
+/// 重试与首次运行完全同参（含 --manifest 等覆盖）——「同一配置再试
+/// 一次」正是弱网/服务端临时故障时用户的诉求；想换地址应重启更新器。
+/// run_check 首行即 emit checking，前端自动回到检测态。
+#[tauri::command]
+pub async fn retry_check(app: AppHandle) {
+    let Some(argv) = CLI_ARGV.get().cloned() else {
+        eprintln!("[更新器] 未登记命令行参数，无法重试");
+        return;
+    };
+    let args = qsltd_updater_core::cli::parse_from(&argv);
+    eprintln!("[更新器] 用户请求重试，重新开始检查更新");
+    spawn_check(app, args);
+}
+
 /// 推送给前端的阶段事件载荷
 #[derive(Debug, Clone, Serialize)]
 pub(crate) struct PhasePayload {
