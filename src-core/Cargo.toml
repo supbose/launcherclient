@@ -1,6 +1,6 @@
 [package]
 name = "qsltd-updater-core"
-version = "0.1.0"
+version = "0.1.8"
 description = "QsLtd 独立更新程序 - 共享核心模块（无 UI）"
 authors = ["supbose <supbose@qq.com>"]
 edition = "2021"
