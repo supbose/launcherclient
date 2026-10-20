@@ -24,7 +24,8 @@
         "alwaysOnTop": true,
         "skipTaskbar": true,
         "hiddenTitle": true,
-        "visible": true
+        "visible": true,
+        "create": false
       },
       {
         "label": "main",

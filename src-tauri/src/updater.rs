@@ -2,14 +2,15 @@
 //! 无更新时拉起目标程序并退出，出错时显示窗口提示。
 //!
 //! 窗口可见性策略（loading 方案对齐 qsm）：
-//! - 直接运行（无 --launch 交接参数）：splash 启动加载页由
-//!   tauri.conf.json 静态声明「声明即创建」（纯静态零 JS，首帧快），
-//!   检测期全程有界面反馈 —— 对应 qsm「等服务端连接」期间显示 loading；
+//! - 直接运行（无 --launch 交接参数）：splash 启动加载页样式声明在
+//!   tauri.conf.json（"create": false，qsm 同款配置项），由 lib.rs
+//!   setup 在直接运行模式按配置构建（纯静态零 JS，首帧快），检测期
+//!   全程有界面反馈 —— 对应 qsm「等服务端连接」期间显示 loading；
 //!   主窗口在「发现新版本」或「出错」时才显示，且遵循「先 show main、
 //!   等其首帧渲染、再撤 splash」的顺序（qsm show_main_and_close_splash
 //!   同款），避免空窗闪动
-//! - 被目标程序以 --launch 交接：全程静默（splash 由配置无条件创建，
-//!   lib.rs setup 立即关闭），直到发现新版本或出错才显示窗口
+//! - 被目标程序以 --launch 交接：全程静默（splash 不构建，零窗口
+//!   零闪现），直到发现新版本或出错才显示窗口
 //! - `--check-only` 模式不进 Tauri，无窗口
 
 use std::path::{Path, PathBuf};
@@ -30,8 +31,9 @@ use qsltd_updater_core::manifest;
 use qsltd_updater_core::services;
 
 /// splash 启动加载窗口 label。
-/// 由 tauri.conf.json 静态声明（qsm 同款「声明即创建」），交接模式由
-/// lib.rs setup 立即关闭；检测期提供「正在检查更新」反馈，
+/// 样式声明在 tauri.conf.json（"create": false，qsm 同款配置项），
+/// 由 lib.rs setup 在直接运行模式按配置构建（交接模式不构建，
+/// 零窗口零闪现）；检测期提供「正在检查更新」反馈，
 /// 主窗口显示前由本模块按 qsm 同款顺序撤掉。
 pub const SPLASH_LABEL: &str = "splash";
 

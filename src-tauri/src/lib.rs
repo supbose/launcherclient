@@ -56,20 +56,22 @@ pub fn run() {
         .setup(move |app| {
             let handle = app.handle().clone();
 
-            // splash 窗口由 tauri.conf.json 静态声明「声明即创建」（qsm 同款）：
-            // Tauri 的 setup() 先创建 app.windows 配置的窗口、再执行本回调
-            // （tauri-2.12.4 src/app.rs:2691-2699），splash 首帧早于任何动态
-            // 创建，且本回调里操作它时窗口必然已存在（无竞态）。
+            // splash 窗口样式唯一定义在 tauri.conf.json（qsm 同款配置项），
+            // 但 "create": false —— 由本回调按配置构建，原因：
+            // 1. 交接模式（--launch）要求全程静默：create: true 时 splash
+            //    被无条件创建，setup 里 close 的窗口销毁有 ~1s 延迟
+            //    （WebView2 固定耗时），用户会看到 splash 闪现；
+            // 2. 直接运行模式（无 --launch）在此构建，时机与配置自动创建
+            //    仅差同函数内 main 的构建耗时（毫秒级），首帧优势不受
+            //    影响（Tauri 先建配置窗口再执行本回调，但那一步现在只建
+            //    main，splash 在此构建后同样远早于 Vue 应用首帧）；
+            // 3. from_config 读配置构建，样式不重复维护。
             //
             // 关闭方式照搬 qsm（main.rs show_main_and_close_splash）：检测有
             // 更新/出错时先 show main、等其首帧渲染、再撤 splash，见
             // updater::run_check；无更新时补足最短展示时长后退出。
-            //
-            // 交接模式（--launch）要求全程静默（本项目特有约束，qsm 无此
-            // 模式）：splash 被配置无条件创建，这里立即关闭。
-            if args.launch.is_some() {
-                updater::close_splash(&handle);
-            } else {
+            if args.launch.is_none() {
+                create_splash_from_config(app.handle());
                 updater::mark_splash_shown();
             }
 
@@ -77,6 +79,32 @@ pub fn run() {
             // 错误态「重试」与首次运行共用同一路径
             updater::spawn_check(handle, args);
             Ok(())
-        })        .run(tauri::generate_context!())
+        })
+        .run(tauri::generate_context!())
         .expect("Tauri 应用运行失败");
+}
+
+/// 按 tauri.conf.json 的 splash 配置构建 splash 窗口（仅直接运行模式调用）。
+///
+/// 配置里 "create": false 防止 Tauri 自动创建（交接模式零窗口），
+/// 样式（尺寸/无边框/置顶等）仍以 JSON 为唯一来源，此处只负责构建。
+fn create_splash_from_config(app: &tauri::AppHandle) {
+    use tauri::WebviewWindowBuilder;
+
+    let Some(config) = app
+        .config()
+        .app
+        .windows
+        .iter()
+        .find(|w| w.label == updater::SPLASH_LABEL)
+    else {
+        eprintln!("[更新器] tauri.conf.json 缺少 splash 窗口配置，跳过");
+        return;
+    };
+
+    if let Err(e) = WebviewWindowBuilder::from_config(app, config)
+        .and_then(|builder| builder.build())
+    {
+        eprintln!("[更新器] splash 窗口创建失败（继续无 splash 运行）: {e}");
+    }
 }
