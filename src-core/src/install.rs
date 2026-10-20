@@ -80,7 +80,7 @@ pub async fn install(zip_path: &Path, install_dir: &Path, on_stage: StageCallbac
     }
 
     // 解压到临时目录，避免半成品直接进入安装目录
-    let temp_dir = install_dir.with_extension("tmp");
+    let temp_dir = temp_dir_for(install_dir);
     if temp_dir.exists() {
         tokio::fs::remove_dir_all(&temp_dir)
             .await
@@ -122,6 +122,19 @@ pub async fn install(zip_path: &Path, install_dir: &Path, on_stage: StageCallbac
         })?;
 
     Ok(install_dir.to_path_buf())
+}
+
+/// 安装临时目录：`<安装目录名>_tmp`（如 `app_2.1.2` → `app_2.1.2_tmp`）
+///
+/// 不用 `with_extension("tmp")`：那会把 `app_2.1.2` 变成 `app_2.1.tmp`，
+/// 导致 `2.1.2` 与 `2.1.10` 两个版本的临时目录共名，某次解压失败留下的
+/// 残留会被另一版本的安装误清理/误复用。
+fn temp_dir_for(install_dir: &Path) -> PathBuf {
+    let name = install_dir
+        .file_name()
+        .map(|n| n.to_string_lossy().into_owned())
+        .unwrap_or_default();
+    install_dir.with_file_name(format!("{}_tmp", name))
 }
 
 /// 保存本地版本记录 app.json
@@ -360,5 +373,32 @@ mod tests {
         assert!(find_main_executable(&dir, "qsm").is_none());
         let _ = std::fs::remove_dir_all(&dir);
         Ok(())
+    }
+
+    // ---------- temp_dir_for ----------
+
+    #[test]
+    fn temp_dir_appends_tmp_suffix() {
+        let d = Path::new("/apps/qsm/app/app_2.1.2");
+        assert_eq!(
+            temp_dir_for(d),
+            Path::new("/apps/qsm/app/app_2.1.2_tmp")
+        );
+    }
+
+    #[test]
+    fn temp_dir_unique_across_versions() {
+        // 历史上 with_extension("tmp") 会让 2.1.2 与 2.1.10 共名 app_2.1.tmp
+        let a = temp_dir_for(Path::new("/apps/qsm/app/app_2.1.2"));
+        let b = temp_dir_for(Path::new("/apps/qsm/app/app_2.1.10"));
+        assert_ne!(a, b);
+        assert!(a.ends_with("app_2.1.2_tmp"));
+        assert!(b.ends_with("app_2.1.10_tmp"));
+    }
+
+    #[test]
+    fn temp_dir_stays_in_same_parent() {
+        let d = Path::new("/apps/qsm/app/app_1.0.0");
+        assert_eq!(temp_dir_for(d).parent(), d.parent());
     }
 }
