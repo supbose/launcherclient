@@ -108,6 +108,10 @@ const speedText = computed(() => {
 });
 
 let unlisten = null;
+// 监听建立后是否已收到过事件：快照仅作「监听建立前事件全错过」的兜底，
+// 若 invoke 响应晚于后续事件到达（小包秒级走完时 IPC 延迟完全可能），
+// 旧快照会把已推进的界面覆盖回旧阶段
+let receivedEvent = false;
 
 // 应用一次阶段状态（事件推送与初始查询共用）
 const applyPhase = (p) => {
@@ -135,13 +139,16 @@ onMounted(async () => {
   try {
     const { listen } = await import('@tauri-apps/api/event');
     unlisten = await listen('update-phase', (event) => {
+      receivedEvent = true;
       applyPhase(event.payload || {});
     });
     // 监听建立后主动拉取一次当前阶段：
-    // 本地小更新包可能秒级走完全流程，早期事件在监听建立前已 emit 完毕
+    // 本地小更新包可能秒级走完流程，早期事件在监听建立前已 emit 完毕。
+    // 仅在期间未收到任何事件时应用 —— 已收到事件说明界面比快照更新，
+    // 旧快照不得回滚（invoke 响应可能晚于后续事件到达）。
     const { invoke } = await import('@tauri-apps/api/core');
     const cur = await invoke('current_phase');
-    if (cur) applyPhase(cur);
+    if (cur && !receivedEvent) applyPhase(cur);
   } catch (e) {
     console.error('事件监听初始化失败:', e);
   }
