@@ -142,6 +142,43 @@ fn local_manifest_path(app_name: &str) -> PathBuf {
     qingshu::update::get_myapp_dir(Some(app_name)).join("app.json")
 }
 
+/// 清理本次更新的下载缓存：完整 zip + 分卷目录（安装成功后调用）
+///
+/// downloads 目录定位为「暂存区」：安装完成后即无价值。此前只清 app
+/// 根目录的旧版本安装目录（`cleanup_old_versions`），downloads 里的
+/// `update_{ver}.zip` 与 `update_{ver}_parts/` 每次升级各留一份完整
+/// 包，只增不减（客户端长期运行后占用可达数 GB）。
+///
+/// 失败仅告警不阻塞：缓存而已，重下即可，不影响已完成的安装。
+/// 安装失败**不**清理——保留的包供重跑时复用（`run_download` 的
+/// 本地校验复用路径）。
+async fn cleanup_download_cache(app_name: &str, version: &str) {
+    let dir = download_dir(app_name);
+    let zip = dir.join(format!("update_{}.zip", version));
+    let parts = dir.join(format!("update_{}_parts", version));
+
+    if zip.exists() {
+        match tokio::fs::remove_file(&zip).await {
+            Ok(()) => eprintln!("[更新器] 已清理下载缓存: {}", zip.display()),
+            Err(e) => eprintln!(
+                "[更新器] 清理下载缓存失败（忽略）: {}（{}）",
+                zip.display(),
+                e
+            ),
+        }
+    }
+    if parts.exists() {
+        match tokio::fs::remove_dir_all(&parts).await {
+            Ok(()) => eprintln!("[更新器] 已清理分卷缓存: {}", parts.display()),
+            Err(e) => eprintln!(
+                "[更新器] 清理分卷缓存失败（忽略）: {}（{}）",
+                parts.display(),
+                e
+            ),
+        }
+    }
+}
+
 /// --check-only 入口（供 lib.rs 调用）：合并配置 → 纯检测 → 返回退出码
 pub fn check_only_exit(args: &CliArgs) -> i32 {
     let cfg = resolve_config(args);
@@ -361,6 +398,9 @@ pub async fn run_check(app: AppHandle, args: CliArgs) {
         emit_phase(&app, "error", "本地版本记录写入失败", &e, None);
         return;
     }
+
+    // 清理本次更新的下载缓存（zip + 分卷），downloads 回归暂存区语义
+    cleanup_download_cache(&cfg.app_name, &m.version).await;
 
     // 清理旧版本目录（旧目录即回滚资产，保留 max_versions 个）
     cleanup::cleanup_old_versions(&install_root(&cfg.app_name), &m.version, cfg.max_versions)
