@@ -9,6 +9,44 @@
 
 
 
+
+## v0.1.9 (2026-10-20)
+### 🚀 新增功能
+
+- [831808a](/-/commit/831808aecfd541f699981f3519ad7a963c2da761) 新增(tauri): 错误态新增「重试」按钮，弱网/服务端故障可自助恢复 (src-tauri/src/lib.rs, src-tauri/src/updater.rs, src/App.vue)
+- [eb23412](/-/commit/eb23412ffacb6c85f7684adc4a6d56e616124cfd) 新增(tauri): 关键阶段关窗弹确认，防「服务已卸、app.json 未写」不一致态 (src-tauri/Cargo.lock, src-tauri/Cargo.toml, src-tauri/capabilities/default.json, src-tauri/src/lib.rs, src-tauri/src/updater.rs)
+
+### 🩹 修复 Bug
+
+- [9909e27](/-/commit/9909e273d604005ca2369703f50af71660540c24) 修复(tauri): 交接模式 splash 零闪现（create:false + setup 按配置构建） (public/splash.html, src-tauri/src/lib.rs, src-tauri/src/updater.rs, src-tauri/tauri.conf.json)
+- [4b4cf4a](/-/commit/4b4cf4a2f1c98404034ae4592ef4a03b6a4fd042) 修复(tauri): 安装成功后清理下载缓存，downloads 回归暂存区语义 (src-tauri/src/updater.rs)
+- [e8a7f5e](/-/commit/e8a7f5ee8fd79dc8be37c3cdd7741d6068ff30cb) 修复(install): 解压加三道闸防 zip bomb，总量 8GB / 单条目 512MB 硬顶 (src-core/src/install.rs)
+- [9639ca9](/-/commit/9639ca97a83c27735b889941480ebe400a0b7145) 修复(core): 服务卸载失败返回错误，tauri 版安装前终止更新 (src-core/src/services.rs, src-tauri/src/updater.rs, src-zsui/src/updater.rs)
+- [fbcea7c](/-/commit/fbcea7cb9b409c1506d0efe38d4be3b51ae0cd02) 修复(tauri): finish_and_launch 加重入守卫，防止启动两个应用实例 (src-tauri/src/updater.rs)
+- [0beafd1](/-/commit/0beafd1e6d54ac0e82d706027bdb693dcbb8e12d) 修复(ui): current_phase 快照仅兜底不覆盖，修复界面阶段回退 (src/App.vue)
+- [9823bf3](/-/commit/9823bf3d3bbdf09d1bd3099ae87c4b960c539dba) 修复(install): 临时目录命名唯一化，消除跨版本共名 (src-core/src/install.rs)
+- [cc4f059](/-/commit/cc4f05907135fdb5aa80d52fd8f566fd223cfc80) 修复(core): 本地包复用前必须有校验值，杜绝半包/损坏包被当有效包 (src-core/src/download.rs, src-tauri/src/updater.rs, src-zsui/src/updater.rs)
+
+### 🔥 性能优化
+
+- [8af0db9](/-/commit/8af0db97a4e5da4e39c3c4fd1f18f5f5e606a97e) 优化(core): manifest 拉取加 5 分钟 TTL 缓存，无更新路径免联网 (src-core/src/manifest.rs, src-tauri/src/updater.rs)
+- [9417636](/-/commit/94176360d808ebf03fc2823c5babfad3bd97c008) 优化(core): 共享 reqwest Client，消除每请求新建的连接/TLS 握手浪费 (src-core/src/client.rs, src-core/src/download.rs, src-core/src/lib.rs, src-core/src/manifest.rs)
+
+### 📝 文档更新
+
+- [fffb78f](/-/commit/fffb78f45b8df9c99c78c338dece53ff99e4abc4) 文档(.workbuddy): 工作日志追加第三批（P3 体验 5 项）执行记录与踩坑 (.workbuddy/memory/2026-10-20.md)
+- [35c5353](/-/commit/35c535342e77ed5e83daa6f11f412101342f93de) 文档(.workbuddy): 工作日志追加第二批（P2 安全卫生 2 项）执行记录 (.workbuddy/memory/2026-10-20.md)
+- [12ab1a9](/-/commit/12ab1a9e02dad8a6bf075806ca918c1a396b8e9d) 文档(zsui): 声明实验版冻结，主维护版收敛为 src-tauri (src-zsui/README.md)
+
+### 🔧 工具变更
+
+- [175bdf6](/-/commit/175bdf64911bff4d5b07b4f602c2175b4797cf30) 工具(.workbuddy): 同步 Cargo.lock 版本号（0.1.8）+ 更新工作日志 (.workbuddy/memory/2026-10-20.md, src-core/Cargo.lock, src-tauri/Cargo.lock, src-zsui/Cargo.lock)
+- [10f2583](/-/commit/10f258318c582c6ca59d32830cf18c2af3300aa1) 工具(src-tauri): 统一版本号为 0.1.8（消除 package.json/tauri.conf/Cargo.toml 三处不一致） (src-core/Cargo.toml, src-tauri/Cargo.toml, src-tauri/tauri.conf.json, src-zsui/Cargo.toml)
+
+### ✅ 测试用例
+
+- [599636d](/-/commit/599636d3d5560256de4bde05939ee2a423842c24) 测试(core): 单测从 33 扩到 92，覆盖此前零测试的五个模块 (src-core/src/cleanup.rs, src-core/src/cli.rs, src-core/src/config.rs, src-core/src/download.rs, src-core/src/manifest.rs)
+
 ## v0.1.8 (2026-10-20)
 ### 🚀 新增功能
 
