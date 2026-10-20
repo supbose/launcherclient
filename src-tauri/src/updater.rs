@@ -450,7 +450,15 @@ async fn run_download(
     m: &manifest::FlatManifest,
     zip_path: &Path,
 ) -> Result<(), String> {
-    if zip_path.exists() {
+    // 复用前提：manifest 提供了非空 SHA256。无校验值时 verify_sha256 直接
+    // 放行，等于把上次下载中断的半包当完整包复用（后面安装的就是损坏包），
+    // 故强制重新下载。
+    let has_hash = m
+        .sha256
+        .as_deref()
+        .map(str::trim)
+        .is_some_and(|s| !s.is_empty());
+    if zip_path.exists() && has_hash {
         let cached = zip_path.to_path_buf();
         let sha256 = m.sha256.clone();
         let ok = tokio::task::spawn_blocking(move || download::verify_sha256(&cached, &sha256))

@@ -149,8 +149,16 @@ where
         let part_path = dir.join(format!("part_{:03}", i + 1));
         let expected = sha256s.and_then(|s| s.get(i).cloned());
 
-        // 已存在且校验通过的卷直接复用（断点续传思想）
-        if part_path.exists() {
+        // 已存在且校验通过的卷直接复用（断点续传思想）。
+        // 前提：manifest 提供了该卷的非空 SHA256（part_sha256）——
+        // 无校验值时 verify_sha256 会直接放行，等于把上次中断的半包当
+        // 有效卷复用；整体 sha256 也要等合并完才能发现损坏，代价更大。
+        // 故此处缺校验值宁可重下，也不复用未校验文件。
+        let reusable = expected
+            .as_deref()
+            .map(str::trim)
+            .is_some_and(|s| !s.is_empty());
+        if part_path.exists() && reusable {
             let cached = part_path.clone();
             let exp = expected.clone();
             let ok = tokio::task::spawn_blocking(move || verify_sha256(&cached, &exp))
