@@ -11,6 +11,12 @@
 
 
 
+
+## v0.1.11 (2026-10-23)
+### 🚀 新增功能
+
+- [ed5c986](/-/commit/ed5c986a2a2fcebcdcd168ef8858541a11a4d1ee) 新增(docs): 实现五套启动器界面模板及配置支持 (.workbuddy/memory/2026-10-22.md, docs/preview-shots/tpl-A-done.png, docs/preview-shots/tpl-A-downloading.png, docs/preview-shots/tpl-A-error.png, docs/preview-shots/tpl-A-installing.png, docs/preview-shots/tpl-A-verifying.png, docs/preview-shots/tpl-B-done.png, docs/preview-shots/tpl-B-downloading.png, docs/preview-shots/tpl-B-error.png, docs/preview-shots/tpl-B-installing.png, docs/preview-shots/tpl-B-verifying.png, docs/preview-shots/tpl-C-done.png, docs/preview-shots/tpl-C-downloading.png, docs/preview-shots/tpl-C-error.png, docs/preview-shots/tpl-C-installing.png, docs/preview-shots/tpl-C-verifying.png, docs/preview-shots/tpl-D-done.png, docs/preview-shots/tpl-D-downloading.png, docs/preview-shots/tpl-D-error.png, docs/preview-shots/tpl-D-installing.png, docs/preview-shots/tpl-D-verifying.png, docs/preview-shots/tpl-E-done.png, docs/preview-shots/tpl-E-downloading.png, docs/preview-shots/tpl-E-error.png, docs/preview-shots/tpl-E-installing.png, docs/preview-shots/tpl-E-verifying.png, docs/ui-drafts-下载校验解压.html, preview.html, src-core/src/cli.rs, src-core/src/config.rs, src-core/src/defaults.rs, src-tauri/src/updater.rs, src-tauri/tauri.conf.json, src/App.vue, src/Preview.vue, src/components/templates/UpdateTemplateA.vue, src/components/templates/UpdateTemplateB.vue, src/components/templates/UpdateTemplateC.vue, src/components/templates/UpdateTemplateD.vue, src/components/templates/UpdateTemplateE.vue, src/components/templates/index.js, src/components/templates/usePhase.js, src/preview.css, src/preview.js, update.json)
+
 ## v0.1.10 (2026-10-20)
 ### 🩹 修复 Bug
 
