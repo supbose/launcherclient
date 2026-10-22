@@ -15,6 +15,14 @@ pub const DEFAULT_MANIFEST_URLS: &[&str] = &[
 /// 默认应用名称（决定配置/下载/安装目录）
 pub const DEFAULT_APP_NAME: &str = "qsm";
 
+/// 默认启动器界面模板（launcher template）
+///
+/// 可选值 A/B/C/D/E，对应 `src/components/templates/` 下五套独立布局
+/// （A 信息密度 · B 环形居中 · C 顶部步骤条 · D 极简留白 · E 日志为主）。
+/// 与 DEFAULT_MANIFEST_URLS 等一样：配置模板生成与两套实现的最终回退
+/// 都引用此处，改一处即全局生效。
+pub const DEFAULT_LAUNCHER_TEMPLATE: &str = "C";
+
 /// 进度事件推送间隔（毫秒）：UI 编排层的节流参数，与后端逻辑无关，
 /// 仅两版 updater 的进度回调使用，故也集中到此处保持一致
 pub const PROGRESS_INTERVAL_MS: u64 = 300;

@@ -1,151 +1,110 @@
 <template>
   <div class="updater-root">
     <MinTitleBar />
-    <div class="updater-body">
-      <!-- 检查/合并中 -->
-      <template v-if="stage === 'checking'">
-        <div class="spinner"></div>
-        <div class="status-text">{{ message || '正在检查更新...' }}</div>
-        <div class="status-sub" v-if="subText">{{ subText }}</div>
-        <!-- 合并阶段带进度条 -->
-        <div class="progress-track" v-if="subText && progressPercent > 0">
-          <div class="progress-fill" :style="{ width: progressPercent + '%' }"></div>
-        </div>
-      </template>
-
-      <!-- 下载中 -->
-      <template v-else-if="stage === 'downloading'">
-        <div class="status-text">{{ message }}</div>
-        <div class="progress-track">
-          <div class="progress-fill" :style="{ width: progressPercent + '%' }"></div>
-        </div>
-        <div class="progress-label">
-          {{ progressPercent.toFixed(1) }}%
-          <template v-if="sizeText"> · {{ sizeText }}</template>
-          <template v-if="speedText"> · {{ speedText }}</template>
-        </div>
-      </template>
-
-      <!-- 安装中 -->
-      <template v-else-if="stage === 'installing'">
-        <div class="spinner"></div>
-        <div class="status-text">{{ message }}</div>
-        <div class="status-sub">{{ subText }}</div>
-        <!-- 解压进度条 -->
-        <div class="progress-track" v-if="progressPercent > 0">
-          <div class="progress-fill" :style="{ width: progressPercent + '%' }"></div>
-        </div>
-      </template>
-
-      <!-- 已是最新 -->
-      <template v-else-if="stage === 'up-to-date'">
-        <div class="status-dot ok"></div>
-        <div class="status-text">已是最新版本</div>
-        <div class="status-sub">{{ subText }}</div>
-      </template>
-
-      <!-- 发现新版本 -->
-      <template v-else-if="stage === 'available'">
-        <div class="status-dot info"></div>
-        <div class="status-text">发现新版本</div>
-        <div class="status-sub">{{ subText }}</div>
-      </template>
-
-      <!-- 更新完成 -->
-      <template v-else-if="stage === 'done'">
-        <div class="status-dot ok"></div>
-        <div class="status-text">{{ message }}</div>
-        <div class="status-sub">{{ subText }}</div>
-        <button class="btn-close" @click="finishUpdate">完成</button>
-      </template>
-
-      <!-- 错误 -->
-      <template v-else-if="stage === 'error'">
-        <div class="status-dot err"></div>
-        <div class="status-text error">{{ message }}</div>
-        <div class="status-sub error">{{ subText }}</div>
-        <div class="btn-row">
-          <button class="btn-primary" :disabled="retrying" @click="retryUpdate">
-            {{ retrying ? '正在重试...' : '重试' }}
-          </button>
-          <button class="btn-close" @click="closeApp">关闭</button>
-        </div>
-      </template>
-    </div>
+    <!-- 界面模板由后端 launcher_template 配置决定（默认 C），
+         本地预览可用 ?template=A|B|C|D|E 覆盖 -->
+    <component
+      :is="activeTemplate"
+      :phase="phase"
+      :retrying="retrying"
+      @retry="retryUpdate"
+      @close="closeApp"
+      @finish="finishUpdate"
+    />
   </div>
 </template>
 
 <script setup>
 import { ref, computed, onMounted, onUnmounted } from 'vue';
 import MinTitleBar from './components/MinTitleBar.vue';
+import {
+  DEFAULT_TEMPLATE,
+  resolveTemplateKey,
+  templateComponent,
+  previewTemplateFromQuery,
+} from './components/templates/index.js';
 
-const stage = ref('checking');
-const message = ref('');
-const subText = ref('');
-const percent = ref(0);
-// 下载详情（后端仅下载阶段携带）
-const downloadedBytes = ref(0);
-const totalBytes = ref(0);
-const speedBps = ref(0);
+/// 当前阶段载荷（模板只读它，不自己维护状态）
+const phase = ref({
+  stage: 'checking',
+  message: '',
+  sub: '',
+  percent: 0,
+  downloadedBytes: 0,
+  totalBytes: 0,
+  speedBps: 0,
+  changelog: [],
+  badge: '',
+  step: -1,
+});
 
-const progressPercent = computed(() => Math.min(100, Math.max(0, percent.value)));
+/// 生效的界面模板键（A/B/C/D/E）
+const templateKey = ref(DEFAULT_TEMPLATE);
 
-// 字节数格式化（与登录器 QsLtdLauncherClient 同款格式）
-const formatBytes = (bytes) => {
-  if (!bytes || bytes <= 0) return '0 B';
-  const units = ['B', 'KB', 'MB', 'GB', 'TB'];
-  const i = Math.min(Math.floor(Math.log(bytes) / Math.log(1024)), units.length - 1);
-  return (bytes / Math.pow(1024, i)).toFixed(2) + ' ' + units[i];
+/// 地址栏预览覆盖：?template=B（仅本地预览，生产由 update.json 决定）
+const previewOverride = previewTemplateFromQuery(window.location.search);
+
+const retrying = ref(false);
+
+/// 是否已进入过下载阶段：后端「检测中」与「校验中」同为 checking 阶段，
+/// 只有下载之后的 checking 才是步骤条上的「校验」
+let hasDownloaded = false;
+
+const activeTemplate = computed(() => templateComponent(templateKey.value));
+
+/// 阶段 → 步骤条下标（null 表示不更新，错误态保留最后到达的步骤）
+const stepOfStage = (stage) => {
+  switch (stage) {
+    case 'available':
+    case 'downloading':
+      return 0;
+    case 'checking':
+      return hasDownloaded ? 1 : -1;
+    case 'installing':
+      return 2;
+    case 'done':
+    case 'up-to-date':
+      return 3;
+    default:
+      return null;
+  }
 };
-
-// "12.30 MB / 45.60 MB"（总大小未知时不显示）
-const sizeText = computed(() => {
-  if (!downloadedBytes.value) return '';
-  return totalBytes.value > 0
-    ? formatBytes(downloadedBytes.value) + ' / ' + formatBytes(totalBytes.value)
-    : formatBytes(downloadedBytes.value);
-});
-
-// "2.50 MB/s"
-const speedText = computed(() => {
-  if (!speedBps.value) return '';
-  return formatBytes(speedBps.value) + '/s';
-});
-
-let unlisten = null;
-// 监听建立后是否已收到过事件：快照仅作「监听建立前事件全错过」的兜底，
-// 若 invoke 响应晚于后续事件到达（小包秒级走完时 IPC 延迟完全可能），
-// 旧快照会把已推进的界面覆盖回旧阶段
-let receivedEvent = false;
 
 // 应用一次阶段状态（事件推送与初始查询共用）
 const applyPhase = (p) => {
-  stage.value = p.stage || 'checking';
-  message.value = p.message || '';
-  subText.value = p.sub || '';
-  // 后端携带字节数时用字节计算精确百分比，未携带时保留后端百分比
-  if (typeof p.downloaded_bytes === 'number' && typeof p.total_bytes === 'number' && p.total_bytes > 0) {
-    percent.value = (p.downloaded_bytes / p.total_bytes) * 100;
-    downloadedBytes.value = p.downloaded_bytes;
-    totalBytes.value = p.total_bytes;
-    speedBps.value = typeof p.speed_bps === 'number' ? p.speed_bps : 0;
-  } else if (typeof p.percent === 'number') {
-    percent.value = p.percent;
+  const stage = p.stage || 'checking';
+  if (stage === 'downloading') hasDownloaded = true;
+
+  const step = stepOfStage(stage);
+  const prev = phase.value;
+  phase.value = {
+    stage,
+    message: p.message || '',
+    sub: p.sub || '',
+    percent: p.percent ?? 0,
+    // 离开下载阶段清空下载详情
+    downloadedBytes: stage === 'downloading' ? p.downloaded_bytes ?? 0 : 0,
+    totalBytes: stage === 'downloading' ? p.total_bytes ?? 0 : 0,
+    speedBps: stage === 'downloading' ? p.speed_bps ?? 0 : 0,
+    badge: stage === 'downloading' ? p.badge || '' : '',
+    // 更新日志：过滤空行避免渲染空条目
+    changelog: Array.isArray(p.changelog)
+      ? p.changelog.filter((s) => typeof s === 'string' && s.trim())
+      : [],
+    step: step === null ? prev.step : step,
+  };
+
+  // 界面模板：后端每个阶段事件都携带（含 current_phase 快照）；预览覆盖优先
+  if (!previewOverride) {
+    templateKey.value = resolveTemplateKey(p.template);
   }
-  // 离开下载阶段时清空下载详情
-  if (p.stage !== 'downloading') {
-    downloadedBytes.value = 0;
-    totalBytes.value = 0;
-    speedBps.value = 0;
-  }
+
   // 收到任何非 error 阶段即视为重试已被受理（后端 run_check 首行
   // emit checking），复位按钮禁用态
-  if (p.stage !== 'error') {
+  if (stage !== 'error') {
     retrying.value = false;
   }
 };
-
-const retrying = ref(false);
 
 // 错误态「重试」：相同命令行参数重走检测/更新流程
 //（后端 spawn_check 有运行中守卫，连点/IPC 重试不会双跑）
@@ -159,6 +118,12 @@ const retryUpdate = async () => {
     retrying.value = false;
   }
 };
+
+let unlisten = null;
+// 监听建立后是否已收到过事件：快照仅作「监听建立前事件全错过」的兜底，
+// 若 invoke 响应晚于后续事件到达（小包秒级走完时 IPC 延迟完全可能），
+// 旧快照会把已推进的界面覆盖回旧阶段
+let receivedEvent = false;
 
 onMounted(async () => {
   try {
@@ -214,123 +179,11 @@ const finishUpdate = async () => {
   overflow: hidden;
   position: relative;
   user-select: none;
-}
-
-.updater-body {
-  height: calc(100% - 32px);
-  margin-top: 32px;
+  /* 模板根节点 flex:1 撑满标题栏以下区域；标题栏是 absolute，
+     故用 padding-top 给它让位，避免模板内容被压在下面 */
   display: flex;
   flex-direction: column;
-  align-items: center;
-  justify-content: center;
-  gap: 14px;
-  padding: 0 28px;
-}
-
-.spinner {
-  width: 34px;
-  height: 34px;
-  border: 3px solid rgba(255, 255, 255, 0.15);
-  border-top-color: #4a9eff;
-  border-radius: 50%;
-  animation: spin 0.9s linear infinite;
-}
-
-@keyframes spin {
-  to { transform: rotate(360deg); }
-}
-
-.status-dot {
-  width: 14px;
-  height: 14px;
-  border-radius: 50%;
-}
-
-.status-dot.ok { background: #35c26e; box-shadow: 0 0 10px rgba(53, 194, 110, 0.5); }
-.status-dot.info { background: #4a9eff; box-shadow: 0 0 10px rgba(74, 158, 255, 0.5); }
-.status-dot.err { background: #e81123; box-shadow: 0 0 10px rgba(232, 17, 35, 0.5); }
-
-.status-text {
-  font-size: 16px;
-  font-weight: 600;
-}
-
-.status-text.error {
-  color: #ff5b66;
-}
-
-.status-sub {
-  font-size: 12px;
-  color: rgba(232, 234, 240, 0.55);
-  text-align: center;
-  word-break: break-all;
-}
-
-.status-sub.error {
-  color: rgba(255, 91, 102, 0.75);
-}
-
-.progress-track {
-  width: 100%;
-  height: 8px;
-  border-radius: 4px;
-  background: rgba(255, 255, 255, 0.1);
-  overflow: hidden;
-}
-
-.progress-fill {
-  height: 100%;
-  border-radius: 4px;
-  background: linear-gradient(90deg, #4a9eff 0%, #35c26e 100%);
-  transition: width 0.3s ease;
-}
-
-.progress-label {
-  font-size: 12px;
-  color: rgba(232, 234, 240, 0.65);
-}
-
-.btn-close {
-  margin-top: 8px;
-  padding: 7px 26px;
-  border: 1px solid rgba(255, 255, 255, 0.2);
-  border-radius: 6px;
-  background: transparent;
-  color: #e8eaf0;
-  font-size: 13px;
-  cursor: pointer;
-  transition: background 0.2s, border-color 0.2s;
-}
-
-.btn-close:hover {
-  background: rgba(255, 255, 255, 0.1);
-  border-color: rgba(255, 255, 255, 0.35);
-}
-
-.btn-row {
-  display: flex;
-  gap: 10px;
-  margin-top: 8px;
-}
-
-.btn-primary {
-  padding: 7px 26px;
-  border: 1px solid #4a9eff;
-  border-radius: 6px;
-  background: #4a9eff;
-  color: #fff;
-  font-size: 13px;
-  cursor: pointer;
-  transition: background 0.2s, border-color 0.2s;
-}
-
-.btn-primary:hover:not(:disabled) {
-  background: #357ac9;
-  border-color: #357ac9;
-}
-
-.btn-primary:disabled {
-  opacity: 0.6;
-  cursor: default;
+  padding-top: 32px;
+  box-sizing: border-box;
 }
 </style>

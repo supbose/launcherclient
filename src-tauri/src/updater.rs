@@ -79,6 +79,8 @@ pub(crate) struct ResolvedConfig {
     max_versions: usize,
     /// 更新前需停止、更新后恢复的 Windows 服务名列表
     services: Vec<String>,
+    /// 生效的启动器界面模板（A/B/C/D/E，见 [`config::resolve_launcher_template`]）
+    template: String,
 }
 
 /// 过滤空字符串配置项（update.json 中 "" 视为未配置）
@@ -97,6 +99,14 @@ pub fn resolve_config(args: &CliArgs) -> ResolvedConfig {
         non_empty(settings.app_name.clone()).unwrap_or_else(|| DEFAULT_APP_NAME.to_string())
     };
 
+    // 界面模板优先级：命令行 --template > update.json launcher_template > 内置默认（C）。
+    // 未配置或写了未知值时 resolve 内部回落默认，界面不会因配置笔误白屏。
+    // 先于 services 取值：settings.services 下方会被整体移出，之后不能再用 settings。
+    let settings_template = settings.launcher_template();
+    let template = config::resolve_launcher_template(
+        args.template.as_deref().or(settings_template.as_deref()),
+    );
+
     ResolvedConfig {
         app_name,
         manifest_urls: args
@@ -111,6 +121,7 @@ pub fn resolve_config(args: &CliArgs) -> ResolvedConfig {
                     .collect()
             }),
         launch: args.launch.clone().or_else(|| non_empty(settings.launch)),
+        template,
         max_versions: settings
             .max_versions
             .filter(|v| *v > 0)
@@ -227,9 +238,12 @@ pub async fn run_check_only(args: &CliArgs, cfg: &ResolvedConfig) -> i32 {
 /// 更新检查与执行主流程
 pub async fn run_check(app: AppHandle, args: CliArgs) {
     let cfg = resolve_config(&args);
+    // 登记生效的界面模板：此后所有阶段事件（含 current_phase 快照）都携带它
+    set_template(&cfg.template);
     eprintln!(
-        "[更新器] 启动，应用: {}，manifest 地址 {} 个: {}",
+        "[更新器] 启动，应用: {}，界面模板: {}，manifest 地址 {} 个: {}",
         cfg.app_name,
+        cfg.template,
         cfg.manifest_urls.len(),
         cfg.manifest_urls.join(" → ")
     );
@@ -261,6 +275,9 @@ pub async fn run_check(app: AppHandle, args: CliArgs) {
             return;
         }
     };
+    // 登记更新日志：此后所有阶段事件都携带它，界面在发现新版本起到
+    // 更新完成全程可见（下载/安装期间用户正好有空看更新了什么）
+    set_changelog(m.changelog.clone());
 
     if !manifest::need_update(&current_version, &m) {
         eprintln!("[更新器] 已是最新版本: {}", current_version);
@@ -485,6 +502,7 @@ async fn run_download_parts(
                 emit_download(
                     &app_handle,
                     &msg,
+                    Some(format!("分卷 {}/{}", i + 1, total)),
                     Some(percent),
                     p.downloaded,
                     p.total,
@@ -549,7 +567,7 @@ async fn run_download(
                 zip_path.display(),
                 format_bytes(size)
             );
-            emit_download(app, "使用已下载的更新包", Some(100.0), size, Some(size), None);
+            emit_download(app, "使用已下载的更新包", None, Some(100.0), size, Some(size), None);
             return Ok(());
         }
         eprintln!("[更新器] 本地更新包校验不通过，重新下载");
@@ -572,6 +590,7 @@ async fn run_download(
             emit_download(
                 &app_handle,
                 "正在下载更新包...",
+                None,
                 p.percent(),
                 p.downloaded,
                 p.total,
@@ -884,9 +903,13 @@ async fn read_installed_path(app_name: &str) -> Option<String> {
 }
 
 /// 推送下载阶段事件（携带字节数与速度，供前端显示"已下载/总大小 · 速度"）
+///
+/// `badge` 为右上角小徽标文本（如分卷进度「分卷 1/28」），无则不下发该字段
+#[allow(clippy::too_many_arguments)]
 fn emit_download(
     app: &AppHandle,
     message: &str,
+    badge: Option<String>,
     percent: Option<f64>,
     downloaded: u64,
     total: Option<u64>,
@@ -902,6 +925,9 @@ fn emit_download(
             downloaded_bytes: Some(downloaded),
             total_bytes: total,
             speed_bps,
+            changelog: Vec::new(),
+            template: String::new(),
+            badge,
         },
     );
 }
@@ -924,8 +950,35 @@ fn emit_phase(
             downloaded_bytes: None,
             total_bytes: None,
             speed_bps: None,
+            changelog: Vec::new(),
+            template: String::new(),
+            badge: None,
         },
     );
+}
+
+/// 本次更新的更新日志（manifest.changelog 的进程级副本）
+///
+/// 与阶段无关：manifest 拉取成功后即固定，后续所有阶段事件都携带同一份。
+/// 单独存放而非随每个 emit 调用点传递，避免十几个调用点重复传参、也避免
+/// 某个阶段漏传导致界面日志闪没。
+static CHANGELOG: OnceLock<Mutex<Vec<String>>> = OnceLock::new();
+
+/// 登记本次更新的更新日志（manifest 拉取成功后调用）
+pub(crate) fn set_changelog(items: Vec<String>) {
+    let cell = CHANGELOG.get_or_init(|| Mutex::new(Vec::new()));
+    if let Ok(mut guard) = cell.lock() {
+        *guard = items;
+    }
+}
+
+/// 取更新日志副本（供 [`push_phase`] 注入事件载荷）
+fn changelog_snapshot() -> Vec<String> {
+    CHANGELOG
+        .get_or_init(|| Mutex::new(Vec::new()))
+        .lock()
+        .map(|guard| guard.clone())
+        .unwrap_or_default()
 }
 
 /// 记录最新阶段快照并推送事件
@@ -933,7 +986,34 @@ fn emit_phase(
 /// 快照供 [`current_phase`] 查询：本地小更新包可能秒级走完全部流程，
 /// 前端 WebView 挂载 + 动态 import 监听建立存在时延，早期事件会错过，
 /// 界面将停在初始态。监听建立后主动拉取一次快照即可对齐。
-fn push_phase(app: &AppHandle, payload: PhasePayload) {
+/// 生效的启动器界面模板（进程级副本，manifest 无关，随每个阶段事件下发）
+///
+/// 与 CHANGELOG 同样由 [`push_phase`] 统一注入：前端靠它决定渲染哪套布局，
+/// 任一阶段事件漏带都会让界面在切换阶段时闪回默认模板。
+static TEMPLATE: OnceLock<Mutex<String>> = OnceLock::new();
+
+/// 登记生效的界面模板（run_check 解析配置后调用）
+pub(crate) fn set_template(template: &str) {
+    let cell = TEMPLATE.get_or_init(|| Mutex::new(String::new()));
+    if let Ok(mut guard) = cell.lock() {
+        *guard = template.to_string();
+    }
+}
+
+/// 取生效的界面模板（供 [`push_phase`] 注入事件载荷）
+fn template_snapshot() -> String {
+    TEMPLATE
+        .get_or_init(|| Mutex::new(String::new()))
+        .lock()
+        .map(|guard| guard.clone())
+        .unwrap_or_default()
+}
+
+fn push_phase(app: &AppHandle, mut payload: PhasePayload) {
+    // 更新日志与界面模板在此统一注入（见 CHANGELOG / TEMPLATE 注释）：
+    // 检测阶段的事件发生在 manifest 拉取之前，此时日志为空，界面不展示该区块
+    payload.changelog = changelog_snapshot();
+    payload.template = template_snapshot();
     if let Ok(mut cell) = latest_phase_cell().lock() {
         *cell = Some(payload.clone());
     }
@@ -993,6 +1073,22 @@ mod tests {
         let _ = std::fs::remove_dir_all(&d);
         std::fs::create_dir_all(&d).expect("建临时目录");
         d
+    }
+
+    #[test]
+    fn template_registered_then_snapshot() {
+        // 界面模板登记后应可被后续阶段事件取到（前端据此切换布局）
+        set_template("B");
+        assert_eq!(template_snapshot(), "B");
+    }
+
+    #[test]
+    fn changelog_registered_then_snapshot() {
+        // 更新日志登记后应可被后续阶段事件取到（界面据此展示更新内容）
+        set_changelog(vec!["修复登录".to_string(), "优化启动速度".to_string()]);
+        let got = changelog_snapshot();
+        assert_eq!(got.len(), 2, "登记的两条日志都应可取回: {got:?}");
+        assert_eq!(got[0], "修复登录");
     }
 
     #[test]
@@ -1132,6 +1228,14 @@ pub(crate) struct PhasePayload {
     /// 下载速度 字节/秒（仅下载阶段携带）
     #[serde(skip_serializing_if = "Option::is_none")]
     speed_bps: Option<u64>,
+    /// 更新日志（manifest.changelog，空则不序列化 —— 前端据此不展示该区块）
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    changelog: Vec<String>,
+    /// 生效的启动器界面模板（A/B/C/D/E），前端据此渲染对应布局
+    template: String,
+    /// 右上角小徽标文本（分卷进度等，仅下载阶段携带）
+    #[serde(skip_serializing_if = "Option::is_none")]
+    badge: Option<String>,
 }
 
 /// 显示主窗口并置顶聚焦

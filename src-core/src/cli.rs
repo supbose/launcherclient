@@ -13,6 +13,8 @@ pub struct CliArgs {
     pub manifest_url: Option<String>,
     /// 当前已安装版本（可选，覆盖本地 app.json 记录）
     pub current_version: Option<String>,
+    /// 启动器界面模板（可选，覆盖 update.json 与默认模板；A/B/C/D/E）
+    pub template: Option<String>,
     /// 纯检测模式：只检查是否有更新，不建窗、不下载、不拉回目标程序。
     /// 退出码：0=无更新 1=检测失败 2=有更新（供客户端快速分支）
     pub check_only: bool,
@@ -30,6 +32,7 @@ pub fn parse_from(argv: &[String]) -> CliArgs {
     let mut launch: Option<String> = None;
     let mut manifest_url: Option<String> = None;
     let mut current_version: Option<String> = None;
+    let mut template: Option<String> = None;
     let mut check_only = false;
 
     let mut i = 0;
@@ -66,6 +69,13 @@ pub fn parse_from(argv: &[String]) -> CliArgs {
                 None => eprintln!("[参数] --current-version 缺少值，忽略该参数"),
             },
             "--check-only" => check_only = true,
+            "--template" => match value {
+                Some(v) => {
+                    template = Some(v.to_string());
+                    i += 1;
+                }
+                None => eprintln!("[参数] --template 缺少值，使用默认模板"),
+            },
             other => eprintln!("[参数] 未知参数: {}，已忽略", other),
         }
         i += 1;
@@ -76,6 +86,7 @@ pub fn parse_from(argv: &[String]) -> CliArgs {
         launch,
         manifest_url,
         current_version,
+        template,
         check_only,
     }
 }
@@ -95,6 +106,7 @@ mod tests {
         assert!(c.launch.is_none());
         assert!(c.manifest_url.is_none());
         assert!(c.current_version.is_none());
+        assert!(c.template.is_none());
         assert!(!c.check_only);
     }
 
@@ -105,13 +117,20 @@ mod tests {
             "--launch", "D:/app/qsm.exe",
             "--manifest", "https://example.com/version.json",
             "--current-version", "1.2.3",
+            "--template", "B",
             "--check-only",
         ]));
         assert_eq!(c.app_name, "qsm");
         assert_eq!(c.launch.as_deref(), Some("D:/app/qsm.exe"));
         assert_eq!(c.manifest_url.as_deref(), Some("https://example.com/version.json"));
         assert_eq!(c.current_version.as_deref(), Some("1.2.3"));
+        assert_eq!(c.template.as_deref(), Some("B"));
         assert!(c.check_only);
+    }
+
+    #[test]
+    fn parse_template_without_value_is_none() {
+        assert!(parse_from(&args(&["--template"])).template.is_none());
     }
 
     #[test]

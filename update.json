@@ -1,5 +1,5 @@
 {
-  "_说明": "QsLtdUpdater 本地配置文件，与 QsLtdUpdater.exe 同目录部署。所有字段可省略，省略或留空时使用默认值。优先级：命令行参数 > 本文件 > 内置默认值。manifest_url 支持单个字符串或地址数组（数组时按序故障转移，第一个失败自动切换下一个）。",
+  "_说明": "QsLtdUpdater 本地配置文件，与 QsLtdUpdater.exe 同目录部署。所有字段可省略，省略或留空时使用默认值。优先级：命令行参数 > 本文件 > 内置默认值。manifest_url 支持单个字符串或地址数组（数组时按序故障转移，第一个失败自动切换下一个）。launcher_template 为启动器界面模板，可选 A/B/C/D/E（大小写不敏感），留空或未知值使用默认模板 C。",
   "manifest_url": [
     "https://qsw.us.ci/update/qsm/version.json",
     "https://down.cdn.qcsm.ltd/manifest.json",
@@ -8,5 +8,6 @@
   "app_name": "qsm",
   "launch": "",
   "current_version": "",
-  "max_versions": 2
+  "max_versions": 2,
+  "launcher_template": "C"
 }
