@@ -7,7 +7,7 @@
 pub struct CliArgs {
     /// 应用名称，决定配置/下载/安装目录（默认 QsLtd）
     pub app_name: String,
-    /// 更新完成后要拉起的目标程序路径（可选，缺省表示手动运行模式）
+    /// 更新完成后要拉起的目标程序路径（可选，缺省时自动定位安装目录中的主程序）
     pub launch: Option<String>,
     /// 服务器 manifest 地址（可选，覆盖 update.json 与默认地址）
     pub manifest_url: Option<String>,

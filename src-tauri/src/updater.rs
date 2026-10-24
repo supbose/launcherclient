@@ -306,9 +306,30 @@ pub async fn run_check(app: AppHandle, args: CliArgs) {
                     }
                 }
             }
-            // 手动模式（无 launch 配置）：无更新静默退出，不打扰用户
+            // launch 留空：从本地安装目录自动定位主程序启动。
+            // 本程序是启动器，用户双击运行的目的就是拉起应用 —— 留空只表示
+            // 「目标程序名未指定、需自动定位」（与「完成」按钮同一套定位
+            // 逻辑），静默退出等于应用永远打不开。
             None => {
-                app.exit(0);
+                let installed = read_installed_path(&cfg.app_name).await;
+                let outcome = match installed {
+                    Some(dir) => match qsltd_updater_core::install::find_main_executable(
+                        Path::new(&dir),
+                        &cfg.app_name,
+                    ) {
+                        Some(exe) => spawn_detached(&exe),
+                        None => Err(format!("安装目录中未找到可执行文件: {}", dir)),
+                    },
+                    None => Err("无本地版本记录，无法定位已安装的应用".to_string()),
+                };
+                match outcome {
+                    Ok(()) => app.exit(0),
+                    Err(e) => {
+                        eprintln!("[更新器] 无更新但启动失败: {}", e);
+                        emit_phase(&app, "error", "启动失败", &e, None);
+                        show_main_and_close_splash(&app).await;
+                    }
+                }
             }
         }
         return;
@@ -445,7 +466,7 @@ pub async fn run_check(app: AppHandle, args: CliArgs) {
         None,
     );
 
-    // 更新完成后拉起目标程序并退出；手动模式则保留窗口由用户关闭
+    // 更新完成后拉起目标程序并退出（launch 留空时自动定位主程序）
     match &cfg.launch {
         Some(_) => match launch_target(&cfg, Some(&target_dir)) {
             Ok(()) => app.exit(0),
@@ -458,8 +479,26 @@ pub async fn run_check(app: AppHandle, args: CliArgs) {
                 emit_phase(&app, "error", "更新已完成，但启动应用失败", &e, None);
             }
         },
+        // launch 留空：从本次安装目录自动定位主程序启动（与「完成」按钮
+        // 同一逻辑）。启动器语义下留空 = 自动定位，不拉起等于白更新，
+        // 不能停在「等待用户点击完成」——用户预期是装完即用。
         None => {
-            eprintln!("[更新器] 手动模式，更新完成，等待用户点击「完成」启动应用");
+            let outcome = match
+                qsltd_updater_core::install::find_main_executable(&target_dir, &cfg.app_name)
+            {
+                Some(exe) => spawn_detached(&exe),
+                None => Err(format!(
+                    "安装目录中未找到可执行文件: {}",
+                    target_dir.display()
+                )),
+            };
+            match outcome {
+                Ok(()) => app.exit(0),
+                Err(e) => {
+                    eprintln!("[更新器] 更新完成但启动失败: {}", e);
+                    emit_phase(&app, "error", "更新已完成，但启动应用失败", &e, None);
+                }
+            }
         }
     }
 }
@@ -851,8 +890,11 @@ static FINISH_CALLED: AtomicBool = AtomicBool::new(false);
 
 /// 「完成」按钮（前端 done 阶段调用）：启动更新后的应用并退出更新器
 ///
+/// 正常路径下更新完成后后端已自动拉起应用并退出，本 command 是窗口
+/// 尚未退出期间的兜底入口（快速点击场景）：
+///
 /// - launch 已配置（含 update.json）：走 [`launch_target`] 原解析逻辑
-/// - 手动模式（launch 未配置）：从安装目录定位主 exe 启动
+/// - launch 未配置：从安装目录定位主 exe 启动
 ///   （见 `qsltd_updater_core::install::find_main_executable`）
 /// - 均找不到可执行文件时仅退出，不阻塞用户关闭窗口
 #[tauri::command]

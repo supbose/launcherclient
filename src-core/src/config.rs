@@ -145,7 +145,7 @@ fn generate_default_template(dir: &std::path::Path) -> bool {
         "_说明": {
             "manifest_url": "服务器 version.json 地址；数组表示按序故障转移，第一个失败自动切换下一个",
             "app_name": "应用名称，决定配置/下载/安装目录（%APPDATA%\\<app_name>）",
-            "launch": "更新完成后拉起的目标程序；相对路径按安装目录解析；留空为手动模式（只显示结果不拉起）",
+            "launch": "更新完成后拉起的目标程序；相对路径按安装目录解析；留空则自动定位安装目录中的主程序拉起（文件名与应用名匹配者优先）",
             "current_version": "强制指定当前版本；留空自动从本地 app.json 探测",
             "max_versions": "保留的版本目录数量（含当前版本，旧目录即回滚资产），默认 2",
             "services": "更新前需卸载的 Windows 服务名数组；运行中的先停止后卸载，卸载后不恢复不重启",
