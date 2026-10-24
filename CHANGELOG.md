@@ -12,6 +12,12 @@
 
 
 
+
+## v0.1.12 (2026-10-24)
+### 🩹 修复 Bug
+
+- [8d9328c](/-/commit/8d9328c82e72c03b59d0ec690c03248b7acccced) 修复(src-core): 修复 launch 留空时无更新/安装完成不自动拉起应用的问题 (.workbuddy/memory/2026-10-24.md, src-core/src/cli.rs, src-core/src/config.rs, src-tauri/src/updater.rs)
+
 ## v0.1.11 (2026-10-23)
 ### 🚀 新增功能
 
