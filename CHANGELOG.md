@@ -13,6 +13,12 @@
 
 
 
+
+## v0.1.13 (2026-10-25)
+### 🩹 修复 Bug
+
+- [0cd0377](/-/commit/0cd037787273d58801d7c8d2bc10d4ef9a3bfa4b) 修复(updater): 修复服务卸载报错无法定位问题 (.workbuddy/memory/2026-10-25.md, src-core/src/services.rs)
+
 ## v0.1.12 (2026-10-24)
 ### 🩹 修复 Bug
 
