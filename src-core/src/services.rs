@@ -6,6 +6,13 @@
 //! - `sc delete` 卸载；卸载失败返回错误由编排层决定（tauri 版：安装前终止，
 //!   避免「服务仍注册旧路径、新版本却已装完」的半更新状态）
 //!
+//! 失败信息必须可现场定位：release 无控制台，UI 上那行详情就是唯一线索。
+//! 因此 [`ScOutput`] 会保留退出码与 sc 原始输出，`sc delete` 的失败按退出码分流：
+//! - 1060（服务不存在）→ 视为已卸载
+//! - 1072（标记删除中）→ 短重试几次，仍失败提示重启
+//! - 5（拒绝访问）→ 提示需管理员权限
+//! - 其余 → 原样带上退出码与 sc 输出
+//!
 //! sc.exe 调用经 [`ScRunner`] 抽象：生产用 [`SystemScRunner`]，测试用内存 mock，
 //! 避免单元测试触碰真实系统服务。真实冒烟测试 gate 在 `integration` feature 下。
 
@@ -17,6 +24,24 @@ pub const STOP_TIMEOUT_SECS: u64 = 15;
 
 /// 轮询间隔（毫秒）
 pub const POLL_INTERVAL_MS: u64 = 300;
+
+/// sc.exe 退出码：服务不存在（ERROR_SERVICE_DOES_NOT_EXIST）
+const SC_SERVICE_DOES_NOT_EXIST: i32 = 1060;
+
+/// sc.exe 退出码：服务已被标记为删除（ERROR_SERVICE_MARKED_FOR_DELETE）
+///
+/// 典型成因：上一次卸载已把服务标记删除，但仍有进程持有服务句柄
+/// （服务进程未完全退出），句柄全部释放前服务处于「僵尸」状态。
+const SC_SERVICE_MARKED_FOR_DELETE: i32 = 1072;
+
+/// sc.exe 退出码：拒绝访问（ERROR_ACCESS_DENIED），需管理员权限
+const SC_ACCESS_DENIED: i32 = 5;
+
+/// `sc delete` 最大尝试次数（仅对「标记删除中」这类瞬时失败重试）
+const DELETE_RETRY_ATTEMPTS: u32 = 4;
+
+/// `sc delete` 重试间隔（毫秒）
+const DELETE_RETRY_INTERVAL_MS: u64 = 500;
 
 /// 服务状态（sc query STATE 行数字码：1=STOPPED 4=RUNNING，其余为过渡/暂停态）
 #[derive(Debug, PartialEq, Eq)]
@@ -32,8 +57,12 @@ pub enum ServiceState {
 pub struct ScOutput {
     /// 命令是否成功执行（退出码为 0）
     pub success: bool,
-    /// 标准输出文本
+    /// 进程退出码（被信号终止等异常场景为 None）
+    pub code: Option<i32>,
+    /// 标准输出文本（sc.exe 的失败提示也走 stdout）
     pub stdout: String,
+    /// 标准错误文本
+    pub stderr: String,
 }
 
 impl ScOutput {
@@ -41,15 +70,46 @@ impl ScOutput {
     pub fn ok(stdout: impl Into<String>) -> Self {
         Self {
             success: true,
+            code: Some(0),
             stdout: stdout.into(),
+            stderr: String::new(),
         }
     }
 
-    /// 构造一条失败响应（非零退出码）
+    /// 构造一条失败响应（非零退出码，用于 mock）
     pub fn failed() -> Self {
         Self {
             success: false,
+            code: Some(1),
             stdout: String::new(),
+            stderr: String::new(),
+        }
+    }
+
+    /// 用指定退出码构造一条失败响应（mock 专用：可模拟 1060/1072/5 等真实码）
+    pub fn failed_with_code(code: i32) -> Self {
+        Self {
+            success: false,
+            code: Some(code),
+            stdout: String::new(),
+            stderr: String::new(),
+        }
+    }
+
+    /// 失败详情：优先 sc 自己的输出（stdout 通常带 `[SC] DeleteService FAILED 1072:`），
+    /// 都没有时退回退出码。用于拼进 UI 错误文案，避免只显示一个空泛的「非零」。
+    pub fn detail(&self) -> String {
+        let message = self
+            .stderr
+            .lines()
+            .chain(self.stdout.lines())
+            .map(str::trim)
+            .find(|line| !line.is_empty());
+        match (self.code, message) {
+            (Some(code), Some(msg)) => format!("退出码 {code}: {msg}"),
+            (Some(code), None) => format!("退出码 {code}"),
+            (None, Some(msg)) => msg.to_string(),
+            (None, None) => "无输出".to_string(),
         }
     }
 
@@ -68,14 +128,24 @@ pub trait ScRunner: Send + Sync {
 }
 
 /// 真实实现：调用系统 sc.exe
+///
+/// 用绝对路径而不是裸 `sc`：避免 PATH 里同名程序被优先执行（提权进程尤其敏感）。
 pub struct SystemScRunner;
+
+/// sc.exe 绝对路径；取不到 SystemRoot 时退回固定路径
+fn sc_exe() -> String {
+    let root = std::env::var("SystemRoot").unwrap_or_else(|_| "C:\\Windows".to_string());
+    format!("{root}\\System32\\sc.exe")
+}
 
 impl ScRunner for SystemScRunner {
     fn run(&self, args: &[&str]) -> std::io::Result<ScOutput> {
-        let out = Command::new("sc").args(args).output()?;
+        let out = Command::new(sc_exe()).args(args).output()?;
         Ok(ScOutput {
             success: out.status.success(),
+            code: out.status.code(),
             stdout: String::from_utf8_lossy(&out.stdout).into_owned(),
+            stderr: String::from_utf8_lossy(&out.stderr).into_owned(),
         })
     }
 }
@@ -160,16 +230,71 @@ fn uninstall_one(
         }
     }
     on_event(&format!("正在卸载服务 {name}..."));
-    match runner.run(&["delete", name]) {
-        Ok(o) if o.success => {
-            eprintln!("[服务] {name} 已卸载");
-            Ok(())
+    delete_with_retry(
+        runner,
+        name,
+        DELETE_RETRY_ATTEMPTS,
+        Duration::from_millis(DELETE_RETRY_INTERVAL_MS),
+    )?;
+    eprintln!("[服务] {name} 已卸载");
+    Ok(())
+}
+
+/// 从失败输出里判定 sc.exe 的真实错误码。
+///
+/// sc.exe 多数情况把 Win32 错误码用作自身退出码，但部分版本/本地化下只退 1，
+/// 真实码仅出现在输出文本里（如 `[SC] DeleteService FAILED 1072:`）——两者都要认。
+fn failure_code(out: &ScOutput) -> Option<i32> {
+    if let Some(code) = out.code {
+        if code != 0 && code != 1 {
+            return Some(code);
         }
-        Ok(o) => Err(format!(
-            "服务 {name} 卸载失败（sc delete 退出码非零: {}）",
-            o.success
-        )),
-        Err(e) => Err(format!("服务 {name} 卸载执行失败: {e}")),
+    }
+    let text = format!("{}\n{}", out.stdout, out.stderr);
+    [SC_SERVICE_DOES_NOT_EXIST, SC_SERVICE_MARKED_FOR_DELETE]
+        .into_iter()
+        .find(|code| text.contains(&code.to_string()))
+}
+
+/// 执行 `sc delete`，按退出码把失败翻译成可现场处置的提示。
+///
+/// - 成功 / 1060（已不存在）→ Ok
+/// - 1072（标记删除中）→ 重试 `attempts` 次（等服务进程释放句柄），仍失败提示重启
+/// - 5（拒绝访问）→ 明确提示需要管理员权限
+/// - 其余 → 带上退出码与 sc 原始输出
+fn delete_with_retry(
+    runner: &dyn ScRunner,
+    name: &str,
+    attempts: u32,
+    interval: Duration,
+) -> Result<(), String> {
+    let mut attempt = 0;
+    loop {
+        attempt += 1;
+        match runner.run(&["delete", name]) {
+            Ok(out) if out.success => return Ok(()),
+            // 服务已不存在：目标达成（并发/上一次卸载已完成）
+            Ok(out) if failure_code(&out) == Some(SC_SERVICE_DOES_NOT_EXIST) => return Ok(()),
+            Ok(out) if failure_code(&out) == Some(SC_ACCESS_DENIED) => {
+                return Err(format!(
+                    "服务 {name} 卸载失败：权限不足，更新程序需以管理员身份运行（{}）",
+                    out.detail()
+                ))
+            }
+            Ok(out) if failure_code(&out) == Some(SC_SERVICE_MARKED_FOR_DELETE) => {
+                if attempt < attempts {
+                    eprintln!("[服务] {name} 已被标记删除，第 {attempt} 次重试等待句柄释放");
+                    std::thread::sleep(interval);
+                    continue;
+                }
+                return Err(format!(
+                    "服务 {name} 卸载失败：服务已被标记删除但仍有进程占用（{}），请重启系统后重试",
+                    out.detail()
+                ));
+            }
+            Ok(out) => return Err(format!("服务 {name} 卸载失败（{}）", out.detail())),
+            Err(e) => return Err(format!("服务 {name} 卸载执行失败: {e}")),
+        }
     }
 }
 
@@ -208,13 +333,14 @@ mod tests {
     /// 内存版 sc.exe mock：按命令类型路由响应，并记录全部调用
     ///
     /// - `query`：按序消费 `queries` 队列，耗尽后返回失败（等价于服务未安装）
-    /// - `stop` / `delete`：默认成功，可用 `stop_ok` / `delete_ok` 单独置为失败
+    /// - `stop` / `delete`：按序消费各自的队列，耗尽后返回成功
+    ///   （需要模拟失败时往队列里 push 带退出码的 [`ScOutput`]）
     /// - `io_error`：为 true 时所有调用返回 IO 错误
     #[derive(Default)]
     struct FakeSc {
         queries: Mutex<VecDeque<ScOutput>>,
-        stop_ok: Mutex<bool>,
-        delete_ok: Mutex<bool>,
+        stops: Mutex<VecDeque<ScOutput>>,
+        deletes: Mutex<VecDeque<ScOutput>>,
         io_error: Mutex<bool>,
         calls: Mutex<Vec<Vec<String>>>,
     }
@@ -224,10 +350,18 @@ mod tests {
         fn new(queries: Vec<ScOutput>) -> Self {
             Self {
                 queries: Mutex::new(queries.into_iter().collect()),
-                stop_ok: Mutex::new(true),
-                delete_ok: Mutex::new(true),
                 ..Self::default()
             }
+        }
+
+        /// 追加一条 `sc stop` 响应
+        fn push_stop(&self, out: ScOutput) {
+            self.stops.lock().unwrap_or_else(|e| e.into_inner()).push_back(out);
+        }
+
+        /// 追加一条 `sc delete` 响应（队列耗尽后默认成功）
+        fn push_delete(&self, out: ScOutput) {
+            self.deletes.lock().unwrap_or_else(|e| e.into_inner()).push_back(out);
         }
 
         /// 所有调用均返回 IO 错误（模拟 sc.exe 无法执行）
@@ -240,6 +374,14 @@ mod tests {
 
         fn calls(&self) -> Vec<Vec<String>> {
             self.calls.lock().unwrap_or_else(|e| e.into_inner()).clone()
+        }
+
+        /// 某类命令被调用了多少次
+        fn count(&self, cmd: &str) -> usize {
+            self.calls()
+                .iter()
+                .filter(|c| c.first().is_some_and(|a| a == cmd))
+                .count()
         }
     }
 
@@ -254,23 +396,19 @@ mod tests {
                 return Err(std::io::Error::other("mock io error"));
             }
 
-            let ok = match args[0] {
-                "query" => {
-                    return Ok(self
-                        .queries
-                        .lock()
-                        .unwrap_or_else(|e| e.into_inner())
-                        .pop_front()
-                        .unwrap_or_default());
-                }
-                "stop" => *self.stop_ok.lock().unwrap_or_else(|e| e.into_inner()),
-                "delete" => *self.delete_ok.lock().unwrap_or_else(|e| e.into_inner()),
-                _ => true,
+            let (queue, empty_fallback_ok) = match args[0] {
+                "query" => (&self.queries, false),
+                "stop" => (&self.stops, true),
+                "delete" => (&self.deletes, true),
+                _ => return Ok(ScOutput::ok("")),
             };
-            Ok(if ok {
-                ScOutput::ok("")
-            } else {
-                ScOutput::failed()
+            let popped = queue.lock().unwrap_or_else(|e| e.into_inner()).pop_front();
+            Ok(match popped {
+                Some(out) => out,
+                // query 队列耗尽 → 默认失败 = 服务未安装
+                None if !empty_fallback_ok => ScOutput::failed(),
+                // stop/delete 队列耗尽 → 默认成功
+                None => ScOutput::ok(""),
             })
         }
     }
@@ -374,10 +512,7 @@ mod tests {
     fn stop_tolerates_sc_stop_command_failure() {
         // sc stop 返回非零退出码：仅记录，仍继续轮询确认状态
         let sc = FakeSc::new(vec![ScOutput::query_state(1)]);
-        {
-            let mut guard = sc.stop_ok.lock().unwrap_or_else(|e| e.into_inner());
-            *guard = false;
-        }
+        sc.push_stop(ScOutput::failed());
         let ok = stop_and_wait(&sc, SVC, &|_| {}, Duration::ZERO);
         assert!(ok);
         assert_eq!(sc.calls(), vec![vec!["stop", SVC], vec!["query", SVC]]);
@@ -457,10 +592,7 @@ mod tests {
     fn uninstall_delete_failure_returns_err() {
         // sc delete 返回非零退出码：不再静默「继续更新」，返回错误交由编排层终止
         let sc = FakeSc::new(vec![ScOutput::query_state(1)]);
-        {
-            let mut guard = sc.delete_ok.lock().unwrap_or_else(|e| e.into_inner());
-            *guard = false;
-        }
+        sc.push_delete(ScOutput::failed());
         let events = std::cell::RefCell::new(Vec::new());
         let result =
             uninstall_configured(&sc, &[SVC.to_string()], &|e| events.borrow_mut().push(e.to_string()));
@@ -472,17 +604,16 @@ mod tests {
         };
         assert_eq!(failures.len(), 1);
         assert!(failures[0].contains(SVC), "错误详情应含服务名: {}", failures[0]);
+        assert!(failures[0].contains("退出码 1"), "错误详情应含退出码: {}", failures[0]);
     }
 
     #[test]
     fn uninstall_continues_after_delete_failure_and_aggregates() {
         // 一个服务卸载失败不中断剩余项：两个服务都应执行 delete，
-        // 最终 Err 聚合全部失败（此处 1 条）
+        // 最终 Err 聚合全部失败（此处 2 条）
         let sc = FakeSc::new(vec![ScOutput::query_state(1), ScOutput::query_state(1)]);
-        {
-            let mut guard = sc.delete_ok.lock().unwrap_or_else(|e| e.into_inner());
-            *guard = false;
-        }
+        sc.push_delete(ScOutput::failed());
+        sc.push_delete(ScOutput::failed());
         let names = vec!["svc-a".to_string(), "svc-b".to_string()];
         let result = uninstall_configured(&sc, &names, &|_| {});
         assert_eq!(
@@ -495,8 +626,6 @@ mod tests {
             ],
             "单个失败后仍必须卸载剩余服务"
         );
-        // mock 的 delete_ok 是全局开关：svc-a 与 svc-b 都失败 → 聚合 2 条。
-        // 真实场景下按服务分别失败，此处验证聚合数量与调用序列。
         let failures = match result {
             Err(f) => f,
             Ok(()) => panic!("两个都失败应返回 Err"),
@@ -542,7 +671,87 @@ mod tests {
         let out = ScOutput::query_state(4);
         assert!(out.success);
         assert!(out.stdout.contains("STATE"));
-        assert_eq!(ScOutput::failed(), ScOutput { success: false, stdout: String::new() });
+        assert_eq!(
+            ScOutput::failed(),
+            ScOutput {
+                success: false,
+                code: Some(1),
+                stdout: String::new(),
+                stderr: String::new(),
+            }
+        );
+    }
+
+    // ---------- delete 失败分流（现场定位用） ----------
+
+    /// 走真实 `uninstall_one` 路径，验证 delete 失败文案
+    fn run_delete_case(deletes: Vec<ScOutput>) -> Result<(), String> {
+        let sc = FakeSc::new(vec![ScOutput::query_state(1)]);
+        for out in deletes {
+            sc.push_delete(out);
+        }
+        uninstall_one(&sc, SVC, &|_| {}, Duration::ZERO)
+    }
+
+    #[test]
+    fn delete_treats_service_not_exist_as_success() {
+        // 1060：并发/上一次已删掉，目标已达成，不应阻断更新
+        let result = run_delete_case(vec![ScOutput::failed_with_code(SC_SERVICE_DOES_NOT_EXIST)]);
+        assert!(result.is_ok(), "1060 应视为已卸载: {result:?}");
+    }
+
+    #[test]
+    fn delete_access_denied_mentions_admin() {
+        // 5：更新程序未提权 → 提示必须管理员运行
+        let err = run_delete_case(vec![ScOutput::failed_with_code(SC_ACCESS_DENIED)])
+            .expect_err("拒绝访问必须报错");
+        assert!(err.contains("管理员"), "应提示提权: {err}");
+        assert!(err.contains("退出码 5"), "应带退出码: {err}");
+    }
+
+    #[test]
+    fn delete_retries_marked_for_delete_then_succeeds() {
+        // 1072 一次后成功：重试应吃掉这个瞬时失败
+        let sc = FakeSc::new(vec![ScOutput::query_state(1)]);
+        sc.push_delete(ScOutput::failed_with_code(SC_SERVICE_MARKED_FOR_DELETE));
+        let result = delete_with_retry(&sc, SVC, 3, Duration::ZERO);
+        assert!(result.is_ok(), "重试后应成功: {result:?}");
+        assert_eq!(sc.count("delete"), 2);
+    }
+
+    #[test]
+    fn delete_marked_for_delete_exhausted_suggests_reboot() {
+        // 1072 持续失败：有限次重试后提示重启，不再无限等待
+        let sc = FakeSc::new(vec![]);
+        for _ in 0..10 {
+            sc.push_delete(ScOutput::failed_with_code(SC_SERVICE_MARKED_FOR_DELETE));
+        }
+        let err = delete_with_retry(&sc, SVC, 3, Duration::ZERO).expect_err("持续 1072 必须报错");
+        assert!(err.contains("重启"), "应提示重启: {err}");
+        assert_eq!(sc.count("delete"), 3, "重试次数应受 attempts 约束");
+    }
+
+    #[test]
+    fn delete_falls_back_to_code_in_output_when_exit_code_is_one() {
+        // 部分 sc.exe 版本只退 1，真实码在输出文本里
+        let out = ScOutput {
+            success: false,
+            code: Some(1),
+            stdout: "[SC] DeleteService FAILED 1072:\n".to_string(),
+            stderr: String::new(),
+        };
+        assert_eq!(failure_code(&out), Some(SC_SERVICE_MARKED_FOR_DELETE));
+    }
+
+    #[test]
+    fn delete_generic_failure_keeps_sc_message() {
+        let out = ScOutput {
+            success: false,
+            code: Some(1),
+            stdout: "[SC] DeleteService FAILED 1234: 某个未知错误\n".to_string(),
+            stderr: String::new(),
+        };
+        assert_eq!(out.detail(), "退出码 1: [SC] DeleteService FAILED 1234: 某个未知错误");
     }
 }
 
