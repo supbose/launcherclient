@@ -13,13 +13,13 @@
   "scripts": {
     "build": "vite build",
     "dev": "vite",
+    "egui": "cd src-egui && cargo build --release",
+    "egui:dev": "cd src-egui && cargo dev",
     "preview": "vite preview",
     "tauri": "tauri",
     "tauri:build": "tauri build",
-    "tauri:dev": "tauri dev",
-    "egui": "cd src-egui && cargo build --release",
-    "egui:dev": "cd src-egui && cargo dev"
+    "tauri:dev": "tauri dev"
   },
   "type": "module",
-  "version": "0.1.13"
+  "version": "0.1.14"
 }

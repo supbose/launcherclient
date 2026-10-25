@@ -14,6 +14,16 @@
 
 
 
+
+## v0.1.14 (2026-10-26)
+### 🚀 新增功能
+
+- [d4da70a](/-/commit/d4da70a608e07ded1cbaaf771710415dffc02e49) 新增(docs): 新增 egui 原生 UI 实现更新程序界面 (.workbuddy/memory/2026-10-26.md, docs/egui-preview-shots/egui_A_dl.png, docs/egui-preview-shots/egui_A_err.png, docs/egui-preview-shots/egui_B_dl.png, docs/egui-preview-shots/egui_B_done.png, docs/egui-preview-shots/egui_B_inst.png, docs/egui-preview-shots/egui_C_check.png, docs/egui-preview-shots/egui_C_done.png, docs/egui-preview-shots/egui_C_inst.png, docs/egui-preview-shots/egui_C_verify.png, docs/egui-preview-shots/egui_D_dl.png, docs/egui-preview-shots/egui_D_done.png, docs/egui-preview-shots/egui_E_done.png, docs/egui-preview-shots/egui_E_verify.png, docs/egui-preview-shots/egui_b2.png, docs/egui-preview-shots/egui_b3.png, docs/egui-preview-shots/egui_b_preview.png, docs/egui-preview-shots/egui_tplC_dl.png, docs/egui-preview-shots/real-flow-error.png, docs/egui界面复刻说明.md, package.json, src-core/src/flow.rs, src-core/src/lib.rs, src-core/src/phase.rs, src-egui/Cargo.lock, src-egui/Cargo.toml, src-egui/src/app.rs, src-egui/src/main.rs, src-egui/src/preview.rs, src-egui/src/templates.rs, src-egui/src/theme.rs, src-egui/src/widgets.rs)
+
+### 🩹 修复 Bug
+
+- [9acce4c](/-/commit/9acce4c9a3bf07cb9a06b1dbab5a99c5db83bb95) 修复(egui): 修复更新完成后窗口不关闭及启动器未居中问题 (.workbuddy/memory/2026-10-26.md)
+
 ## v0.1.13 (2026-10-25)
 ### 🩹 修复 Bug
 
