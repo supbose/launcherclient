@@ -1,0 +1,245 @@
+# src-egui：更新程序界面的 egui/eframe 复刻说明
+
+本文说明 `src-egui`（egui/eframe 0.35 原生 UI）与既有 Tauri + Vue 前端（`src/` + `src-tauri/`）
+的**对应关系、实现差异与已知限制**。
+
+## 一、交付物清单
+
+| 文件 | 行数 | 职责 |
+| --- | --- | --- |
+| `src-egui/Cargo.toml` | — | 新 crate `qsltdupdater-egui`，依赖 eframe/egui 0.35 + tokio + 共享 core |
+| `src-egui/src/main.rs` | 144 | 命令行预处理（`--preview` / `--stage`）、`--check-only` 退出码、启动决策、进入事件循环 |
+| `src-egui/src/app.rs` | 333 | `App` 实现：阶段快照轮询、标题栏动作、关闭确认模态、完成/重试派发 |
+| `src-egui/src/theme.rs` | 121 | 全部色值/尺寸常量 + 中文字体注入 + item_spacing 归零 |
+| `src-egui/src/widgets.rs` | 431 | 自绘控件库：背景渐变、标题栏、进度条、环形进度、spinner、状态点、pill、日志卡、按钮 |
+| `src-egui/src/templates.rs` | 810 | 五套模板 A/B/C/D/E 布局，与 `UpdateTemplateA~E.vue` 一一对应 |
+| `src-egui/src/preview.rs` | 245 | 预览面板数据与渲染（`Preview.vue` 的 8 个阶段预设 + 模板切换） |
+| `src-core/src/phase.rs` | 459 | **新增共享模块**：阶段载荷 + 派生视图 + 跨线程快照句柄 |
+| `src-core/src/flow.rs` | 1027 | **新增共享模块**：启动决策 + 完整更新编排（下载/校验/安装/启动/重试） |
+| `src-core/src/lib.rs` | — | 追加 `pub mod flow;` / `pub mod phase;` |
+
+## 二、复用改造：先把业务逻辑抽成共享模块
+
+为了避免「UI 换一套、业务重写一遍」，本次先把散落在 `src-tauri/src/updater.rs`、`src-zsui/src/updater.rs`
+以及前端 `src/composables/usePhase.js` 的内容上提到 `src-core`：
+
+| 抽取内容 | 原位置 | 现位置 | 说明 |
+| --- | --- | --- | --- |
+| `PhasePayload`（阶段载荷字段与 serde 名） | Tauri `emit("update-phase", …)` 载荷 | `phase::PhasePayload` | 字段名与 Tauri 版完全一致，未来 Tauri 侧也可改用同一结构 |
+| `percent/size_text/speed_text/eta_text/show_progress/step` 派生 | `usePhase.js` | `phase::PhaseView` | UI 无关的显示层计算，任一 UI 直接复用 |
+| `format_bytes` / `fmt_mb` / `STEP_LABELS` / `resolve_template_key` | `usePhase.js` / `templates/index.js` | `phase.rs` | 含 `show_progress` 按 CSS 语义修正（见第四节第 6 条） |
+| `resolve_config` / `run_startup` / `run_update_flow` / `run_download_parts` / `SpeedTracker` / `resolve_launch_exe` / `launch_target` / `finish_and_launch` / `retry` | `src-tauri/src/updater.rs` + `src-zsui/src/updater.rs` | `flow.rs` | 两版合并去重，`src-egui` 直接调用同一条流水线 |
+
+受益面：
+
+- `src-egui` 后端业务流程与 Tauri/zsui 版**逐行相同**，不存在第二套实现；
+- `src-tauri` / `src-zsui` 经 `cargo check` 验证未被破坏（公开 API 保持兼容）；
+- 阶段/流程相关的纯逻辑进入 `src-core` 单测（本次 134 条全绿）。
+
+## 三、对应关系
+
+### 3.1 文件 / 模块级
+
+| Tauri + Vue 侧 | egui 侧 | 说明 |
+| --- | --- | --- |
+| `src/App.vue` | `src-egui/src/app.rs` | 阶段状态归一维护（`applyPhase` ↔ `apply_phase`）、完成/重试/关闭派发、窗口兜底兜数据 |
+| `src/components/MinTitleBar.vue` | `widgets::draw_titlebar` | 32px 标题栏、最小化/关闭 46×32、拖拽区（排除按钮）、关闭 hover 变红 |
+| `src/components/templates/UpdateTemplateA.vue` | `templates::template_a` | 信息密集型：标题行 + spinner 状态行 + 进度 + meta + 日志卡 |
+| `…/UpdateTemplateB.vue` | `templates::template_b` | 96px 环形进度居左 + 右侧信息列 + 日志卡（96px 上限） |
+| `…/UpdateTemplateC.vue` | `templates::template_c` | 默认模板：顶部四步步骤条（下载→校验→解压→完成）+ 大号百分比 + 渐变进度条 |
+| `…/UpdateTemplateD.vue` | `templates::template_d` | 极简居中：4px 细进度条 + 无边框内联日志（带分隔线） |
+| `…/UpdateTemplateE.vue` | `templates::template_e` | 日志优先：顶部状态条（LED + 百分比）+ 主日志区 + 底部分隔行 + 空态 |
+| `src/composables/usePhase.js` | `src-core/src/phase.rs` | `STAGE` 常量、格式化函数、步骤/进度/子标题派生 |
+| `src/components/templates/index.js` | `phase::resolve_template_key` + `preview::TEMPLATE_META` | `DEFAULT_TEMPLATE='C'`、A~E 键名归一化、模板元信息 |
+| `src/Preview.vue` / `preview.html` / `preview.js` | `src-egui/src/preview.rs` + `--preview` | 模板 chips、阶段 chips、8 个阶段预设载荷数值完全相同 |
+| `src/main.js` | `src-egui/src/main.rs` | 应用装配：预览模式 vs 真实模式 |
+| `src-tauri/src/lib.rs`（CloseRequested 拦截 + 确认对话框） | `app::draw_close_confirm` + `logic()` 中的 `CancelClose` | 关键阶段关闭确认，文案与按钮一致（中断更新？/ 取消 / 确定） |
+| `src-tauri/tauri.conf.json`（windows.main） | `app::run_ui` 中 `ViewportBuilder` | 440×420、resizable=false、decorations=false、alwaysOnTop |
+| `src-tauri/src/updater.rs`（阶段 emit） | `phase::PhaseHandle` 快照 + `logic()` 每帧轮询 | 见第四节第 1 条 |
+
+### 3.2 窗口与布局常量
+
+| 项 | Tauri/Vue | egui | 一致性 |
+| --- | --- | --- | --- |
+| 窗口标题 | 更新程序 | `theme::WINDOW_TITLE` | 一致 |
+| 客户区尺寸 | 440 × 420 | `WINDOW_SIZE = (440.0, 420.0)` | 一致 |
+| 预览窗口高度 | 590（`preview.html`） | 420 + `PREVIEW_EXTRA_HEIGHT(150)` | 一致 |
+| 标题栏 | `.min-title-bar` 高 32px，`padding-top:32px` | `TITLEBAR_HEIGHT = 32.0` | 一致 |
+| 标题栏按钮 | 46 × 32 | `TITLEBAR_BTN_WIDTH = 46.0`，高 32 | 一致 |
+| 是否可缩放 | `resizable: false` | `.with_resizable(false)` | 一致 |
+| 边框 | `decorations: false` | `.with_decorations(false)` | 一致 |
+| 置顶 | `alwaysOnTop: true` | `.with_always_on_top()` | 一致 |
+| 内容内边距 | `padding: 16px 28px 22px` | `content(ui, (16,28,22,28), …)` | 一致 |
+| 步骤标签 | 下载 / 校验 / 解压 / 完成 | `STEP_LABELS` | 一致 |
+
+### 3.3 主题色
+
+| 语义 | CSS | `theme.rs` |
+| --- | --- | --- |
+| 背景渐变起止 | `#1e2430` → `#171c26` | `BG_TOP` / `BG_BOTTOM` |
+| 主文本 | `#e8eaf0` | `TEXT` |
+| 强调蓝 | `#4a9eff` | `ACCENT`（主按钮、百分比、日志点、进度条起点） |
+| 成功绿 | `#35c26e` | `SUCCESS`（安装中 spinner、步骤完成点、进度条终点） |
+| 关闭 hover 红 | `#e81123` | `DANGER` |
+| 错误文本 | `#ff5b66` | `ERROR_TEXT` |
+| 环形内底色 | `#1a2029` | `RING_INNER` |
+| 白色蒙版层 0.04/0.08/0.10/0.12/0.14/0.18/0.20/0.10-hover | `rgba(255,255,255,x)` | `W04…W20`、`W10_HOVER` |
+| 文本透明度 | `rgba(255,255,255,0.65/0.7)` | `text_alpha(166)` / `text_alpha(178)` |
+
+### 3.4 控件
+
+| Vue 控件 / CSS 类 | egui 实现 | 关键参数 |
+| --- | --- | --- |
+| `.tpl-c__steps`（步骤条） | `templates::draw_steps` | 三段连接线 + 状态点（完成=绿、当前=蓝+光晕、未达=灰） |
+| `.tpl-c__pct` 大号百分比 | `templates::metrics_row` | 数字 26px + `%` 14px |
+| `.tpl-c__bar` 进度条 | `widgets::progress_track` | 轨道 8px / 圆角 4 / `W10` 底 + 蓝→绿渐变填充 |
+| `.tpl-b__ring` 环形进度 | `widgets::progress_ring` | 外径 96px、描边 9px、内盘 `#1a2029`、中心百分比 + 副标题 |
+| `.tpl-x__spin` spinner | `widgets::spinner` | 灰环 + 90° 彩色弧，0.9s/圈；安装态用绿色 |
+| `.tpl-c__log` 日志卡 | `widgets::log_card` + `log_list` | 圆角 8、`W04` 底 + `W08` 描边、蓝点 + 12.5px 文本（行高 1.9） |
+| 模板 D 内联日志 | `widgets::inline_log` | 无卡片容器，条目间 1px 分隔线 |
+| `.tpl-x__pill` 标签 | `widgets::pill` | 圆角 999、`W10` 底、`W20` 描边 |
+| `.tpl-x__btn` 按钮 | `widgets::button` | padding 7/26、圆角 6、主按钮蓝底白字、次按钮描边、禁用降低透明度 |
+| 操作行 | `widgets::actions_row` → `Action{Retry,Close,Finish}` | 右对齐，含间距 8px |
+| 关闭确认对话框 | `app::draw_close_confirm` + `modal_button` | 330×148 居中卡片、半透明遮罩吞点击 |
+
+### 3.5 状态 / 交互
+
+| 状态或交互 | Vue | egui |
+| --- | --- | --- |
+| 阶段归一化与模板切换 | `applyPhase` | `UpdaterApp::apply_phase` |
+| 错误态保留已到达步骤 | 由组件局部状态实现 | `last_step` 字段（`step()==-2` 表示沿用） |
+| 「校验」步骤点亮条件 | 是否进入过 download 阶段 | `has_downloaded` 字段，语义相同 |
+| 重试按钮禁用态 | `retrying` ref | `UpdaterApp::retrying`（收到任意非 error 阶段即复位） |
+| 完成 → 启动目标程序 → 退出 | `FINISH_CALLED` 守卫 + invoke | `finish_triggered` 守卫 + `EXIT_AFTER_FINISH` 原子位 |
+| 关闭拦截 | Tauri `CloseRequested` + WebView 弹窗 | `CancelClose` + 自绘遮罩模态 |
+| 重绘节奏 | 事件驱动 | 动画/下载中 33ms 重绘，静止态 150ms 轮询 |
+| 标题栏拖拽 | `data-tauri-drag-region` | `ViewportCommand::StartDrag`（按钮矩形剔除） |
+
+### 3.6 业务逻辑
+
+`src-egui` **不实现任何业务逻辑**，全部经 `qsltd_updater_core::flow` 调用：
+
+| 能力 | 调用入口 |
+| --- | --- |
+| 配置解析（CLI > update.json > 默认值，含 `launcher_template`） | `flow::resolve_config` |
+| 纯检测（`--check-only`，退出码 0/1/2） | `flow::check_only_exit` |
+| 窗口前启动决策（无更新 + launch 模式静默退出） | `flow::run_startup` |
+| 完整更新流水线（已取过 manifest 的场景） | `flow::spawn_flow_with` |
+| 重试 | `flow::retry` |
+| 完成并启动目标程序 | `flow::finish_and_launch` |
+
+## 四、实现差异
+
+1. **数据通道：`emit` 改为共享快照轮询。**
+   egui 没有 WebView IPC，后台线程通过 `PhaseHandle`（`Arc<Mutex<Option<PhasePayload>>>`）
+   写入，UI 在 `logic()` 每帧 `snapshot()` 读取。载荷结构保持与 Tauri 一致，因此将来把 Tauri 侧
+   也切到 `PhaseHandle::set` 即为一行替换。代价是刷新由帧驱动（静止态 150ms）而非瞬时，
+   对更新程序这种低频 UI 无感知差异。
+
+2. **渐变用 Mesh 近似。**
+   CSS `linear-gradient(160deg, …)` 在 egui 中没有直接对应，采用带顶点色的三角网格（gouraud）
+   做纵向渐变；进度条 `#4a9eff → #35c26e` 同理（左右渐变 + 圆角矩形裁剪）。160deg 的斜向分量被
+   简化为纯纵向：在 420px 高的窗口里两者肉眼差异可忽略。
+
+3. **环形进度用描边弧逼近 `conic-gradient`。**
+   `conic-gradient` 无原生支持，改为分段折线 + `PathShape` 描边（64 段），并叠 `#1a2029` 内盘
+   形成圆环；视觉宽度对齐 CSS 的 ring + inner 组合（96px / 78px）。
+
+4. **字体必须手工注入。**
+   egui 内置字体不含中文字形，直接渲染会出现豆腐块。`theme::install_fonts` 按
+   `msyh.ttc → msyhl.ttc → simhei.ttf → Deng.ttf → simsun.ttc` 顺序加载系统字体，并插入
+   Proportional / Monospace 家族首位。这是相对 WebView（可用 `system-ui`）的额外必需步骤。
+
+5. **控件全部自绘，而非使用 egui 默认 `Button`/`ProgressBar`。**
+   egui 默认控件的圆角、padding、hover 动效与 CSS 不一致，因此用 `Painter` 直接画。
+   好处是与 CSS 逐像素对齐；代价是没有原生 focus ring / 键盘可达性 / DPI 自适应文本布局。
+
+6. **`show_progress` 语义按 CSS 修正。**
+   抽取过程中发现判据在两版间不一致：本次统一为 CSS 的语义——下载/安装恒显，
+   检测阶段（`checking`）依赖 `sub` 是否非空。这样 `--stage` 预览中「检测中（带下载进度）」
+   才会与 Vue 预览页行为一致。
+
+7. **布局系统差异导致两处高度硬预留。**
+   egui 是即时模式布局，没有 flexbox 的 `flex:1 + min-height:0`。模板 A/C 底部的日志卡若直接占满
+   剩余高度，会把操作按钮挤出窗口；因此按「是否有操作行」预留 89px / 42px（`log_card(Some(h))`
+   自身还有约 42px 卡片装饰）。同理 metrics/meta 行用固定右对齐宽度而非 `space-between`。
+
+8. **预览模式做了工程化增强：`--stage <0-7|名称>`。**
+   WebView 预览页靠点击 chips 切换；原生窗口需要自动化验证，故新增该参数，可在启动时直接进入
+   指定阶段，便于无交互地批量截图/回归。它不属于核心 CLI，会在交给 `cli::parse_from` 前剥离。
+
+9. **eframe 0.35 的 API 形态与常见示例不同。**
+   本 crate 按 0.35 实际 API 编写：`App` 拆为 `logic()` + `ui(&mut Ui, …)`（`update` 已不存在）、
+   无 `clear_color`、`ui.new_child(UiBuilder)`、`painter_at()` 返回值、`Shape::mesh()`、
+   `Color32::from_rgba_unmultiplied_const`、`all_styles_mut(|s| …)`、`ViewportBuilder::default()`、
+   creator 返回 `Result<Box<dyn App>, Box<dyn Error>>`。
+
+## 五、已知限制
+
+1. **无富文本 / HTML 排版能力。** changelog 条目只能按「点 + 单行文本」渲染，不解析 HTML 标签；
+   超长条目依赖 egui 的换行策略而非 CSS `line-height` 精确排版。当前后端为空行数限制的单行文案，
+   实际不受影响。
+2. **无 DPI 感知的自适应弹性布局。** 窗口固定 440×420 且不缩放，因此与 Tauri 版一致地不具备响应式；
+   在高 DPI 缩放下egui 会整体缩放而非重排，某些模板的长文本可能出现轻微换行差异。
+3. **中文字体依赖系统字体存在。** 需 `C:/Windows/Fonts/msyh.ttc`（或兜底链中任一字体）。
+   若目标机器上这些字体都被移除，界面文字会退化为方块。
+4. **渐变/环形为近似实现。** 160deg 斜向渐变 → 纵向近似；`conic-gradient` → 64 段描边近似；
+   spinner 的 `animation-timing-function` 复刻为匀速旋转。
+5. **仅 Windows 验证。** 与 `src-tauri` / `src-zsui` 相同，服务端操作（`sc`、`services`）、路径规则、
+   字体加载路径均为 Windows 语义；未在 Linux/macOS 上编译或运行。
+6. **无 WebView 层带来的能力缺失。** 没有 console、`--devtools`、热更新；调试需依赖 stderr 日志。
+   若将来要在原生 UI 内嵌远端 HTML（如富文本更新公告），egui 版做不到，Tauri 版可以。
+7. **预览模式与真实模式的数据来源不同。** 预览由 `preview::payload` 生成静态预设（数值照抄
+   `Preview.vue`），不触碰网络与磁盘；真实流程的全部副作用由 `src-core::flow` 承担。
+8. **release 构建较慢。** release profile 继承自既有约定（`lto=true`、`codegen-units=1`、`strip`），
+   egui 依赖树较大，全量 release 约需 16 分钟；日常开发建议用 debug。
+
+## 六、验证记录
+
+| 项 | 命令 | 结果 |
+| --- | --- | --- |
+| 共享模块单测 | `cargo test --lib`（src-core） | **134 passed / 0 failed** |
+| 既有 Tauri 应用未被破坏 | `cargo check`（src-tauri） | Finished，无错误 |
+| 既有 zsui 原生版未被破坏 | `cargo check`（src-zsui） | Finished，无错误 |
+| egui debug 构建 | `cargo build -j 2`（src-egui） | Finished（55MB exe） |
+| egui release 构建 | `cargo build -j 2 --release` | Finished（15MB exe，16m41s） |
+| 可执行文件启动 | `.exe --check-only --app-name qsm`（debug + release 均跑） | 正常拉 manifest → 「已是最新版本: 0.4.27」→ 退出码 0 |
+| 五套模板 × 多阶段 | `--preview --template <A~E> --stage <0-7>` + GDI 截图 | 13 张截图，见 `docs/egui-preview-shots/` |
+| 真实更新全流程 | 本地 mock 更新服务（8MB zip + 限速 + sha256） | manifest → 发现新版本 → 下载 → 校验通过 → 安装 → 写 app.json → 清理缓存/旧版本 → 启动失败转错误态 → 重试可重跑（均符合预期） |
+
+> 说明：出于安全考虑，未对线上 manifest 执行真实更新；真实链路验证改用本地 mock 服务 +
+> `--check-only`，二者覆盖的流程节点与产出物一致。
+
+## 七、运行方式
+
+```bash
+# 预览五套模板（默认阶段下载中）
+cargo run -p qsltdupdater-egui -- --preview
+cargo run -p qsltdupdater-egui -- --preview --template B --stage 2
+
+# 纯检测（不建窗，退出码 0=无更新 1=失败 2=有更新）
+cargo run -p qsltdupdater-egui -- --check-only --app-name qsm
+
+# 真实更新（走共享 flow 流水线）
+cargo run -p qsltdupdater-egui -- --app-name qsm
+```
+
+`--stage` 取值：`0` 检测中 / `1` 下载中 / `2` 校验中 / `3` 安装中 / `4` 发现新版本 /
+`5` 已是最新 / `6` 更新完成 / `7` 错误；亦可传中文名称。
+
+## 八、实测反馈修复记录（2026-10-26）
+
+真实使用反馈的两个问题及修复：
+
+| 问题 | 根因 | 修复 |
+| --- | --- | --- |
+| 安装完成后目标程序已启动，但更新器窗口停在「更新完成」不关闭 | 共享 `flow.rs` 自动拉起目标程序成功后只返回 `Ok(())`，无退出信号（Tauri 版在自家 updater.rs 里是 `app.exit(0)`，egui 版走了共享 flow 就缺了这一步） | `PhaseHandle` 新增 `request_exit()` / `exit_requested()` 退出信号；`flow.rs` 三处启动成功后置位（`run_update_flow` 完成分支、`run_check_flow` 无更新分支、`finish_and_launch`）；`app.rs` 帧循环轮询到信号即发 `ViewportCommand::Close`，原 `EXIT_AFTER_FINISH` 静态标志随之移除 |
+| 更新器窗口未水平垂直居中 | `tauri.conf.json` 有 `"center": true`，而 egui 的 `ViewportBuilder` 无 `with_center`，winit 用默认级联位置 | `app.rs` 首帧（`logic()`）读 `ViewportInfo.monitor_size` + `outer_rect`，按屏幕中心发 `ViewportCommand::OuterPosition`；窗口改为 `with_visible(false)` 隐藏启动、居中完成后再显示，避免「先在默认位置闪现再跳中心」；约 1s 拿不到显示器信息时兜底直接显示 |
+
+验证（debug 构建）：
+
+- 居中：1920×1080 下窗口实测中心 `(960,540)`，偏差 `(0,0)`，窗口可见。
+- 自动关窗：真实端点全流程（发现 0.4.27 → 28 分卷下载 → 合并 → SHA256 → 服务跳过 → 安装 → 清理 → 启动 `qsm.exe`）后更新器进程 **51.1s 自动退出，退出码 0**；日志确认 `QSLTD_FROM_UPDATER=1` 已注入（目标程序跳过更新检测）。
+- `cargo test --lib`（src-core）134 passed；src-tauri / src-zsui `cargo check` 通过；src-egui clippy 无警告。
+
+注：manifest 覆盖参数为 `--manifest <地址>`（非 `--manifest-url`）。

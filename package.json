@@ -16,7 +16,9 @@
     "preview": "vite preview",
     "tauri": "tauri",
     "tauri:build": "tauri build",
-    "tauri:dev": "tauri dev"
+    "tauri:dev": "tauri dev",
+    "egui": "cd src-egui && cargo build --release",
+    "egui:dev": "cd src-egui && cargo dev"
   },
   "type": "module",
   "version": "0.1.13"
