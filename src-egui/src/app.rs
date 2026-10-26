@@ -7,6 +7,9 @@
 //! - 关键阶段（检测/下载/安装中）关闭前弹确认（对应 lib.rs
 //!   on_window_event 的 CloseRequested 拦截对话框）
 
+use std::sync::{Arc, Mutex};
+use std::time::Instant;
+
 use egui::{Color32, FontId, RichText, Sense, Ui, Vec2};
 use qsltd_updater_core::flow;
 use qsltd_updater_core::phase::{resolve_template_key, PhaseHandle, PhasePayload, PhaseView, Stage};
@@ -53,12 +56,21 @@ pub struct UpdaterApp {
     frames: u32,
     /// 预览模式最近事件提示
     preview_event: String,
+    /// 首检决策（后台线程写、UI 线程消费一次）：None=检测中，Some=已决
+    startup: Arc<Mutex<Option<flow::StartupDecision>>>,
+    /// 首检决策是否已消费（Show 分支的 set/spawn 只做一次）
+    startup_consumed: bool,
+    /// 首检决策为 Show（有更新/失败），窗口最终需显示
+    startup_show: bool,
+    /// 窗口创建时刻（懒加载 300ms 阈值计时）
+    start_time: Instant,
 }
 
 impl UpdaterApp {
     pub fn new(
         cc: &eframe::CreationContext<'_>,
         phase: PhaseHandle,
+        startup: Arc<Mutex<Option<flow::StartupDecision>>>,
         template: String,
         preview: bool,
         preview_stage: usize,
@@ -81,6 +93,10 @@ impl UpdaterApp {
             shown: false,
             frames: 0,
             preview_event: String::new(),
+            startup,
+            startup_consumed: false,
+            startup_show: false,
+            start_time: Instant::now(),
         }
     }
 
@@ -145,6 +161,38 @@ impl eframe::App for UpdaterApp {
             if let Some(p) = self.phase.snapshot() {
                 self.apply_phase(p);
             }
+
+            // 首检决策消费（后台线程跑 run_startup，每帧只处理一次）：
+            // - SilentExit：无更新，隐藏窗口并静默退出（用户无感）
+            // - Show：写入首帧阶段快照并启动后台下载流程，标记窗口需显示
+            if !self.startup_consumed {
+                if let Some(decision) = self.startup.lock().unwrap().take() {
+                    self.startup_consumed = true;
+                    match decision {
+                        flow::StartupDecision::SilentExit(code) => {
+                            ctx.send_viewport_cmd(egui::ViewportCommand::Visible(false));
+                            std::process::exit(code);
+                        }
+                        flow::StartupDecision::Show(ctx) => {
+                            let flow::StartupContext { manifest, initial, .. } = *ctx;
+                            self.phase.set(initial);
+                            self.startup_show = true;
+                            if let Some(m) = manifest {
+                                let flow_phase = self.phase.clone();
+                                let _ = std::thread::Builder::new()
+                                    .name("update-flow-spawn".into())
+                                    .spawn(move || {
+                                        flow::spawn_flow_with(
+                                            qsltd_updater_core::cli::parse(),
+                                            flow_phase,
+                                            m,
+                                        )
+                                    });
+                            }
+                        }
+                    }
+                }
+            }
         }
 
         // 流程内自动拉起目标程序成功（或「完成」启动成功）→ 关闭更新器窗口。
@@ -177,8 +225,19 @@ impl eframe::App for UpdaterApp {
                 self.centered = true;
             }
             if self.centered && !self.shown {
-                ctx.send_viewport_cmd(egui::ViewportCommand::Visible(true));
-                self.shown = true;
+                // 懒加载显示：
+                // - 预览模式：直接显示
+                // - 已决且为 Show（有更新/失败）：显示
+                // - 未决且超过 300ms 阈值（弱网/慢 manifest）：显示 checking
+                // - 其余（未决且 <300ms、或无更新静默）：维持隐藏
+                let show_now = self.preview
+                    || self.startup_show
+                    || (!self.startup_consumed
+                        && self.start_time.elapsed() > std::time::Duration::from_millis(300));
+                if show_now {
+                    ctx.send_viewport_cmd(egui::ViewportCommand::Visible(true));
+                    self.shown = true;
+                }
             }
         }
 

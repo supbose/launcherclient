@@ -18,6 +18,8 @@ mod templates;
 mod theme;
 mod widgets;
 
+use std::sync::{Arc, Mutex};
+
 use qsltd_updater_core::cli::CliArgs;
 use qsltd_updater_core::flow::{self, StartupDecision};
 use qsltd_updater_core::phase::PhaseHandle;
@@ -60,7 +62,7 @@ fn main() {
     let phase = PhaseHandle::new();
 
     if preview_mode {
-        run_ui(&args, phase, true, preview_stage);
+        run_ui(&args, phase, Arc::new(Mutex::new(None)), true, preview_stage);
         return;
     }
 
@@ -73,42 +75,44 @@ fn main() {
         cfg.manifest_urls.join(" → ")
     );
 
-    // 启动决策在窗口创建前完成：无更新 + launch 模式全程无窗口（早期 zsui 版亦采用此策略）
-    let decision = match tokio::runtime::Builder::new_multi_thread().enable_all().build() {
-        Ok(rt) => rt.block_on(flow::run_startup(&args, &cfg)),
-        Err(e) => {
-            eprintln!("[更新器] 创建异步运行时失败: {}", e);
-            std::process::exit(1);
-        }
-    };
-
-    match decision {
-        StartupDecision::SilentExit(code) => std::process::exit(code),
-        StartupDecision::Show(ctx) => {
-            let flow::StartupContext {
-                cfg,
-                manifest,
-                initial,
-            } = *ctx;
-            // 有新版本：先登记初始阶段快照并启动后台下载流程，再运行窗口
-            phase.set(initial);
-            if let Some(m) = manifest {
-                let flow_phase = phase.clone();
-                std::thread::Builder::new()
-                    .name("update-flow-spawn".into())
-                    .spawn(move || flow::spawn_flow_with(qsltd_updater_core::cli::parse(), flow_phase, m))
-                    .ok();
-            }
-            run_ui(&args, phase, false, 0);
-        }
+    // 启动决策在后台线程异步执行（窗口创建前不再同步 await）：
+    // 无更新 + launch 模式静默退出；有更新才建窗。窗口以隐藏方式启动，
+    // 首检在后台跑，弱网/慢 manifest（>300ms）时再显示「正在检查更新」窗口
+    // （懒加载），避免无更新场景窗口闪现拖累「秒开」观感（早期 zsui 版亦采用
+    // 「先决策后建窗」策略，此处进一步细化到「按需可见」）。
+    let startup = Arc::new(Mutex::new(None::<StartupDecision>));
+    {
+        let startup_bg = startup.clone();
+        let argv_bg = argv.clone();
+        let cfg_bg = cfg.clone();
+        std::thread::Builder::new()
+            .name("startup-check".into())
+            .spawn(move || {
+                let args_bg = qsltd_updater_core::cli::parse_from(&argv_bg);
+                let rt = match tokio::runtime::Builder::new_multi_thread()
+                    .enable_all()
+                    .build()
+                {
+                    Ok(rt) => rt,
+                    Err(e) => {
+                        eprintln!("[更新器] 创建异步运行时失败: {}", e);
+                        return;
+                    }
+                };
+                let decision = rt.block_on(flow::run_startup(&args_bg, &cfg_bg));
+                *startup_bg.lock().unwrap() = Some(decision);
+            })
+            .ok();
     }
+
+    run_ui(&args, phase, startup, false, 0);
 }
 
 /// 进入 eframe 事件循环
 ///
 /// - `phase`: 共享阶段快照（真实模式已含首帧阶段；预览模式为空）
 /// - `preview`: true 时渲染模板/阶段切换面板（复刻 Preview.vue）
-fn run_ui(args: &CliArgs, phase: PhaseHandle, preview: bool, preview_stage: usize) {
+fn run_ui(args: &CliArgs, phase: PhaseHandle, startup: Arc<Mutex<Option<StartupDecision>>>, preview: bool, preview_stage: usize) {
     // 生效模板：命令行 --template > 默认（C）；预览模式可在面板里切换
     let template = qsltd_updater_core::phase::resolve_template_key(
         args.template.as_deref().unwrap_or(""),
@@ -143,7 +147,7 @@ fn run_ui(args: &CliArgs, phase: PhaseHandle, preview: bool, preview_stage: usiz
         app::WINDOW_TITLE,
         native_options,
         Box::new(move |cc| {
-            Ok(Box::new(app::UpdaterApp::new(cc, phase, template, preview, preview_stage))
+            Ok(Box::new(app::UpdaterApp::new(cc, phase, startup, template, preview, preview_stage))
                 as Box<dyn eframe::App>)
         }),
     );
