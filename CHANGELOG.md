@@ -19,6 +19,13 @@
 
 
 
+
+## v0.1.19 (2026-10-27)
+### 🚀 新增功能
+
+- [d292638](/-/commit/d2926386e214de1776ffb9be8294e0fa439e2b6f) 新增(egui): 添加应用名称参数到 run_ui 和 UpdaterApp (src-egui/src/main.rs)
+- [0868125](/-/commit/086812509535204881722bf61d3e9f96db6580be) 新增(src-egui): 添加 egui 检测中极简屏及打包脚本 (package.json, scripts/__pycache__/build_egui.cpython-314.pyc, scripts/build_egui.py, src-egui/src/app.rs, src-egui/src/main.rs, src-egui/src/templates.rs, src-egui/version.rc)
+
 ## v0.1.18 (2026-10-26)
 ### 🚀 新增功能
 
