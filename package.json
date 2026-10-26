@@ -10,5 +10,5 @@
     "pkgtool": "cd src-pkgtool && cargo build --release",
     "pkgtool:dev": "cd src-pkgtool && cargo run"
   },
-  "version": "0.1.21"
+  "version": "0.1.22"
 }

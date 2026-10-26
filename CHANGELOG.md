@@ -22,6 +22,33 @@
 
 
 
+
+## v0.1.22 (2026-10-27)
+### 🚀 新增功能
+
+- [37d18b4](/-/commit/37d18b4be10b047f8c45dd1bd0a3a62fe23c3568) 新增(pkgtool): 打包阶段进度条与协作式取消（P1） (src-pkgtool/src/main.rs)
+- [d483a79](/-/commit/d483a796fa428a2be5136cc2ff43e0bbad565df6) 新增(pkgtool): 新增打包进度回调与取消功能，修复界面假死 (.workbuddy/memory/2026-10-27.md, src-egui/version.rc, src-pkgtool/src/main.rs)
+- [fcf23bc](/-/commit/fcf23bcf47cda1dda442ea90b9a0497cb1df1bc1) 新增(pkgtool): 按设计稿落地 P0 视觉改造（标签置顶/等宽/导航分组） (docs/更新包打包工具-界面重设计.html, src-pkgtool/src/main.rs)
+- [3e898f3](/-/commit/3e898f3f54fcbd15e5a3b32ad33df947c71b10db) 新增(pkgtool): 打磨界面视觉并新增启动窗口居中 (src-pkgtool/src/main.rs)
+- [17f0b37](/-/commit/17f0b37a17472f93c273b8c5a784f435e2aa6095) 新增(pkgtool): UI 重构为左导航多面板（方案B） (src-pkgtool/src/main.rs)
+
+### 🩹 修复 Bug
+
+- [514bb96](/-/commit/514bb966c2a24adfe48f00993d3a2e165584696d) 修复(pkgtool): 修复点击打包导致界面假死 (src-pkgtool/src/main.rs)
+
+### 📝 文档更新
+
+- [f424712](/-/commit/f42471286c518707ccfcec6784783e553f1c9b0a) 文档(.workbuddy): 更新 2026-10-27 工作记录，补充打包进度与取消功能细节 (.workbuddy/memory/2026-10-27.md)
+- [41e3b82](/-/commit/41e3b826be678b87062939a3dc7931a57b2e99fa) 文档(.workbuddy): 添加 2026-10-27 工作日志记录 (.workbuddy/memory/2026-10-27.md)
+
+### 💄 代码格式
+
+- [ea15d90](/-/commit/ea15d909ed87de27083dd07daa64c6b4b949839d) 格式(pkgtool): 界面清爽化（白底卡片、淡蓝选中态、历史构建对齐去裁切） (src-pkgtool/src/main.rs)
+
+### 🔧 工具变更
+
+- [e54a36e](/-/commit/e54a36e83ab08f552393f6ae6124457b4fe6edc9) 工具(deps): 升级 egui/eframe 0.35 → 0.37（两个 crate 同步） (src-egui/Cargo.lock, src-egui/Cargo.toml, src-egui/src/app.rs, src-egui/src/widgets.rs, src-pkgtool/Cargo.lock, src-pkgtool/Cargo.toml)
+
 ## v0.1.21 (2026-10-27)
 ### 🚀 新增功能
 
