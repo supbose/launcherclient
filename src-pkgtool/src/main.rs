@@ -235,16 +235,17 @@ fn clean_old_packages(output_dir: &Path, app: &str, zip_name: &str) -> Vec<Strin
     deleted
 }
 
-/// 执行完整打包流程（纯逻辑，日志写入传入的 `log` 缓冲，便于单测）
+/// 执行完整打包流程（纯逻辑，日志通过回调逐条输出，便于单测）
 /// 返回成功摘要字符串，错误带原因
+///
+/// 日志采用回调而非持有缓冲：调用方可在回调内部**逐条短暂加锁**并向 UI 请求重绘，
+/// 避免「整个打包期间持有互斥锁 → UI 线程读日志阻塞 → 界面假死」。
 fn pack_core(
     cfg: &Config,
     version: &str,
     changelog_input: &str,
-    log: &mut Vec<String>,
+    mut logln: impl FnMut(&str),
 ) -> Result<String, String> {
-    let mut logln = |s: &str| log.push(s.to_string());
-
     // 1. 展开配置项为实际文件清单
     let mut resolved: Vec<(PathBuf, String)> = Vec::new();
     let mut missing: Vec<String> = Vec::new();
@@ -493,6 +494,16 @@ fn section<R>(ui: &mut egui::Ui, title: &str, content: impl FnOnce(&mut egui::Ui
     r.inner
 }
 
+/// 向共享日志缓冲追加一行：只在写入瞬间持锁，写完立刻释放。
+///
+/// 用 `try_lock` + 忽略失败而非 `lock().unwrap()`：
+/// 一是避免后台线程在锁上长等，二是锁被 poison 时不会 panic 拖垮线程。
+fn push_log(log: &Arc<Mutex<Vec<String>>>, line: &str) {
+    if let Ok(mut v) = log.try_lock() {
+        v.push(line.to_string());
+    }
+}
+
 /// 打包工具应用状态
 struct PackToolApp {
     config: Config,
@@ -522,7 +533,10 @@ impl PackToolApp {
         }
     }
 
-    /// 触发打包（后台线程执行，避免 UI 卡顿）
+    /// 触发打包（后台线程执行）
+    ///
+    /// 关键：日志回调内部**每条短暂加锁后立即释放**，绝不在整个打包期间持有锁；
+    /// 否则 UI 线程读取日志时会被阻塞，Windows 会把窗口标记为「无响应」（假死）。
     fn start_pack(&mut self, ctx: Context) {
         let version = self.version.trim().to_string();
         let version = if version.is_empty() {
@@ -533,10 +547,7 @@ impl PackToolApp {
         // 版本号格式校验：x.y / x.y.z / x.y.z.w
         let re = regex::Regex::new(r"^\d+(\.\d+){1,3}$").unwrap();
         if !re.is_match(&version) {
-            self.log
-                .lock()
-                .unwrap()
-                .push(format!("版本号格式无效: {}（示例 2.1.3）", version));
+            push_log(&self.log, &format!("版本号格式无效: {}（示例 2.1.3）", version));
             return;
         }
         let cfg = self.config.clone();
@@ -544,14 +555,23 @@ impl PackToolApp {
         let log = self.log.clone();
         let running = self.running.clone();
         *running.lock().unwrap() = true;
+        // 打包开始即切到日志页，让用户直接看到进度
+        self.current_page = Page::Log;
+
         std::thread::spawn(move || {
-            let mut buf = log.lock().unwrap();
-            let res = pack_core(&cfg, &version, &changelog, &mut buf);
-            match res {
-                Ok(_) => {}
-                Err(e) => buf.push(format!("❌ 打包失败: {}", e)),
+            // 每条日志：加锁 → push → 立即释放 → 请求重绘
+            let emit = {
+                let log = log.clone();
+                let ctx = ctx.clone();
+                move |s: &str| {
+                    push_log(&log, s);
+                    ctx.request_repaint();
+                }
+            };
+            if let Err(e) = pack_core(&cfg, &version, &changelog, emit) {
+                push_log(&log, &format!("[失败] 打包失败: {}", e));
             }
-            drop(buf);
+            push_log(&log, "打包流程结束");
             *running.lock().unwrap() = false;
             ctx.request_repaint();
         });
@@ -597,8 +617,8 @@ impl PackToolApp {
             ui.add_space(8.0);
             if ui.button("保存配置").clicked() {
                 match self.config.save() {
-                    Ok(_) => self.log.lock().unwrap().push("配置已保存到 packtool.json".into()),
-                    Err(e) => self.log.lock().unwrap().push(format!("保存失败: {}", e)),
+                    Ok(_) => push_log(&self.log, "配置已保存到 packtool.json"),
+                    Err(e) => push_log(&self.log, &format!("保存失败: {}", e)),
                 }
             }
         });
@@ -741,7 +761,9 @@ impl PackToolApp {
         ui.add_space(4.0);
         ui.horizontal(|ui| {
             if ui.button("清空日志").clicked() {
-                self.log.lock().unwrap().clear();
+                if let Ok(mut v) = self.log.try_lock() {
+                    v.clear();
+                }
             }
             ui.label(egui::RichText::new("实时打包输出").small().weak());
         });
@@ -752,16 +774,25 @@ impl PackToolApp {
             .inner_margin(egui::Margin::symmetric(10, 8))
             .corner_radius(8.0)
             .show(ui, |ui| {
-                egui::ScrollArea::vertical().stick_to_bottom(true).show(ui, |ui| {
-                    let log = self.log.lock().unwrap();
-                    if log.is_empty() {
-                        ui.label(egui::RichText::new("（暂无日志）").weak());
-                    } else {
-                        for line in log.iter() {
-                            ui.monospace(line);
+                egui::ScrollArea::vertical()
+                    .stick_to_bottom(true)
+                    .show(ui, |ui| {
+                        // try_lock：绝不因日志锁而阻塞 UI 线程（后台打包时锁可能正被占用）
+                        match self.log.try_lock() {
+                            Ok(log) => {
+                                if log.is_empty() {
+                                    ui.label(egui::RichText::new("（暂无日志）").weak());
+                                } else {
+                                    for line in log.iter() {
+                                        ui.monospace(line);
+                                    }
+                                }
+                            }
+                            Err(_) => {
+                                ui.label(egui::RichText::new("（日志正被写入，稍后刷新）").weak());
+                            }
                         }
-                    }
-                });
+                    });
             });
     }
 }
@@ -776,6 +807,12 @@ impl eframe::App for PackToolApp {
             }
         }
 
+        // 打包期间持续请求重绘：保证 spinner 转动、日志实时刷新
+        let running = self.running.try_lock().map(|v| *v).unwrap_or(false);
+        if running {
+            ui.ctx().request_repaint();
+        }
+
         egui::CentralPanel::default().show(ui, |ui| {
             // 顶部：标题 + 常驻打包按钮
             ui.horizontal(|ui| {
@@ -786,9 +823,11 @@ impl eframe::App for PackToolApp {
                         .color(INK),
                 );
                 ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                    let running = *self.running.lock().unwrap();
                     if running {
+                        ui.spinner();
+                        ui.add_space(4.0);
                         ui.label(egui::RichText::new("打包中…").color(ACCENT).strong());
+                        ui.add_space(8.0);
                     }
                     let btn = egui::Button::new(egui::RichText::new("打包").strong().color(ACCENT_TEXT))
                         .fill(ACCENT)
@@ -977,7 +1016,9 @@ mod tests {
         };
 
         let mut log = Vec::new();
-        let res = pack_core(&cfg, "1.2.3", "修复了某些bugs;新增下载前缀配置", &mut log);
+        let res = pack_core(&cfg, "1.2.3", "修复了某些bugs;新增下载前缀配置", |s: &str| {
+            log.push(s.to_string())
+        });
         assert!(res.is_ok(), "pack_core 失败: {:?}", log);
 
         // version.json 字段校验
@@ -1030,6 +1071,58 @@ mod tests {
         std::fs::create_dir_all(&out).unwrap();
         std::fs::write(out.join("version.json"), r#"{"version":"3.1.9"}"#).unwrap();
         assert_eq!(suggest_version(out.to_string_lossy().as_ref(), "qsm"), "3.1.10");
+        let _ = std::fs::remove_dir_all(&base);
+    }
+
+    /// 防回归：打包期间不得长期持有日志锁。
+    /// 若 pack_core 全程持锁，UI 线程读取日志会被阻塞 → 窗口被系统判定「无响应」（假死）。
+    #[test]
+    fn log_lock_not_held_during_pack() {
+        let base = tmpdir("lock");
+        let src = base.join("src");
+        std::fs::create_dir_all(&src).unwrap();
+        // 4MB 不可压缩数据，保证打包有可观测耗时（deflate 无法压缩随机字节）
+        let big = src.join("big.bin");
+        let mut seed = 0x99u32;
+        let payload: Vec<u8> = (0..4 * 1024 * 1024)
+            .map(|_| {
+                seed = seed.wrapping_mul(1664525).wrapping_add(1013904223);
+                (seed >> 24) as u8
+            })
+            .collect();
+        std::fs::write(&big, &payload).unwrap();
+
+        let out = base.join("out");
+        let cfg = Config {
+            app_name: "lockapp".into(),
+            files: vec![big.to_string_lossy().into()],
+            download_prefixes: vec!["https://example.com/u/".into()],
+            volume_size_mb: 64,
+            output_dir: out.to_string_lossy().into(),
+        };
+
+        let log = Arc::new(Mutex::new(Vec::new()));
+        let writer = log.clone();
+        let handle = std::thread::spawn(move || {
+            pack_core(&cfg, "1.0.0", "t", move |s: &str| {
+                writer.lock().unwrap().push(s.to_string());
+            })
+        });
+
+        // 模拟 UI 线程：打包期间反复尝试取锁，只要成功一次就说明锁未被长期占用
+        let mut acquired = 0usize;
+        while !handle.is_finished() {
+            if log.try_lock().is_ok() {
+                acquired += 1;
+            }
+        }
+        let res = handle.join().expect("打包线程不应 panic");
+        assert!(res.is_ok(), "打包应成功");
+        assert!(
+            acquired > 0,
+            "打包期间 UI 线程应能取到日志锁（说明锁被长期占用 → 界面假死）"
+        );
+
         let _ = std::fs::remove_dir_all(&base);
     }
 
