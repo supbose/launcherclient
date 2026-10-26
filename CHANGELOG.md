@@ -16,6 +16,12 @@
 
 
 
+
+## v0.1.16 (2026-10-26)
+### ♻️ 代码重构
+
+- [e111f3d](/-/commit/e111f3dca79400f503da46549a74c84920553453) 重构(src-tauri): 删除已废弃的 Tauri 和 zsui 启动器壳，仅保留 egui 作为生产壳 (.workbuddy/memory/2026-10-26.md, docs/Tauri-vs-egui性能对比.md, docs/egui界面复刻说明.md, docs/选型决策记录.md, index.html, package.json, pnpm-lock.yaml, pnpm-workspace.yaml, preview.html, public/splash.html, src-core/src/config.rs, src-core/src/defaults.rs, src-core/src/flow.rs, src-core/src/lib.rs, src-core/src/phase.rs, src-core/src/services.rs, src-egui/Cargo.toml, src-egui/src/main.rs, src-tauri/Cargo.lock, src-tauri/Cargo.toml, src-tauri/build.rs, src-tauri/capabilities/default.json, src-tauri/icons/128x128.png, src-tauri/icons/128x128@2x.png, src-tauri/icons/32x32.png, src-tauri/icons/64x64.png, src-tauri/icons/Square107x107Logo.png, src-tauri/icons/Square142x142Logo.png, src-tauri/icons/Square150x150Logo.png, src-tauri/icons/Square284x284Logo.png, src-tauri/icons/Square30x30Logo.png, src-tauri/icons/Square310x310Logo.png, src-tauri/icons/Square44x44Logo.png, src-tauri/icons/Square71x71Logo.png, src-tauri/icons/Square89x89Logo.png, src-tauri/icons/StoreLogo.png, src-tauri/icons/icon.icns, src-tauri/icons/icon.ico, src-tauri/icons/icon.png, src-tauri/src/lib.rs, src-tauri/src/main.rs, src-tauri/src/updater.rs, src-tauri/tauri.conf.json, src-zsui/Cargo.lock, src-zsui/Cargo.toml, src-zsui/README.md, src-zsui/src/main.rs, src-zsui/src/ui.rs, src-zsui/src/updater.rs, src/App.vue, src/Preview.vue, src/components/MinTitleBar.vue, src/components/templates/UpdateTemplateA.vue, src/components/templates/UpdateTemplateB.vue, src/components/templates/UpdateTemplateC.vue, src/components/templates/UpdateTemplateD.vue, src/components/templates/UpdateTemplateE.vue, src/components/templates/index.js, src/components/templates/usePhase.js, src/main.js, src/preview.css, src/preview.js, vite.config.js)
+
 ## v0.1.15 (2026-10-26)
 ### 📝 文档更新
 

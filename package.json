@@ -1,11 +1,11 @@
 {
   "name": "qsltdupdater",
   "private": true,
-  "version": "0.1.15",
   "scripts": {
     "build": "cd src-egui && cargo build --release",
     "dev": "cd src-egui && cargo run",
     "egui": "cd src-egui && cargo build --release",
     "egui:dev": "cd src-egui && cargo run"
-  }
+  },
+  "version": "0.1.16"
 }
