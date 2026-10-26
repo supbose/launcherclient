@@ -14,11 +14,17 @@ path = "src/main.rs"
 # egui/eframe 原生 UI 框架（glow 渲染后端，默认 feature 即可）
 eframe = "0.35"
 egui = "0.35"
+# PNG 解码：assets/icon.png → egui::IconData（窗口/任务栏图标）
+png = "0.17"
 tokio = { version = "1", features = ["full"] }
 # 统一能力库（自有封装）：update 模块提供 LocalManifest 本地版本记录与 get_myapp_dir
 qingshu = { path = "../../../qingshu.work/rust/qingshu", features = ["update"] }
 # 共享核心：cli/config/manifest/download/install/cleanup/services + phase/flow（无 UI）
 qsltd-updater-core = { path = "../src-core" }
+
+[build-dependencies]
+# Windows exe 图标资源嵌入（调用系统 rc.exe；非 Windows 平台自动跳过）
+embed-resource = "3"
 
 [lints.rust]
 unused_imports = "allow"

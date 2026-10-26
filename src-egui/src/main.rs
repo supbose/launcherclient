@@ -120,15 +120,22 @@ fn run_ui(args: &CliArgs, phase: PhaseHandle, preview: bool, preview_stage: usiz
         app::WINDOW_SIZE.1
     };
     let native_options = eframe::NativeOptions {
-        viewport: egui::ViewportBuilder::default()
-            .with_title(app::WINDOW_TITLE)
-            .with_inner_size([app::WINDOW_SIZE.0, window_h])
-            .with_resizable(false)
-            .with_decorations(false)
-            .with_always_on_top()
-            // 隐藏启动：首帧居中（app.rs logic，对齐 tauri.conf.json "center": true）
-            // 完成后再显示，避免窗口先出现在默认级联位置再跳到屏幕中心
-            .with_visible(false),
+        viewport: {
+            let viewport = egui::ViewportBuilder::default()
+                .with_title(app::WINDOW_TITLE)
+                .with_inner_size([app::WINDOW_SIZE.0, window_h])
+                .with_resizable(false)
+                .with_decorations(false)
+                .with_always_on_top()
+                // 隐藏启动：首帧居中（app.rs logic，对齐 tauri.conf.json "center": true）
+                // 完成后再显示，避免窗口先出现在默认级联位置再跳到屏幕中心
+                .with_visible(false);
+            // 应用图标（任务栏 / Alt+Tab）：exe 文件图标由 build.rs 嵌入
+            match load_window_icon() {
+                Some(icon) => viewport.with_icon(icon),
+                None => viewport,
+            }
+        },
         ..Default::default()
     };
 
@@ -144,4 +151,25 @@ fn run_ui(args: &CliArgs, phase: PhaseHandle, preview: bool, preview_stage: usiz
         eprintln!("[更新器] UI 循环异常退出: {}", e);
         std::process::exit(1);
     }
+}
+
+/// 从内嵌 PNG 解码窗口图标（任务栏 / Alt+Tab）
+///
+/// exe 文件图标由 build.rs 通过 rc 资源嵌入；此处设置的是运行时窗口图标。
+fn load_window_icon() -> Option<egui::IconData> {
+    let mut reader = png::Decoder::new(&include_bytes!("../assets/icon.png")[..])
+        .read_info()
+        .ok()?;
+    let mut rgba = vec![0; reader.output_buffer_size()];
+    let info = reader.next_frame(&mut rgba).ok()?;
+    if info.color_type != png::ColorType::Rgba {
+        eprintln!("[更新器] 图标 PNG 非 RGBA 格式，跳过窗口图标设置");
+        return None;
+    }
+    rgba.truncate(info.buffer_size());
+    Some(egui::IconData {
+        rgba,
+        width: info.width,
+        height: info.height,
+    })
 }
