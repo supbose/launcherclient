@@ -1,8 +1,9 @@
+#pragma code_page(65001)
 #include "winres.h"
 
 VS_VERSION_INFO VERSIONINFO
-FILEVERSION 0,1,8,0
-PRODUCTVERSION 0,1,8,0
+FILEVERSION 0,1,18,0
+PRODUCTVERSION 0,1,18,0
 FILEFLAGSMASK 0x3fL
 #ifdef _DEBUG
 FILEFLAGS 0x1L
@@ -17,14 +18,14 @@ BEGIN
     BEGIN
         BLOCK "080404b0"
         BEGIN
-            VALUE "CompanyName", "launcherclient\0"
-            VALUE "FileDescription", "通用启动器程序\0"
-            VALUE "FileVersion", "0.1.8.0\0"
-            VALUE "InternalName", "launcherclient\0"
-            VALUE "LegalCopyright", "Copyright (C) QsLtd. All rights reserved.\0"
-            VALUE "OriginalFilename", "launcherclient.exe\0"
-            VALUE "ProductName", "通用启动器程序\0"
-            VALUE "ProductVersion", "0.1.8.0\0"
+            VALUE "CompanyName", "qingshu Ltd."
+            VALUE "FileDescription", "通用启动器程序,应用启动，在线升级。"
+            VALUE "FileVersion", "0.1.18.0"
+            VALUE "InternalName", "launcherclient"
+            VALUE "LegalCopyright", "Copyright (C) QingShu Ltd. All rights reserved."
+            VALUE "OriginalFilename", "launcherclient.exe"
+            VALUE "ProductName", "通用启动器程序"
+            VALUE "ProductVersion", "0.1.18.0"
         END
     END
     BLOCK "VarFileInfo"

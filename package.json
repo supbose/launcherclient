@@ -5,7 +5,8 @@
     "build": "cd src-egui && cargo build --release",
     "dev": "cd src-egui && cargo run",
     "egui": "cd src-egui && cargo build --release",
-    "egui:dev": "cd src-egui && cargo run"
+    "egui:dev": "cd src-egui && cargo run",
+    "egui:build": "python scripts/build_egui.py"
   },
   "version": "0.1.18"
 }

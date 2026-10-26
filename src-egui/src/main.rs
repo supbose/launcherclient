@@ -62,7 +62,14 @@ fn main() {
     let phase = PhaseHandle::new();
 
     if preview_mode {
-        run_ui(&args, phase, Arc::new(Mutex::new(None)), true, preview_stage);
+        run_ui(
+            &args,
+            phase,
+            Arc::new(Mutex::new(None)),
+            true,
+            preview_stage,
+            String::new(),
+        );
         return;
     }
 
@@ -105,7 +112,7 @@ fn main() {
             .ok();
     }
 
-    run_ui(&args, phase, startup, false, 0);
+    run_ui(&args, phase, startup, false, 0, cfg.app_name.clone());
 }
 
 /// 进入 eframe 事件循环

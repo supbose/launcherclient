@@ -53,6 +53,51 @@ fn end_dot_color(view: &PhaseView) -> (Color32, f32) {
     }
 }
 
+/// 启动决策前的「检测中」极简屏
+///
+/// 仅 spinner + 文案，**不渲染步骤条/更新日志**。对应「检测到更新才展示
+/// 完整界面」的诉求：弱网慢 manifest（>300ms）弹窗时用户有加载反馈，但
+/// 不会在还没确定要不要更新时就先铺开一大片完整 UI；当且仅当后台
+/// `run_startup` 判定有更新（Show 决策）后，`app.rs` 才切到完整模板。
+///
+/// 区别于 `Stage::Checking` 的「重试路径」（payload 为 Some），此极简屏
+/// 仅在 `payload` 为 None（决策前）时由 `app.rs` 调用，故不影响流程内
+/// 重检/校验阶段对完整模板的渲染。
+pub fn draw_checking_minimal(ui: &mut Ui, app_name: &str) {
+    let full = ui.max_rect();
+    let _ = full;
+    ui.with_layout(
+        Layout::centered_and_justified(egui::Direction::TopDown),
+        |ui| {
+            ui.vertical_centered(|ui| {
+                let (r, _) =
+                    ui.allocate_exact_size(Vec2::new(22.0, 22.0), Sense::hover());
+                widgets::spinner(
+                    &ui.painter_at(r),
+                    r.center(),
+                    9.0,
+                    3.0,
+                    theme::ACCENT,
+                );
+                ui.add_space(16.0);
+                ui.label(
+                    RichText::new("正在检查更新...")
+                        .size(16.0)
+                        .color(theme::TEXT),
+                );
+                if !app_name.is_empty() {
+                    ui.add_space(8.0);
+                    ui.label(
+                        RichText::new(format!("正在为「{}」检查更新", app_name))
+                            .size(12.0)
+                            .color(theme::text_alpha(140)),
+                    );
+                }
+            });
+        },
+    );
+}
+
 /// 在 padding 区内开一层垂直布局
 fn content<R>(ui: &mut Ui, pad: (f32, f32, f32, f32), add: impl FnOnce(&mut Ui) -> R) -> R {
     let max = ui.max_rect();
