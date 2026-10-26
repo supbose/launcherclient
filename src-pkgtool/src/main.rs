@@ -404,6 +404,7 @@ fn pack_core(
 enum Page {
     Config,
     Files,
+    History,
     Version,
     Log,
 }
@@ -413,11 +414,18 @@ impl Page {
         match self {
             Page::Config => "配置",
             Page::Files => "打包文件",
+            Page::History => "历史构建",
             Page::Version => "下载与版本",
             Page::Log => "日志",
         }
     }
 }
+
+/// 导航分组：工作区（本地操作） / 分发（面向更新服务）
+const NAV_GROUPS: [(&str, &[Page]); 2] = [
+    ("工作区", &[Page::Config, Page::Files, Page::History]),
+    ("分发", &[Page::Version, Page::Log]),
+];
 
 /// 历史构建条目（只读展示）
 struct HistoryItem {
@@ -504,6 +512,31 @@ fn push_log(log: &Arc<Mutex<Vec<String>>>, line: &str) {
     }
 }
 
+/// 表单行：**标签置顶** → 控件占满整行 → 说明文字下挂并降一级灰度。
+///
+/// 对照设计稿「标签从左侧改为顶部，输入框可以占满整行；说明文字下挂并降一级灰度，
+/// 不再和值抢注意力」——原先标签与控件同行会挤压输入框宽度，长路径只能横向滚动。
+fn field<R>(ui: &mut egui::Ui, label: &str, hint: &str, add: impl FnOnce(&mut egui::Ui) -> R) -> R {
+    ui.label(egui::RichText::new(label).size(12.5).strong().color(INK));
+    ui.add_space(4.0);
+    let r = add(ui);
+    if !hint.is_empty() {
+        ui.add_space(3.0);
+        ui.label(egui::RichText::new(hint).size(11.0).color(MUTED));
+    }
+    ui.add_space(14.0);
+    r
+}
+
+/// 等宽单行输入：路径、文件名、体积一律用等宽字体，避免字符宽度不同导致的抖动。
+fn mono_edit(ui: &mut egui::Ui, text: &mut String) -> egui::Response {
+    ui.add(
+        egui::TextEdit::singleline(text)
+            .font(egui::FontId::monospace(13.0))
+            .desired_width(f32::INFINITY),
+    )
+}
+
 /// 打包工具应用状态
 struct PackToolApp {
     config: Config,
@@ -577,94 +610,135 @@ impl PackToolApp {
         });
     }
 
-    /// 配置页：基础信息 + 保存 + 历史构建
+    /// 配置页：基本信息 + 保存
     fn page_config(&mut self, ui: &mut egui::Ui) {
         ui.heading(egui::RichText::new("配置").size(18.0).strong().color(INK));
         ui.add_space(4.0);
         section(ui, "基本信息", |ui| {
-            ui.horizontal(|ui| {
-                ui.label("应用名");
-                ui.add_space(8.0);
-                ui.text_edit_singleline(&mut self.config.app_name);
-            });
-            ui.label(
-                egui::RichText::new("用于 {app}_{version}.zip 与旧包清理匹配")
-                    .small()
-                    .weak(),
+            field(
+                ui,
+                "应用名",
+                "决定产物文件名 {app}_{version}.zip，同时也是旧包清理的匹配前缀",
+                |ui| mono_edit(ui, &mut self.config.app_name),
             );
-            ui.add_space(6.0);
+            field(
+                ui,
+                "输出目录",
+                "分卷产物与 version.json 清单都会写到这里",
+                |ui| {
+                    ui.horizontal(|ui| {
+                        // 输入框吃掉除「浏览」按钮外的全部宽度
+                        ui.add_sized(
+                            egui::vec2(ui.available_width() - 58.0, 26.0),
+                            egui::TextEdit::singleline(&mut self.config.output_dir)
+                                .font(egui::FontId::monospace(13.0)),
+                        );
+                        if ui.button("浏览…").clicked() {
+                            if let Some(p) = rfd::FileDialog::new().pick_folder() {
+                                self.config.output_dir = p.to_string_lossy().replace('\\', "/");
+                            }
+                        }
+                    });
+                },
+            );
+            field(
+                ui,
+                "单卷大小 (MB)",
+                "包体超过该体积自动切分，编号 .001 / .002",
+                |ui| {
+                    ui.add(egui::DragValue::new(&mut self.config.volume_size_mb).range(1..=2048));
+                },
+            );
             ui.horizontal(|ui| {
-                ui.label("输出目录");
-                ui.add_space(8.0);
-                ui.text_edit_singleline(&mut self.config.output_dir);
-                if ui.button("浏览").clicked() {
-                    if let Some(p) = rfd::FileDialog::new().pick_folder() {
-                        self.config.output_dir = p.to_string_lossy().replace('\\', "/");
+                if ui
+                    .add(
+                        egui::Button::new(
+                            egui::RichText::new("保存配置").strong().color(ACCENT_TEXT),
+                        )
+                        .fill(ACCENT)
+                        .corner_radius(6.0)
+                        .min_size(egui::vec2(88.0, 28.0)),
+                    )
+                    .clicked()
+                {
+                    match self.config.save() {
+                        Ok(_) => push_log(&self.log, "配置已保存到 packtool.json"),
+                        Err(e) => push_log(&self.log, &format!("保存失败: {}", e)),
                     }
                 }
-            });
-            ui.add_space(6.0);
-            ui.horizontal(|ui| {
-                ui.label("单卷大小(MB)");
-                ui.add_space(8.0);
-                ui.add(egui::DragValue::new(&mut self.config.volume_size_mb).range(1..=2048));
                 ui.label(
-                    egui::RichText::new("包体超过则切分 .001/.002 分卷")
-                        .small()
-                        .weak(),
+                    egui::RichText::new("未保存的改动不会写进 packtool.json")
+                        .size(11.0)
+                        .color(MUTED),
                 );
             });
-            ui.add_space(8.0);
-            if ui.button("保存配置").clicked() {
-                match self.config.save() {
-                    Ok(_) => push_log(&self.log, "配置已保存到 packtool.json"),
-                    Err(e) => push_log(&self.log, &format!("保存失败: {}", e)),
-                }
-            }
         });
-        section(ui, "历史构建", |ui| {
+    }
+
+    /// 历史构建页：输出目录内已有产物（按名称倒序 = 版本由新到旧）
+    fn page_history(&mut self, ui: &mut egui::Ui) {
+        ui.heading(egui::RichText::new("历史构建").size(18.0).strong().color(INK));
+        ui.add_space(4.0);
+        section(ui, "输出目录内的历史产物", |ui| {
+            ui.label(
+                egui::RichText::new("按构建时间倒序，文件名与体积用等宽字体对齐")
+                    .size(11.0)
+                    .color(MUTED),
+            );
+            ui.add_space(8.0);
             let history = scan_history(&self.config.output_dir, &self.config.app_name);
             if history.is_empty() {
-                ui.label(egui::RichText::new("（暂无历史包）").size(13.0).color(MUTED));
-            } else {
-                // 只列最近 10 条：不再嵌 ScrollArea，避免行被裁切且无滚动提示
-                let shown: Vec<&HistoryItem> = history.iter().take(10).collect();
-                let n = shown.len();
-                for (i, h) in shown.iter().enumerate() {
-                    ui.horizontal(|ui| {
-                        ui.label(egui::RichText::new(&h.name).size(13.0).color(INK));
-                        // 右侧时间/大小用固定宽度分列，保证各行对齐
-                        ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                            ui.allocate_ui(egui::vec2(76.0, 18.0), |ui| {
-                                ui.with_layout(
-                                    egui::Layout::right_to_left(egui::Align::Center),
-                                    |ui| {
-                                        ui.label(
-                                            egui::RichText::new(&h.size).size(12.0).color(MUTED),
-                                        );
-                                    },
+                ui.label(egui::RichText::new("还没有构建记录").size(13.0).color(MUTED));
+                ui.label(
+                    egui::RichText::new("点右上角「打包」，产物会自动登记到这里")
+                        .size(11.0)
+                        .color(MUTED),
+                );
+                return;
+            }
+            let n = history.len();
+            for (i, h) in history.iter().enumerate() {
+                ui.horizontal(|ui| {
+                    // 文件名用等宽，避免不同字符宽度导致各行错位
+                    ui.label(
+                        egui::RichText::new(&h.name)
+                            .size(13.0)
+                            .color(INK)
+                            .font(egui::FontId::monospace(13.0)),
+                    );
+                    ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                        ui.allocate_ui(egui::vec2(76.0, 18.0), |ui| {
+                            ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                                ui.label(
+                                    egui::RichText::new(&h.size)
+                                        .size(12.0)
+                                        .color(MUTED)
+                                        .font(egui::FontId::monospace(12.0)),
                                 );
                             });
-                            ui.allocate_ui(egui::vec2(118.0, 18.0), |ui| {
-                                ui.label(egui::RichText::new(&h.date).size(12.0).color(MUTED));
-                            });
+                        });
+                        ui.allocate_ui(egui::vec2(118.0, 18.0), |ui| {
+                            ui.label(
+                                egui::RichText::new(&h.date)
+                                    .size(12.0)
+                                    .color(MUTED)
+                                    .font(egui::FontId::monospace(12.0)),
+                            );
                         });
                     });
-                    if i + 1 < n {
-                        ui.add_space(4.0);
-                        ui.separator();
-                        ui.add_space(4.0);
-                    }
-                }
-                if history.len() > n {
-                    ui.add_space(6.0);
-                    ui.label(
-                        egui::RichText::new(format!("共 {} 个构建包，仅显示最近 {}", history.len(), n))
-                            .size(11.0)
-                            .color(MUTED),
-                    );
+                });
+                if i + 1 < n {
+                    ui.add_space(4.0);
+                    ui.separator();
+                    ui.add_space(4.0);
                 }
             }
+            ui.add_space(6.0);
+            ui.label(
+                egui::RichText::new(format!("共 {} 个构建包", n))
+                    .size(11.0)
+                    .color(MUTED),
+            );
         });
     }
 
@@ -675,17 +749,23 @@ impl PackToolApp {
         section(ui, "待打包文件 / 目录", |ui| {
             ui.label(
                 egui::RichText::new("目录以 /* 结尾表示内容平铺到 zip 根")
-                    .small()
-                    .weak(),
+                    .size(11.0)
+                    .color(MUTED),
             );
+            ui.add_space(8.0);
             let mut remove_file: Option<usize> = None;
             for (i, f) in self.config.files.iter_mut().enumerate() {
                 ui.horizontal(|ui| {
-                    ui.text_edit_singleline(f);
+                    // 路径等宽且吃掉除「删除」外的全部宽度
+                    ui.add_sized(
+                        egui::vec2(ui.available_width() - 52.0, 26.0),
+                        egui::TextEdit::singleline(f).font(egui::FontId::monospace(12.5)),
+                    );
                     if ui.button("删除").clicked() {
                         remove_file = Some(i);
                     }
                 });
+                ui.add_space(4.0);
             }
             if let Some(i) = remove_file {
                 self.config.files.remove(i);
@@ -711,18 +791,23 @@ impl PackToolApp {
         ui.add_space(4.0);
         section(ui, "下载前缀", |ui| {
             ui.label(
-                egui::RichText::new("每个前缀各生成一份 version 文件")
-                    .small()
-                    .weak(),
+                egui::RichText::new("每个前缀各生成一份 version 文件（多地址容灾）")
+                    .size(11.0)
+                    .color(MUTED),
             );
+            ui.add_space(8.0);
             let mut remove_pre: Option<usize> = None;
             for (i, p) in self.config.download_prefixes.iter_mut().enumerate() {
                 ui.horizontal(|ui| {
-                    ui.text_edit_singleline(p);
+                    ui.add_sized(
+                        egui::vec2(ui.available_width() - 52.0, 26.0),
+                        egui::TextEdit::singleline(p).font(egui::FontId::monospace(12.5)),
+                    );
                     if ui.button("删除").clicked() {
                         remove_pre = Some(i);
                     }
                 });
+                ui.add_space(4.0);
             }
             if let Some(i) = remove_pre {
                 self.config.download_prefixes.remove(i);
@@ -732,25 +817,35 @@ impl PackToolApp {
             }
         });
         section(ui, "版本与更新日志", |ui| {
-            ui.horizontal(|ui| {
-                ui.label("版本号");
-                ui.add_space(8.0);
-                ui.text_edit_singleline(&mut self.version);
-                if ui.button("↻ 取默认（末位+1）").clicked() {
-                    self.version = suggest_version(&self.config.output_dir, &self.config.app_name);
-                }
-            });
-            ui.add_space(6.0);
-            ui.label(
-                egui::RichText::new("更新日志（多条用 ; 或换行分隔；留空则沿用上一版）")
-                    .small()
-                    .weak(),
+            field(
+                ui,
+                "版本号",
+                "语义化版本 主.次.修订，需大于已发布的线上版本",
+                |ui| {
+                    ui.horizontal(|ui| {
+                        ui.add_sized(
+                            egui::vec2(ui.available_width() - 140.0, 26.0),
+                            egui::TextEdit::singleline(&mut self.version)
+                                .font(egui::FontId::monospace(13.0)),
+                        );
+                        if ui.button("取默认（末位+1）").clicked() {
+                            self.version =
+                                suggest_version(&self.config.output_dir, &self.config.app_name);
+                        }
+                    });
+                },
             );
-            ui.add_space(2.0);
-            ui.add(
-                egui::TextEdit::multiline(&mut self.changelog)
-                    .desired_rows(4)
-                    .desired_width(f32::INFINITY),
+            field(
+                ui,
+                "更新日志",
+                "多条用 ; 或换行分隔；留空则沿用上一版",
+                |ui| {
+                    ui.add(
+                        egui::TextEdit::multiline(&mut self.changelog)
+                            .desired_rows(4)
+                            .desired_width(f32::INFINITY),
+                    );
+                },
             );
         });
     }
@@ -848,25 +943,52 @@ impl eframe::App for PackToolApp {
                 .show(ui, |ui| {
                     egui::Frame::default().fill(SIDEBAR_BG).show(ui, |ui| {
                         ui.add_space(14.0);
-                        let pages = [Page::Config, Page::Files, Page::Version, Page::Log];
-                        for p in pages {
-                            let active = self.current_page == p;
-                            let resp = ui.add(
-                                egui::Button::new(
-                                    egui::RichText::new(p.title())
-                                        .size(13.0)
-                                        .color(if active { ACCENT } else { MUTED })
-                                        .strong(),
-                                )
-                                .fill(if active { ACCENT_SOFT } else { egui::Color32::TRANSPARENT })
-                                .stroke(egui::Stroke::NONE)
-                                .corner_radius(8.0)
-                                .min_size(egui::vec2(ui.available_width(), 36.0)),
-                            );
-                            if resp.clicked() {
-                                self.current_page = p;
-                            }
+                        // 分组导航（工作区 / 分发）+ 当前项左侧指示条
+                        for (gname, pages) in NAV_GROUPS {
+                            ui.label(egui::RichText::new(gname).size(10.5).color(MUTED).strong());
                             ui.add_space(6.0);
+                            for p in pages {
+                                let active = self.current_page == *p;
+                                ui.horizontal(|ui| {
+                                    let (rect, _) = ui.allocate_exact_size(
+                                        egui::vec2(3.0, 30.0),
+                                        egui::Sense::hover(),
+                                    );
+                                    ui.painter().rect_filled(
+                                        rect,
+                                        1.5,
+                                        if active {
+                                            ACCENT
+                                        } else {
+                                            egui::Color32::TRANSPARENT
+                                        },
+                                    );
+                                    ui.add_space(5.0);
+                                    let resp = ui.add(
+                                        egui::Button::new(
+                                            egui::RichText::new(p.title())
+                                                .size(13.0)
+                                                .color(if active { ACCENT } else { MUTED })
+                                                .strong(),
+                                        )
+                                        .fill(
+                                            if active {
+                                                ACCENT_SOFT
+                                            } else {
+                                                egui::Color32::TRANSPARENT
+                                            },
+                                        )
+                                        .stroke(egui::Stroke::NONE)
+                                        .corner_radius(8.0)
+                                        .min_size(egui::vec2(ui.available_width(), 30.0)),
+                                    );
+                                    if resp.clicked() {
+                                        self.current_page = *p;
+                                    }
+                                });
+                                ui.add_space(5.0);
+                            }
+                            ui.add_space(12.0);
                         }
                     });
                 });
@@ -874,6 +996,7 @@ impl eframe::App for PackToolApp {
                 egui::ScrollArea::vertical().show(ui, |ui| match self.current_page {
                     Page::Config => self.page_config(ui),
                     Page::Files => self.page_files(ui),
+                    Page::History => self.page_history(ui),
                     Page::Version => self.page_version(ui),
                     Page::Log => self.page_log(ui),
                 });

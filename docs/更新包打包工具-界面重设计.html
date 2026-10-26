@@ -1,0 +1,1399 @@
+<!DOCTYPE html>
+<html lang="zh-CN" data-theme="light">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>QsLtd 更新包打包工具 · 界面重设计</title>
+<style>
+/* SECTION: tokens */
+:root {
+  --font-ui: -apple-system, "Segoe UI", "Microsoft YaHei UI", "PingFang SC", sans-serif;
+  --font-mono: "Cascadia Mono", "JetBrains Mono", Consolas, "Sarasa Mono SC", monospace;
+
+  --r-xs: 4px; --r-sm: 6px; --r-md: 10px; --r-lg: 14px; --r-pill: 999px;
+  --s-1: 4px; --s-2: 8px; --s-3: 12px; --s-4: 16px; --s-5: 20px; --s-6: 24px; --s-7: 32px; --s-8: 44px;
+
+  --f-11: 11px; --f-12: 12px; --f-13: 13px; --f-14: 14px; --f-15: 15px; --f-18: 18px; --f-22: 22px;
+
+  --nav-w: 224px; --top-h: 56px; --status-h: 30px; --content-max: 880px;
+}
+html[data-theme="light"] {
+  --bg-app: #f4f5f7;
+  --bg-surface: #ffffff;
+  --bg-surface-2: #f7f8fa;
+  --bg-inset: #f1f2f5;
+  --bg-hover: #eceef2;
+  --bg-active: #eef2ff;
+  --bg-code: #f6f7f9;
+  --line: #e4e6ea;
+  --line-strong: #d2d6dd;
+  --text-1: #16181d;
+  --text-2: #4b5563;
+  --text-3: #7b8494;
+  --text-4: #a3abb8;
+  --accent: #4457e0;
+  --accent-hover: #3546c9;
+  --accent-soft: #eceffe;
+  --accent-line: #c3cbfb;
+  --ok: #17803d; --ok-soft: #e6f6ec;
+  --warn: #9a6200; --warn-soft: #fdf3e0;
+  --err: #c0392f; --err-soft: #fdecea;
+  --info: #2f6fb0; --info-soft: #e9f2fb;
+  --shadow-sm: 0 1px 2px rgba(16,24,40,.05), 0 0 0 1px rgba(16,24,40,.04);
+  --shadow-md: 0 4px 14px rgba(16,24,40,.08), 0 0 0 1px rgba(16,24,40,.04);
+  --shadow-lg: 0 16px 40px rgba(16,24,40,.16);
+  --scrim: rgba(20,24,32,.42);
+}
+html[data-theme="dark"] {
+  --bg-app: #16181c;
+  --bg-surface: #1d2025;
+  --bg-surface-2: #22262c;
+  --bg-inset: #262b32;
+  --bg-hover: #2c323a;
+  --bg-active: #26304d;
+  --bg-code: #14161a;
+  --line: #2e343c;
+  --line-strong: #3c434d;
+  --text-1: #e8eaee;
+  --text-2: #b3bac5;
+  --text-3: #838d9b;
+  --text-4: #626b78;
+  --accent: #7b8dff;
+  --accent-hover: #93a2ff;
+  --accent-soft: #232a4d;
+  --accent-line: #3d4a80;
+  --ok: #4ecb7b; --ok-soft: #16301f;
+  --warn: #e6b455; --warn-soft: #32260f;
+  --err: #ff7a6e; --err-soft: #3a1a17;
+  --info: #6fb3ef; --info-soft: #14273a;
+  --shadow-sm: 0 1px 2px rgba(0,0,0,.4);
+  --shadow-md: 0 4px 16px rgba(0,0,0,.45);
+  --shadow-lg: 0 18px 48px rgba(0,0,0,.6);
+  --scrim: rgba(6,8,12,.62);
+}
+
+/* SECTION: base */
+* { box-sizing: border-box; }
+[hidden] { display: none !important; }
+html, body { height: 100%; }
+body {
+  margin: 0; font-family: var(--font-ui); font-size: var(--f-14);
+  color: var(--text-1); background: var(--bg-app);
+  -webkit-font-smoothing: antialiased; overflow: hidden;
+}
+button, input, select, textarea { font: inherit; color: inherit; }
+button { cursor: pointer; border: 0; background: none; }
+:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; }
+::selection { background: var(--accent-line); }
+.mono { font-family: var(--font-mono); font-variant-ligatures: none; }
+.sr { position: absolute; width: 1px; height: 1px; overflow: hidden; clip: rect(0 0 0 0); }
+svg { display: block; }
+
+/* SECTION: topbar */
+.topbar {
+  height: var(--top-h); display: flex; align-items: center; gap: var(--s-4);
+  padding: 0 var(--s-5); background: var(--bg-surface);
+  border-bottom: 1px solid var(--line); position: relative; z-index: 30;
+}
+.brand { display: flex; align-items: center; gap: var(--s-3); min-width: 0; }
+.brand-mark {
+  width: 30px; height: 30px; border-radius: var(--r-md); flex: none;
+  background: linear-gradient(150deg, var(--accent), #8a5cf0);
+  display: grid; place-items: center; color: #fff; box-shadow: var(--shadow-sm);
+}
+.brand-name { font-size: var(--f-15); font-weight: 650; letter-spacing: .1px; white-space: nowrap; }
+.brand-ver {
+  font-size: var(--f-11); color: var(--text-3); background: var(--bg-inset);
+  border: 1px solid var(--line); padding: 1px 6px; border-radius: var(--r-pill);
+  font-family: var(--font-mono);
+}
+.top-spacer { flex: 1; }
+.top-actions { display: flex; align-items: center; gap: var(--s-2); }
+
+/* SECTION: buttons */
+.btn {
+  display: inline-flex; align-items: center; justify-content: center; gap: 6px;
+  height: 32px; padding: 0 12px; border-radius: var(--r-sm);
+  font-size: var(--f-13); font-weight: 550; white-space: nowrap;
+  border: 1px solid var(--line-strong); background: var(--bg-surface); color: var(--text-1);
+  transition: background .14s, border-color .14s, transform .08s, box-shadow .14s;
+}
+.btn:hover { background: var(--bg-hover); }
+.btn:active { transform: translateY(.5px); }
+.btn-primary {
+  background: var(--accent); border-color: var(--accent); color: #fff;
+  box-shadow: 0 1px 2px rgba(20,30,90,.18);
+}
+.btn-primary:hover { background: var(--accent-hover); border-color: var(--accent-hover); }
+.btn-ghost { border-color: transparent; background: transparent; color: var(--text-2); }
+.btn-ghost:hover { background: var(--bg-hover); color: var(--text-1); }
+.btn-sm { height: 26px; padding: 0 9px; font-size: var(--f-12); }
+.btn-danger { color: var(--err); border-color: var(--line-strong); }
+.btn-danger:hover { background: var(--err-soft); border-color: var(--err); }
+.btn[disabled] { opacity: .5; cursor: not-allowed; }
+.btn-icon { width: 32px; padding: 0; }
+.icon-btn {
+  width: 30px; height: 30px; border-radius: var(--r-sm); display: grid; place-items: center;
+  color: var(--text-2); border: 1px solid transparent;
+}
+.icon-btn:hover { background: var(--bg-hover); color: var(--text-1); }
+.icon-btn[aria-pressed="true"] { background: var(--accent-soft); color: var(--accent); border-color: var(--accent-line); }
+
+/* theme segmented control */
+.seg { display: flex; gap: 2px; padding: 2px; background: var(--bg-inset); border: 1px solid var(--line); border-radius: 8px; }
+.seg button {
+  height: 24px; padding: 0 8px; border-radius: 6px; font-size: var(--f-12); color: var(--text-3);
+  display: inline-flex; align-items: center; gap: 5px;
+}
+.seg button:hover { color: var(--text-1); }
+.seg button[aria-pressed="true"] { background: var(--bg-surface); color: var(--text-1); box-shadow: var(--shadow-sm); font-weight: 600; }
+
+/* SECTION: shell + nav */
+.shell { display: flex; height: calc(100vh - var(--top-h) - var(--status-h)); }
+.nav {
+  width: var(--nav-w); flex: none; background: var(--bg-surface);
+  border-right: 1px solid var(--line); padding: var(--s-4) var(--s-3);
+  display: flex; flex-direction: column; gap: var(--s-5); overflow-y: auto;
+}
+.nav-group-label {
+  font-size: var(--f-11); font-weight: 650; letter-spacing: .7px; text-transform: uppercase;
+  color: var(--text-4); padding: 0 var(--s-3) var(--s-2);
+}
+.nav-list { display: flex; flex-direction: column; gap: 2px; }
+.nav-item {
+  display: flex; align-items: center; gap: 10px; width: 100%; text-align: left;
+  height: 34px; padding: 0 10px; border-radius: var(--r-sm);
+  font-size: var(--f-13); color: var(--text-2); position: relative;
+  transition: background .13s, color .13s;
+}
+.nav-item:hover { background: var(--bg-hover); color: var(--text-1); }
+.nav-item[aria-current="page"] { background: var(--accent-soft); color: var(--accent); font-weight: 620; }
+.nav-item[aria-current="page"]::before {
+  content: ""; position: absolute; left: -12px; top: 8px; bottom: 8px; width: 3px;
+  border-radius: 0 3px 3px 0; background: var(--accent);
+}
+.nav-item .ico { color: currentcolor; opacity: .9; flex: none; }
+.nav-badge {
+  margin-left: auto; font-size: var(--f-11); font-family: var(--font-mono);
+  background: var(--bg-inset); color: var(--text-3); border-radius: var(--r-pill); padding: 1px 6px;
+}
+.nav-item[aria-current="page"] .nav-badge { background: #fff; color: var(--accent); }
+html[data-theme="dark"] .nav-item[aria-current="page"] .nav-badge { background: var(--bg-surface); }
+.nav-foot { margin-top: auto; border-top: 1px solid var(--line); padding-top: var(--s-3); }
+.storage { padding: 0 var(--s-3); }
+.storage-row { display: flex; justify-content: space-between; font-size: var(--f-11); color: var(--text-3); margin-bottom: 6px; }
+.storage-bar { height: 5px; border-radius: var(--r-pill); background: var(--bg-inset); overflow: hidden; }
+.storage-fill { height: 100%; border-radius: var(--r-pill); background: linear-gradient(90deg, var(--accent), #8a5cf0); }
+
+/* SECTION: content */
+.content { flex: 1; overflow-y: auto; scroll-behavior: smooth; }
+.view { display: none; padding: var(--s-6) var(--s-7) var(--s-8); max-width: var(--content-max); margin: 0 auto; }
+.view.is-active { display: block; animation: fade .22s ease both; }
+@keyframes fade { from { opacity: 0; transform: translateY(6px); } to { opacity: 1; transform: none; } }
+.page-head { margin-bottom: var(--s-5); }
+.page-title { font-size: var(--f-22); font-weight: 680; letter-spacing: -.2px; margin: 0 0 4px; }
+.page-sub { font-size: var(--f-13); color: var(--text-3); margin: 0; }
+
+/* SECTION: card */
+.card {
+  background: var(--bg-surface); border: 1px solid var(--line);
+  border-radius: var(--r-lg); box-shadow: var(--shadow-sm); margin-bottom: var(--s-4);
+}
+.card-head {
+  display: flex; align-items: center; gap: var(--s-3);
+  padding: var(--s-4) var(--s-5); border-bottom: 1px solid var(--line);
+}
+.card-title { font-size: var(--f-14); font-weight: 640; }
+.card-desc { font-size: var(--f-12); color: var(--text-3); margin-top: 2px; }
+.card-head .spacer { flex: 1; }
+.card-body { padding: var(--s-5); }
+.card-body.tight { padding: 0; }
+.card-foot {
+  display: flex; align-items: center; gap: var(--s-3);
+  padding: var(--s-3) var(--s-5); border-top: 1px solid var(--line); background: var(--bg-surface-2);
+  border-radius: 0 0 var(--r-lg) var(--r-lg);
+}
+
+/* SECTION: form */
+.form-grid { display: grid; grid-template-columns: repeat(2, minmax(0,1fr)); gap: var(--s-5) var(--s-6); }
+.field { display: flex; flex-direction: column; gap: 6px; min-width: 0; }
+.field.span-2 { grid-column: 1 / -1; }
+.field-label { font-size: var(--f-12); font-weight: 620; color: var(--text-2); display: flex; align-items: center; gap: 6px; }
+.req-dot { width: 5px; height: 5px; border-radius: 50%; background: var(--err); }
+.field-hint { font-size: var(--f-11); color: var(--text-4); line-height: 1.5; }
+.field-hint.err { color: var(--err); font-weight: 550; }
+.input-wrap { display: flex; align-items: center; gap: 0; position: relative; }
+.input, .select {
+  height: 34px; width: 100%; padding: 0 10px; border-radius: var(--r-sm);
+  border: 1px solid var(--line-strong); background: var(--bg-surface); color: var(--text-1);
+  font-size: var(--f-13); transition: border-color .14s, box-shadow .14s, background .14s;
+}
+.input:hover, .select:hover { border-color: var(--text-4); }
+.input:focus, .select:focus { outline: none; border-color: var(--accent); box-shadow: 0 0 0 3px var(--accent-soft); }
+.input[aria-invalid="true"] { border-color: var(--err); }
+.input[aria-invalid="true"]:focus { box-shadow: 0 0 0 3px var(--err-soft); }
+.input.mono { font-family: var(--font-mono); font-size: var(--f-12); }
+.input-suffix {
+  position: absolute; right: 1px; top: 1px; bottom: 1px; display: flex; align-items: center; gap: 4px; padding-right: 6px;
+}
+.unit {
+  font-size: var(--f-11); color: var(--text-3); font-family: var(--font-mono);
+  background: var(--bg-inset); border-radius: var(--r-xs); padding: 2px 6px; margin-right: 6px;
+}
+.input.has-suffix { padding-right: 84px; }
+.browse-btn { height: 26px; padding: 0 9px; font-size: var(--f-12); border-radius: var(--r-xs); border: 1px solid var(--line-strong); background: var(--bg-surface-2); color: var(--text-2); }
+.browse-btn:hover { background: var(--bg-hover); color: var(--text-1); }
+.select { appearance: none; padding-right: 28px; background-image: linear-gradient(45deg, transparent 50%, var(--text-3) 50%), linear-gradient(135deg, var(--text-3) 50%, transparent 50%); background-position: calc(100% - 14px) 15px, calc(100% - 9px) 15px; background-size: 5px 5px; background-repeat: no-repeat; }
+
+/* switch */
+.switch-row { display: flex; align-items: flex-start; gap: var(--s-3); padding: var(--s-3) 0; border-top: 1px dashed var(--line); }
+.switch-row:first-child { border-top: 0; padding-top: 0; }
+.switch { width: 36px; height: 20px; border-radius: var(--r-pill); background: var(--line-strong); position: relative; flex: none; margin-top: 1px; transition: background .16s; }
+.switch::after { content: ""; position: absolute; top: 2px; left: 2px; width: 16px; height: 16px; border-radius: 50%; background: #fff; box-shadow: 0 1px 2px rgba(0,0,0,.28); transition: transform .16s; }
+.switch[aria-checked="true"] { background: var(--accent); }
+.switch[aria-checked="true"]::after { transform: translateX(16px); }
+.switch-text { min-width: 0; }
+.switch-title { font-size: var(--f-13); font-weight: 580; }
+.switch-desc { font-size: var(--f-11); color: var(--text-3); margin-top: 2px; line-height: 1.5; }
+
+/* chips / tags */
+.tag { display: inline-flex; align-items: center; gap: 4px; font-size: var(--f-11); font-weight: 600; padding: 2px 8px; border-radius: var(--r-pill); border: 1px solid transparent; letter-spacing: .2px; }
+.tag-ok { color: var(--ok); background: var(--ok-soft); border-color: color-mix(in srgb, var(--ok) 28%, transparent); }
+.tag-err { color: var(--err); background: var(--err-soft); border-color: color-mix(in srgb, var(--err) 28%, transparent); }
+.tag-warn { color: var(--warn); background: var(--warn-soft); border-color: color-mix(in srgb, var(--warn) 30%, transparent); }
+.tag-info { color: var(--info); background: var(--info-soft); border-color: color-mix(in srgb, var(--info) 28%, transparent); }
+.tag-mute { color: var(--text-3); background: var(--bg-inset); border-color: var(--line); }
+.tag .dot { width: 5px; height: 5px; border-radius: 50%; background: currentColor; }
+.tag .dot.live { animation: pulse 1.2s ease-in-out infinite; }
+@keyframes pulse { 0%,100% { opacity: 1; } 50% { opacity: .25; } }
+
+/* SECTION: stat strip */
+.stats { display: grid; grid-template-columns: repeat(4, minmax(0,1fr)); gap: var(--s-3); margin-bottom: var(--s-4); }
+.stat { background: var(--bg-surface); border: 1px solid var(--line); border-radius: var(--r-md); padding: var(--s-3) var(--s-4); box-shadow: var(--shadow-sm); }
+.stat-k { font-size: var(--f-11); color: var(--text-3); font-weight: 600; letter-spacing: .3px; }
+.stat-v { font-size: var(--f-18); font-weight: 660; font-family: var(--font-mono); margin-top: 4px; letter-spacing: -.3px; }
+.stat-v small { font-size: var(--f-12); color: var(--text-3); font-weight: 500; margin-left: 3px; }
+
+/* SECTION: toolbar + table */
+.toolbar { display: flex; align-items: center; gap: var(--s-2); padding: var(--s-3) var(--s-4); border-bottom: 1px solid var(--line); background: var(--bg-surface-2); flex-wrap: wrap; }
+.search { position: relative; flex: 1; min-width: 160px; max-width: 280px; }
+.search .input { height: 30px; padding-left: 30px; font-size: var(--f-12); }
+.search svg { position: absolute; left: 9px; top: 8px; color: var(--text-4); }
+.toolbar .spacer { flex: 1; }
+.seg-sm button { height: 22px; }
+
+.tbl { width: 100%; border-collapse: separate; border-spacing: 0; }
+.tbl th {
+  text-align: left; font-size: var(--f-11); font-weight: 650; color: var(--text-3);
+  letter-spacing: .5px; text-transform: uppercase; padding: 9px var(--s-4);
+  border-bottom: 1px solid var(--line); background: var(--bg-surface); position: sticky; top: 0; z-index: 2;
+  white-space: nowrap;
+}
+.tbl th.sortable { cursor: pointer; user-select: none; }
+.tbl th.sortable:hover { color: var(--text-1); }
+.tbl th .caret { display: inline-block; width: 0; height: 0; margin-left: 5px; vertical-align: middle; opacity: 0; border-left: 3.5px solid transparent; border-right: 3.5px solid transparent; }
+.tbl th[aria-sort="descending"] .caret, .tbl th[aria-sort="ascending"] .caret { opacity: 1; border-top: 4px solid currentColor; }
+.tbl th[aria-sort="ascending"] .caret { transform: rotate(180deg); border-top: 4px solid currentColor; }
+.tbl td { padding: 10px var(--s-4); border-bottom: 1px solid var(--line); font-size: var(--f-13); vertical-align: middle; }
+.tbl tbody tr { transition: background .12s; }
+.tbl tbody tr:hover { background: var(--bg-surface-2); }
+.tbl tbody tr:last-child td { border-bottom: 0; }
+.tbl .num { text-align: right; font-family: var(--font-mono); font-size: var(--f-12); color: var(--text-2); }
+.tbl .actions { display: flex; gap: 2px; justify-content: flex-end; opacity: .35; transition: opacity .14s; }
+.tbl tr:hover .actions, .tbl tr:focus-within .actions { opacity: 1; }
+.fname { display: flex; align-items: center; gap: 9px; min-width: 0; }
+.fname .fi { width: 24px; height: 24px; border-radius: var(--r-xs); background: var(--bg-inset); display: grid; place-items: center; color: var(--text-3); flex: none; }
+.fname .n { font-family: var(--font-mono); font-size: var(--f-12); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.fname .n mark { background: color-mix(in srgb, var(--accent) 26%, transparent); color: inherit; border-radius: 2px; }
+.vrow-meta { font-size: var(--f-11); color: var(--text-4); margin-top: 1px; }
+
+.empty { padding: var(--s-8) var(--s-5); text-align: center; }
+.empty .ill { width: 46px; height: 46px; margin: 0 auto var(--s-3); border-radius: var(--r-md); background: var(--bg-inset); display: grid; place-items: center; color: var(--text-4); }
+.empty h4 { margin: 0 0 4px; font-size: var(--f-14); font-weight: 620; }
+.empty p { margin: 0; font-size: var(--f-12); color: var(--text-3); }
+
+/* SECTION: progress */
+.progress-card { border-color: var(--accent-line); box-shadow: var(--shadow-md); }
+.pbar { height: 8px; border-radius: var(--r-pill); background: var(--bg-inset); overflow: hidden; position: relative; }
+.pbar-fill { height: 100%; border-radius: var(--r-pill); background: linear-gradient(90deg, var(--accent), #7f5cf0); transition: width .28s ease; position: relative; overflow: hidden; }
+.pbar-fill::after {
+  content: ""; position: absolute; inset: 0;
+  background: linear-gradient(90deg, transparent, rgba(255,255,255,.42), transparent);
+  animation: shimmer 1.3s linear infinite;
+}
+@keyframes shimmer { from { transform: translateX(-100%); } to { transform: translateX(100%); } }
+.pmeta { display: flex; justify-content: space-between; font-size: var(--f-12); color: var(--text-2); margin-bottom: var(--s-2); }
+.pmeta b { font-family: var(--font-mono); font-weight: 650; color: var(--text-1); }
+.stages { list-style: none; margin: var(--s-4) 0 0; padding: 0; display: grid; gap: 2px; }
+.stage { display: flex; align-items: center; gap: 10px; padding: 6px 8px; border-radius: var(--r-sm); font-size: var(--f-12); color: var(--text-3); }
+.stage.is-active { background: var(--accent-soft); color: var(--accent); font-weight: 600; }
+.stage.is-done { color: var(--text-2); }
+.stage .mark { width: 16px; height: 16px; flex: none; display: grid; place-items: center; }
+.stage .t { margin-left: auto; font-family: var(--font-mono); font-size: var(--f-11); color: var(--text-4); }
+.spinner { width: 12px; height: 12px; border: 2px solid currentColor; border-right-color: transparent; border-radius: 50%; animation: spin .7s linear infinite; }
+@keyframes spin { to { transform: rotate(360deg); } }
+
+.console {
+  margin-top: var(--s-4); background: var(--bg-code); border: 1px solid var(--line);
+  border-radius: var(--r-md); padding: var(--s-3) var(--s-4); height: 168px; overflow-y: auto;
+  font-family: var(--font-mono); font-size: var(--f-11); line-height: 1.75;
+}
+.console .ln { display: flex; gap: 8px; white-space: pre-wrap; word-break: break-all; }
+.console .ts { color: var(--text-4); flex: none; }
+.console .lv { flex: none; width: 38px; font-weight: 650; }
+.console .lv.info { color: var(--info); } .console .lv.ok { color: var(--ok); }
+.console .lv.warn { color: var(--warn); } .console .lv.err { color: var(--err); }
+.console .msg { color: var(--text-2); min-width: 0; }
+
+/* SECTION: logs view */
+.log-row { display: flex; gap: 10px; padding: 7px var(--s-4); border-bottom: 1px solid var(--line); font-family: var(--font-mono); font-size: var(--f-12); }
+.log-row:last-child { border-bottom: 0; }
+.log-row:hover { background: var(--bg-surface-2); }
+.log-row .ts { color: var(--text-4); flex: none; }
+.log-row .lv { flex: none; width: 44px; font-weight: 650; }
+.log-row .lv.INFO { color: var(--info); } .log-row .lv.OK { color: var(--ok); }
+.log-row .lv.WARN { color: var(--warn); } .log-row .lv.ERR { color: var(--err); }
+.log-row .msg { color: var(--text-1); word-break: break-word; }
+
+/* SECTION: versions */
+.ver-row { display: flex; align-items: center; gap: var(--s-4); padding: var(--s-4) var(--s-5); border-bottom: 1px solid var(--line); }
+.ver-row:last-child { border-bottom: 0; }
+.ver-row:hover { background: var(--bg-surface-2); }
+.ver-main { min-width: 0; flex: 1; }
+.ver-name { display: flex; align-items: center; gap: 8px; font-family: var(--font-mono); font-size: var(--f-13); font-weight: 600; }
+.ver-sub { font-size: var(--f-11); color: var(--text-3); margin-top: 3px; display: flex; gap: var(--s-3); flex-wrap: wrap; }
+.ver-side { display: flex; align-items: center; gap: var(--s-2); flex: none; }
+
+/* SECTION: statusbar */
+.statusbar {
+  height: var(--status-h); display: flex; align-items: center; gap: var(--s-5);
+  padding: 0 var(--s-5); background: var(--bg-surface); border-top: 1px solid var(--line);
+  font-size: var(--f-11); color: var(--text-3); font-family: var(--font-mono);
+}
+.statusbar .sep { width: 1px; height: 12px; background: var(--line); }
+.statusbar .grow { flex: 1; }
+.status-dot { width: 6px; height: 6px; border-radius: 50%; background: var(--ok); box-shadow: 0 0 0 3px var(--ok-soft); }
+
+/* SECTION: toast + modal + drawer */
+.toast-host { position: fixed; bottom: calc(var(--status-h) + 16px); left: 50%; transform: translateX(-50%); z-index: 80; display: flex; flex-direction: column; gap: 8px; align-items: center; pointer-events: none; }
+.toast {
+  display: flex; align-items: center; gap: 9px; padding: 9px 14px; border-radius: var(--r-md);
+  background: var(--bg-surface); border: 1px solid var(--line); box-shadow: var(--shadow-lg);
+  font-size: var(--f-13); max-width: 460px; animation: toastIn .2s ease both;
+}
+.toast.out { animation: toastOut .18s ease both; }
+@keyframes toastIn { from { opacity: 0; transform: translateY(10px) scale(.98); } to { opacity: 1; transform: none; } }
+@keyframes toastOut { to { opacity: 0; transform: translateY(6px) scale(.98); } }
+.toast .ic { flex: none; }
+.toast.ok .ic { color: var(--ok); } .toast.err .ic { color: var(--err); }
+.toast.warn .ic { color: var(--warn); } .toast.info .ic { color: var(--info); }
+
+.scrim { position: fixed; inset: 0; background: var(--scrim); opacity: 0; pointer-events: none; transition: opacity .18s; z-index: 90; }
+.scrim.open { opacity: 1; pointer-events: auto; }
+.modal {
+  position: fixed; z-index: 91; top: 50%; left: 50%; transform: translate(-50%,-46%) scale(.97);
+  width: min(420px, 92vw); background: var(--bg-surface); border: 1px solid var(--line);
+  border-radius: var(--r-lg); box-shadow: var(--shadow-lg); opacity: 0; pointer-events: none; transition: opacity .18s, transform .18s;
+}
+.modal.open { opacity: 1; pointer-events: auto; transform: translate(-50%,-50%) scale(1); }
+.modal h3 { margin: 0; font-size: var(--f-15); font-weight: 650; }
+.modal-head { padding: var(--s-5) var(--s-5) var(--s-3); }
+.modal-body { padding: 0 var(--s-5) var(--s-5); font-size: var(--f-13); color: var(--text-2); line-height: 1.6; }
+.modal-foot { display: flex; justify-content: flex-end; gap: var(--s-2); padding: var(--s-3) var(--s-5) var(--s-5); }
+
+.drawer {
+  position: fixed; z-index: 91; top: 0; right: 0; bottom: 0; width: min(380px, 94vw);
+  background: var(--bg-surface); border-left: 1px solid var(--line); box-shadow: var(--shadow-lg);
+  transform: translateX(101%); transition: transform .24s cubic-bezier(.4,0,.2,1); display: flex; flex-direction: column;
+}
+.drawer.open { transform: none; }
+.drawer-head { display: flex; align-items: center; gap: var(--s-3); padding: var(--s-4) var(--s-5); border-bottom: 1px solid var(--line); }
+.drawer-body { padding: var(--s-5); overflow-y: auto; }
+.tok-group { margin-bottom: var(--s-6); }
+.tok-title { font-size: var(--f-11); font-weight: 700; letter-spacing: .7px; text-transform: uppercase; color: var(--text-4); margin-bottom: var(--s-3); }
+.swatches { display: grid; grid-template-columns: repeat(2, minmax(0,1fr)); gap: var(--s-2); }
+.swatch { display: flex; align-items: center; gap: 8px; font-size: var(--f-11); font-family: var(--font-mono); color: var(--text-2); }
+.swatch i { width: 22px; height: 22px; border-radius: var(--r-xs); border: 1px solid var(--line-strong); flex: none; }
+.tok-list { display: grid; gap: 6px; font-size: var(--f-12); }
+.tok-list div { display: flex; justify-content: space-between; gap: var(--s-3); padding: 6px 8px; background: var(--bg-surface-2); border-radius: var(--r-xs); }
+.tok-list span:last-child { font-family: var(--font-mono); color: var(--text-3); }
+.radius-demo { display: flex; align-items: flex-end; gap: var(--s-3); }
+.radius-demo i { width: 34px; height: 34px; background: var(--accent-soft); border: 1px solid var(--accent-line); display: grid; place-items: center; font-size: 9px; color: var(--accent); font-family: var(--font-mono); font-style: normal; }
+
+/* SECTION: responsive */
+@media (max-width: 1080px) { .stats { grid-template-columns: repeat(2, minmax(0,1fr)); } }
+@media (max-width: 900px) {
+  :root { --nav-w: 0px; }
+  .nav {
+    position: fixed; z-index: 40; top: var(--top-h); bottom: var(--status-h); left: 0; width: 240px;
+    transform: translateX(-100%); transition: transform .22s ease; box-shadow: var(--shadow-lg); padding: var(--s-4) var(--s-3);
+  }
+  .nav.open { transform: none; }
+  .menu-btn { display: grid !important; }
+  .view { padding: var(--s-4); }
+  .form-grid { grid-template-columns: minmax(0,1fr); }
+  .brand-ver, .statusbar .hide-sm { display: none; }
+  .seg button span { display: none; }
+  .tbl th.hide-sm, .tbl td.hide-sm { display: none; }
+}
+.menu-btn { display: none; }
+@media (max-width: 620px) {
+  .stats { grid-template-columns: minmax(0,1fr); }
+  .page-title { font-size: var(--f-18); }
+  .toolbar .spacer { display: none; }
+  .search { max-width: none; }
+}
+</style>
+</head>
+<body>
+
+<!-- SECTION: topbar markup -->
+<header class="topbar">
+  <button class="icon-btn menu-btn" id="menuBtn" aria-label="打开导航">
+    <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M4 7h16M4 12h16M4 17h16"/></svg>
+  </button>
+  <div class="brand">
+    <span class="brand-mark" aria-hidden="true">
+      <svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round"><path d="M21 8v8l-9 5-9-5V8l9-5 9 5Z"/><path d="m3.5 8.2 8.5 4.6 8.5-4.6M12 21v-8.2"/></svg>
+    </span>
+    <div>
+      <div class="brand-name">QsLtd 更新包打包工具</div>
+    </div>
+    <span class="brand-ver mono">v0.1.18</span>
+  </div>
+  <div class="top-spacer"></div>
+  <div class="top-actions">
+    <div class="seg" id="themeSeg" role="group" aria-label="主题">
+      <button data-theme-choice="auto" aria-pressed="true">
+        <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><rect x="2.5" y="4" width="19" height="13" rx="2"/><path d="M8 20h8"/></svg><span>跟随</span>
+      </button>
+      <button data-theme-choice="light" aria-pressed="false">
+        <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><circle cx="12" cy="12" r="4.2"/><path d="M12 2.5v2M12 19.5v2M2.5 12h2M19.5 12h2M5.2 5.2l1.4 1.4M17.4 17.4l1.4 1.4M18.8 5.2l-1.4 1.4M6.6 17.4l-1.4 1.4"/></svg><span>浅色</span>
+      </button>
+      <button data-theme-choice="dark" aria-pressed="false">
+        <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linejoin="round"><path d="M20 14.5A8.5 8.5 0 0 1 9.5 4a8.5 8.5 0 1 0 10.5 10.5Z"/></svg><span>深色</span>
+      </button>
+    </div>
+    <button class="icon-btn" id="tokensBtn" aria-label="设计规范" title="设计规范">
+      <svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7"><circle cx="13.5" cy="6.5" r="1.3"/><circle cx="17.5" cy="10.5" r="1.3"/><circle cx="8.5" cy="7.5" r="1.3"/><circle cx="6.5" cy="12.5" r="1.3"/><path d="M12 2a10 10 0 1 0 0 20c1.1 0 2-.9 2-2 0-.5-.2-1-.6-1.3-.3-.4-.5-.8-.5-1.2 0-1.1.9-2 2-2h1.6A5 5 0 0 0 22 10c0-4.4-4.5-8-10-8Z"/></svg>
+    </button>
+    <button class="btn btn-primary" id="packBtn" data-primary-action>
+      <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M5 12l5 5L19 7"/></svg>
+      开始打包
+    </button>
+  </div>
+</header>
+
+<!-- SECTION: shell markup -->
+<div class="shell">
+  <nav class="nav" id="nav" aria-label="主导航">
+    <div>
+      <div class="nav-group-label">工作区</div>
+      <div class="nav-list" role="tablist" aria-orientation="vertical">
+        <button class="nav-item" role="tab" aria-current="page" data-view="config">
+          <svg class="ico" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7"><path d="M4 6h16M4 12h16M4 18h10"/><circle cx="18" cy="18" r="2.4"/></svg>
+          配置 <span class="nav-badge" id="badgeConfig" hidden></span>
+        </button>
+        <button class="nav-item" role="tab" data-view="build">
+          <svg class="ico" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linejoin="round"><path d="M20 7 12 3 4 7v10l8 4 8-4V7Z"/><path d="m8 5.2 8 4v4.6"/></svg>
+          打包文件 <span class="nav-badge" id="badgeBuild">—</span>
+        </button>
+        <button class="nav-item" role="tab" data-view="history">
+          <svg class="ico" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7"><path d="M3.5 12a8.5 8.5 0 1 0 2.6-6.1M3.5 4v4h4"/><path d="M12 8v4.4l3 1.8"/></svg>
+          历史构建 <span class="nav-badge" id="badgeHistory">0</span>
+        </button>
+      </div>
+    </div>
+    <div>
+      <div class="nav-group-label">分发</div>
+      <div class="nav-list" role="tablist" aria-orientation="vertical">
+        <button class="nav-item" role="tab" data-view="versions">
+          <svg class="ico" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7"><path d="M12 3v12m0 0 4-4m-4 4-4-4"/><path d="M4 17v2.5A1.5 1.5 0 0 0 5.5 21h13a1.5 1.5 0 0 0 1.5-1.5V17"/></svg>
+          下载与版本
+        </button>
+        <button class="nav-item" role="tab" data-view="logs">
+          <svg class="ico" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7"><rect x="3.5" y="4.5" width="17" height="15" rx="2"/><path d="m7.5 9.5 2.2 2.2-2.2 2.2M12 14h4.5"/></svg>
+          日志 <span class="nav-badge" id="badgeLogs">0</span>
+        </button>
+      </div>
+    </div>
+    <div class="nav-foot">
+      <div class="storage">
+        <div class="storage-row"><span>输出盘剩余</span><span class="mono" id="diskFree">—</span></div>
+        <div class="storage-bar"><div class="storage-fill" id="diskBar" style="width:38%"></div></div>
+      </div>
+    </div>
+  </nav>
+
+  <main class="content" id="content">
+
+    <!-- SECTION: view config -->
+    <section class="view is-active" id="view-config" role="tabpanel" aria-label="配置">
+      <div class="page-head">
+        <h1 class="page-title">配置</h1>
+        <p class="page-sub">打包时使用的默认参数，保存后写入 <span class="mono">packager.toml</span></p>
+      </div>
+
+      <div class="card">
+        <div class="card-head">
+          <div><div class="card-title">基本信息</div><div class="card-desc">决定产物文件名与输出位置</div></div>
+          <div class="spacer"></div>
+          <span class="tag tag-mute" id="dirtyTag" hidden>未保存</span>
+        </div>
+        <div class="card-body">
+          <div class="form-grid">
+            <div class="field">
+              <label class="field-label" for="fAppName">应用名 <i class="req-dot" title="必填"></i></label>
+              <div class="input-wrap">
+                <input class="input mono" id="fAppName" value="qsm" spellcheck="false" autocomplete="off">
+              </div>
+              <p class="field-hint" id="hAppName">用于 <span class="mono">{app}_{version}.zip.001</span> 命名，仅限小写字母、数字与短横线</p>
+            </div>
+            <div class="field">
+              <label class="field-label" for="fVersion">版本号 <i class="req-dot" title="必填"></i></label>
+              <div class="input-wrap">
+                <input class="input mono" id="fVersion" value="0.4.29" spellcheck="false" autocomplete="off">
+              </div>
+              <p class="field-hint" id="hVersion">语义化版本 <span class="mono">主.次.修订</span>，需大于线上版本</p>
+            </div>
+            <div class="field span-2">
+              <label class="field-label" for="fOutDir">输出目录</label>
+              <div class="input-wrap">
+                <input class="input mono" id="fOutDir" value="D:\WorkspaceProject\github\supbose\api\dist" spellcheck="false" autocomplete="off">
+                <span class="input-suffix"><button class="browse-btn" data-browse="fOutDir">浏览…</button></span>
+              </div>
+              <p class="field-hint">分卷产物与清单文件都会写到这里</p>
+            </div>
+            <div class="field">
+              <label class="field-label" for="fSplit">单卷大小</label>
+              <div class="input-wrap">
+                <input class="input mono" id="fSplit" type="number" min="1" max="4096" value="50">
+                <span class="input-suffix"><span class="unit">MB</span></span>
+              </div>
+              <p class="field-hint" id="hSplit">超过该体积自动切分，编号 <span class="mono">.001 / .002</span></p>
+            </div>
+            <div class="field">
+              <label class="field-label" for="fChannel">发布通道</label>
+              <div class="input-wrap">
+                <select class="select" id="fChannel">
+                  <option value="stable">stable — 全量推送</option>
+                  <option value="beta" selected>beta — 灰度 20%</option>
+                  <option value="canary">canary — 仅内测</option>
+                </select>
+              </div>
+              <p class="field-hint">决定清单文件写入哪个更新地址</p>
+            </div>
+          </div>
+        </div>
+        <div class="card-foot">
+          <button class="btn btn-primary btn-sm" id="saveBtn" data-primary-action>保存配置</button>
+          <button class="btn btn-sm" id="revertBtn">还原</button>
+          <div class="spacer" style="flex:1"></div>
+          <span class="field-hint mono" id="savedAt">上次保存 17:35:12</span>
+        </div>
+      </div>
+
+      <div class="card">
+        <div class="card-head"><div><div class="card-title">打包选项</div><div class="card-desc">压缩与校验策略</div></div></div>
+        <div class="card-body">
+          <div class="switch-row">
+            <button class="switch" role="switch" aria-checked="true" data-switch="compress" aria-label="压缩内容"></button>
+            <div class="switch-text"><div class="switch-title">压缩内容</div><div class="switch-desc">使用 deflate-9。文本与二进制混合时约省 34%，打包耗时增加 2–4 秒</div></div>
+          </div>
+          <div class="switch-row">
+            <button class="switch" role="switch" aria-checked="true" data-switch="sha" aria-label="生成 SHA-256 校验"></button>
+            <div class="switch-text"><div class="switch-title">生成 SHA-256 校验</div><div class="switch-desc">为每个分卷写入校验值，客户端下载后可断点续传与完整性核对</div></div>
+          </div>
+          <div class="switch-row">
+            <button class="switch" role="switch" aria-checked="false" data-switch="sign" aria-label="签名清单"></button>
+            <div class="switch-text"><div class="switch-title">签名清单文件</div><div class="switch-desc">用本地私钥对 manifest.json 签名。未配置密钥时该选项会跳过</div></div>
+          </div>
+          <div class="switch-row">
+            <button class="switch" role="switch" aria-checked="true" data-switch="prune" aria-label="清理旧分卷"></button>
+            <div class="switch-text"><div class="switch-title">清理 7 天前的旧分卷</div><div class="switch-desc">仅删除输出目录内的历史产物，不触碰其他文件</div></div>
+          </div>
+        </div>
+      </div>
+    </section>
+
+    <!-- SECTION: view build -->
+    <section class="view" id="view-build" role="tabpanel" aria-label="打包文件">
+      <div class="page-head">
+        <h1 class="page-title">打包文件</h1>
+        <p class="page-sub">勾选需要进入更新包的文件，右侧显示与线上版本的差异</p>
+      </div>
+
+      <div class="stats">
+        <div class="stat"><div class="stat-k">已选文件</div><div class="stat-v" id="stSelected">0<small>/ 12</small></div></div>
+        <div class="stat"><div class="stat-k">原始体积</div><div class="stat-v" id="stRaw">—</div></div>
+        <div class="stat"><div class="stat-k">预计分卷</div><div class="stat-v" id="stParts">—</div></div>
+        <div class="stat"><div class="stat-k">目标版本</div><div class="stat-v" id="stVer">—</div></div>
+      </div>
+
+      <div class="card" id="progressCard" hidden>
+        <div class="card-head">
+          <div><div class="card-title" id="progTitle">正在打包</div><div class="card-desc" id="progDesc">qsm_0.4.29.zip · 输出到 dist\</div></div>
+          <div class="spacer"></div>
+          <span class="tag tag-info" id="progTag"><i class="dot live"></i>进行中</span>
+          <button class="btn btn-sm btn-danger" id="cancelBtn">取消</button>
+        </div>
+        <div class="card-body">
+          <div class="pmeta"><span>阶段 <b id="progStage">1 / 5</b></span><span>已用时 <b id="progElapsed">0.0s</b></span><span>完成 <b id="progPct">0%</b></span></div>
+          <div class="pbar"><div class="pbar-fill" id="progFill" style="width:0%"></div></div>
+          <ul class="stages" id="stageList"></ul>
+          <div class="console" id="console" aria-live="polite"></div>
+        </div>
+      </div>
+
+      <div class="card">
+        <div class="card-head">
+          <div><div class="card-title">待打包内容</div><div class="card-desc">来源 <span class="mono">build\release\</span></div></div>
+          <div class="spacer"></div>
+          <button class="btn btn-sm" id="toggleAll">全选 / 反选</button>
+        </div>
+        <div class="toolbar">
+          <label class="search">
+            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9"><circle cx="10.5" cy="10.5" r="6.5"/><path d="m15.5 15.5 4 4"/></svg>
+            <input class="input" id="fileSearch" placeholder="筛选文件名…" aria-label="筛选文件">
+          </label>
+          <div class="spacer"></div>
+          <div class="seg seg-sm" id="diffFilter" role="group" aria-label="差异筛选">
+            <button data-diff="all" aria-pressed="true">全部</button>
+            <button data-diff="changed" aria-pressed="false">已变更</button>
+            <button data-diff="new" aria-pressed="false">新增</button>
+          </div>
+        </div>
+        <div class="card-body tight">
+          <table class="tbl">
+            <thead><tr>
+              <th style="width:34px"><input type="checkbox" id="ckAll" aria-label="全选" style="width:14px;height:14px;accent-color:var(--accent)"></th>
+              <th>文件</th><th class="hide-sm">状态</th><th class="num">体积</th><th class="num hide-sm">变更行</th>
+            </tr></thead>
+            <tbody id="fileRows"></tbody>
+          </table>
+          <div class="empty" id="fileEmpty" hidden>
+            <div class="ill"><svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6"><circle cx="10.5" cy="10.5" r="6.5"/><path d="m15.5 15.5 4 4"/></svg></div>
+            <h4>没有匹配的文件</h4><p>换个关键字，或切回「全部」筛选</p>
+          </div>
+        </div>
+        <div class="card-foot">
+          <span class="field-hint">打包会以上次保存的配置为准，未保存的改动不会生效</span>
+          <div style="flex:1"></div>
+          <button class="btn btn-primary btn-sm" data-start-pack data-primary-action>
+            <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linejoin="round"><path d="M20 7 12 3 4 7v10l8 4 8-4V7Z"/></svg>
+            打包所选
+          </button>
+        </div>
+      </div>
+    </section>
+
+    <!-- SECTION: view history -->
+    <section class="view" id="view-history" role="tabpanel" aria-label="历史构建">
+      <div class="page-head">
+        <h1 class="page-title">历史构建</h1>
+        <p class="page-sub">输出目录内已有的分卷产物，按构建时间倒序</p>
+      </div>
+      <div class="card">
+        <div class="toolbar">
+          <label class="search">
+            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9"><circle cx="10.5" cy="10.5" r="6.5"/><path d="m15.5 15.5 4 4"/></svg>
+            <input class="input" id="histSearch" placeholder="搜索文件名或版本…" aria-label="搜索历史构建">
+          </label>
+          <div class="spacer"></div>
+          <div class="seg seg-sm" id="histFilter" role="group" aria-label="状态筛选">
+            <button data-status="all" aria-pressed="true">全部</button>
+            <button data-status="ok" aria-pressed="false">成功</button>
+            <button data-status="err" aria-pressed="false">失败</button>
+          </div>
+          <button class="btn btn-sm" id="resetDemo" title="恢复示例数据">重置示例</button>
+        </div>
+        <div class="card-body tight">
+          <table class="tbl">
+            <thead><tr>
+              <th class="sortable" data-sort="name" aria-sort="none">产物</th>
+              <th class="hide-sm">状态</th>
+              <th class="num sortable hide-sm" data-sort="size" aria-sort="none">体积</th>
+              <th class="num sortable" data-sort="time" aria-sort="descending">构建时间</th>
+              <th style="width:96px"></th>
+            </tr></thead>
+            <tbody id="histRows"></tbody>
+          </table>
+          <div class="empty" id="histEmpty" hidden>
+            <div class="ill"><svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linejoin="round"><path d="M20 7 12 3 4 7v10l8 4 8-4V7Z"/><path d="m8 5.2 8 4v4.6"/></svg></div>
+            <h4>还没有构建记录</h4><p>点右上角「开始打包」，产物会自动登记到这里</p>
+          </div>
+        </div>
+        <div class="card-foot">
+          <span class="field-hint" id="histCount">—</span>
+          <div style="flex:1"></div>
+          <span class="field-hint mono">清理 7 天前产物可释放约 96 MB</span>
+        </div>
+      </div>
+    </section>
+
+    <!-- SECTION: view versions -->
+    <section class="view" id="view-versions" role="tabpanel" aria-label="下载与版本">
+      <div class="page-head">
+        <h1 class="page-title">下载与版本</h1>
+        <p class="page-sub">已发布到更新服务的版本，客户端按通道拉取清单</p>
+      </div>
+      <div class="card">
+        <div class="card-head">
+          <div><div class="card-title">线上版本</div><div class="card-desc">通道 <span class="mono" id="chanLabel">beta</span> · 清单 <span class="mono">manifest.json</span></div></div>
+          <div class="spacer"></div>
+          <button class="btn btn-sm" id="refreshVer">
+            <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9"><path d="M3.5 12a8.5 8.5 0 0 1 14.5-6M20.5 12A8.5 8.5 0 0 1 6 18"/></svg>
+            刷新
+          </button>
+        </div>
+        <div class="card-body tight"><div id="verList"></div></div>
+      </div>
+    </section>
+
+    <!-- SECTION: view logs -->
+    <section class="view" id="view-logs" role="tabpanel" aria-label="日志">
+      <div class="page-head">
+        <h1 class="page-title">日志</h1>
+        <p class="page-sub">本次会话的运行记录，按级别与关键字筛选</p>
+      </div>
+      <div class="card">
+        <div class="toolbar">
+          <label class="search">
+            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9"><circle cx="10.5" cy="10.5" r="6.5"/><path d="m15.5 15.5 4 4"/></svg>
+            <input class="input" id="logSearch" placeholder="搜索日志内容…" aria-label="搜索日志">
+          </label>
+          <div class="spacer"></div>
+          <div class="seg seg-sm" id="logFilter" role="group" aria-label="级别筛选">
+            <button data-lv="ALL" aria-pressed="true">全部</button>
+            <button data-lv="INFO" aria-pressed="false">INFO</button>
+            <button data-lv="WARN" aria-pressed="false">WARN</button>
+            <button data-lv="ERR" aria-pressed="false">ERR</button>
+          </div>
+          <button class="btn btn-sm" id="clearLogs">清空</button>
+        </div>
+        <div class="card-body tight"><div id="logList" style="max-height:52vh;overflow-y:auto"></div>
+          <div class="empty" id="logEmpty" hidden>
+            <div class="ill"><svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6"><rect x="3.5" y="4.5" width="17" height="15" rx="2"/><path d="m7.5 9.5 2.2 2.2-2.2 2.2M12 14h4.5"/></svg></div>
+            <h4>没有符合条件的日志</h4><p>调整筛选级别或清空搜索框</p>
+          </div>
+        </div>
+      </div>
+    </section>
+  </main>
+</div>
+
+<!-- SECTION: statusbar markup -->
+<footer class="statusbar">
+  <span class="status-dot" aria-hidden="true"></span><span>就绪</span>
+  <span class="sep"></span><span class="hide-sm">输出 <span id="sbOut">dist\</span></span>
+  <span class="sep hide-sm"></span><span class="hide-sm">通道 <span id="sbChan">beta</span></span>
+  <span class="grow"></span>
+  <span id="sbTask">—</span>
+</footer>
+
+<div class="toast-host" id="toastHost" aria-live="polite"></div>
+
+<!-- SECTION: modal markup -->
+<div class="scrim" id="scrim"></div>
+<div class="modal" id="modal" role="dialog" aria-modal="true" aria-labelledby="modalTitle">
+  <div class="modal-head"><h3 id="modalTitle">确认</h3></div>
+  <div class="modal-body" id="modalBody"></div>
+  <div class="modal-foot">
+    <button class="btn btn-sm" id="modalCancel">取消</button>
+    <button class="btn btn-sm btn-primary" id="modalOk">确定</button>
+  </div>
+</div>
+
+<!-- SECTION: tokens drawer markup -->
+<aside class="drawer" id="drawer" aria-label="设计规范">
+  <div class="drawer-head">
+    <div style="flex:1"><div class="card-title">设计规范</div><div class="card-desc">对照实现 egui Style / Visuals</div></div>
+    <button class="icon-btn" id="drawerClose" aria-label="关闭">
+      <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9"><path d="M6 6l12 12M18 6 6 18"/></svg>
+    </button>
+  </div>
+  <div class="drawer-body">
+    <div class="tok-group">
+      <div class="tok-title">主色与语义色</div>
+      <div class="swatches" id="swatches"></div>
+    </div>
+    <div class="tok-group">
+      <div class="tok-title">圆角</div>
+      <div class="radius-demo">
+        <i style="border-radius:4px">4</i><i style="border-radius:6px">6</i><i style="border-radius:10px">10</i><i style="border-radius:14px">14</i>
+      </div>
+      <p class="field-hint" style="margin-top:8px">egui 对应 <span class="mono">visuals.widgets.noninteractive.corner_radius</span>，控件用 6、卡片用 14</p>
+    </div>
+    <div class="tok-group">
+      <div class="tok-title">间距阶梯</div>
+      <div class="tok-list">
+        <div><span>控件内边距</span><span>10 × 12</span></div>
+        <div><span>表单行间距</span><span>20 / 24</span></div>
+        <div><span>卡片内边距</span><span>20</span></div>
+        <div><span>页面外边距</span><span>24 × 32</span></div>
+      </div>
+    </div>
+    <div class="tok-group">
+      <div class="tok-title">字号阶梯</div>
+      <div class="tok-list">
+        <div><span>说明 / 徽标</span><span>11</span></div>
+        <div><span>表格与输入</span><span>12 – 13</span></div>
+        <div><span>正文</span><span>14</span></div>
+        <div><span>页面标题</span><span>22</span></div>
+      </div>
+      <p class="field-hint" style="margin-top:8px">路径、文件名、体积一律用等宽字体，避免宽度抖动</p>
+    </div>
+    <div class="tok-group">
+      <div class="tok-title">本次改动要点</div>
+      <div class="tok-list" style="display:grid;gap:8px">
+        <div style="display:block;line-height:1.65">标签从左侧改为顶部，输入框可以占满整行</div>
+        <div style="display:block;line-height:1.65">说明文字下挂并降一级灰度，不再和值抢注意力</div>
+        <div style="display:block;line-height:1.65">历史列表加状态标签、行悬停与操作列，替代纯文本堆叠</div>
+        <div style="display:block;line-height:1.65">打包从「点了没反应」改为分阶段进度 + 实时日志</div>
+        <div style="display:block;line-height:1.65">导航分组并加当前项左侧指示条，位置感更明确</div>
+      </div>
+    </div>
+  </div>
+</aside>
+
+<script>
+/* SECTION: state */
+'use strict';
+const LS = 'qspack.ui.v1';
+const $ = (s, r) => (r || document).querySelector(s);
+const $$ = (s, r) => Array.from((r || document).querySelectorAll(s));
+
+const DEFAULTS = {
+  themeChoice: 'auto',
+  config: {
+    appName: 'qsm', version: '0.4.29', outDir: 'D:\\WorkspaceProject\\github\\supbose\\api\\dist',
+    split: 50, channel: 'beta',
+    opts: { compress: true, sha: true, sign: false, prune: true }
+  },
+  history: [
+    { name: 'qsm_0.4.29.zip.028', size: 3.7, time: '2026-10-26 17:35', status: 'ok', parts: 28 },
+    { name: 'qsm_0.4.29.zip.027', size: 5.0, time: '2026-10-26 17:35', status: 'ok', parts: 28 },
+    { name: 'qsm_0.4.29.zip.026', size: 5.0, time: '2026-10-26 17:35', status: 'ok', parts: 28 },
+    { name: 'qsm_0.4.29.zip.025', size: 5.0, time: '2026-10-26 17:35', status: 'ok', parts: 28 },
+    { name: 'qsm_0.4.29.zip.024', size: 5.0, time: '2026-10-26 17:35', status: 'ok', parts: 28 },
+    { name: 'qsm_0.4.29.zip.023', size: 5.0, time: '2026-10-26 17:35', status: 'ok', parts: 28 },
+    { name: 'qsm_0.4.28.zip.001', size: 5.0, time: '2026-10-24 11:02', status: 'ok', parts: 12 },
+    { name: 'qsm_0.4.28.zip.002', size: 2.1, time: '2026-10-24 11:02', status: 'ok', parts: 12 },
+    { name: 'qsm_0.4.27.zip.001', size: 4.8, time: '2026-10-21 09:41', status: 'err', parts: 1, err: '写入分卷时被杀毒软件占用句柄' },
+    { name: 'qsm_0.4.26.zip.001', size: 5.0, time: '2026-10-18 16:20', status: 'ok', parts: 15 }
+  ],
+  files: [
+    { p: 'bin\\launcherclient.exe', d: 'changed', size: 2.41, lines: '+18 / -6' },
+    { p: 'bin\\qsm_core.dll', d: 'changed', size: 6.88, lines: '+240 / -191' },
+    { p: 'assets\\fonts\\NotoSansSC.otf', d: 'new', size: 8.42, lines: '新增' },
+    { p: 'config\\packager.toml', d: 'changed', size: 0.01, lines: '+4 / -1' },
+    { p: 'web\\index.html', d: 'changed', size: 0.19, lines: '+31 / -12' },
+    { p: 'web\\app.js', d: 'changed', size: 0.63, lines: '+155 / -88' },
+    { p: 'web\\style.css', d: 'changed', size: 0.27, lines: '+96 / -40' },
+    { p: 'manifest.json', d: 'changed', size: 0.02, lines: '+7 / -3' },
+    { p: 'bin\\plugins\\updater.dll', d: 'same', size: 1.14, lines: '—' },
+    { p: 'docs\\CHANGELOG.md', d: 'same', size: 0.08, lines: '—' },
+    { p: 'LICENSE', d: 'same', size: 0.01, lines: '—' },
+    { p: 'bin\\qsm_upg.exe', d: 'new', size: 0.94, lines: '新增' }
+  ],
+  versions: [
+    { v: '0.4.29', chan: 'beta', date: '2026-10-26', size: 138.7, parts: 28, live: true },
+    { v: '0.4.28', chan: 'stable', date: '2026-10-24', size: 62.3, parts: 12, live: false },
+    { v: '0.4.27', chan: 'stable', date: '2026-10-21', size: 61.9, parts: 12, live: false },
+    { v: '0.4.26', chan: 'canary', date: '2026-10-18', size: 58.4, parts: 11, live: false }
+  ],
+  logs: []
+};
+
+let state = load();
+function load() {
+  try {
+    const raw = localStorage.getItem(LS);
+    if (!raw) return structuredClone(DEFAULTS);
+    const saved = JSON.parse(raw);
+    const merged = structuredClone(DEFAULTS);
+    if (saved.themeChoice) merged.themeChoice = saved.themeChoice;
+    if (saved.config) Object.assign(merged.config, saved.config);
+    if (Array.isArray(saved.history) && saved.history.length) merged.history = saved.history;
+    if (Array.isArray(saved.logs)) merged.logs = saved.logs;
+    return merged;
+  } catch (e) { return structuredClone(DEFAULTS); }
+}
+function persist() {
+  try {
+    localStorage.setItem(LS, JSON.stringify({
+      themeChoice: state.themeChoice, config: state.config, history: state.history, logs: state.logs.slice(-260)
+    }));
+  } catch (e) { /* 隐私模式下忽略 */ }
+}
+
+/* SECTION: theme (REQ-001) */
+const mq = window.matchMedia('(prefers-color-scheme: dark)');
+function applyTheme() {
+  const c = state.themeChoice;
+  const eff = c === 'auto' ? (mq.matches ? 'dark' : 'light') : c;
+  document.documentElement.setAttribute('data-theme', eff);
+  $$('#themeSeg button').forEach(b => b.setAttribute('aria-pressed', String(b.dataset.themeChoice === c)));
+  renderSwatches();
+}
+mq.addEventListener('change', () => { if (state.themeChoice === 'auto') applyTheme(); });
+$$('#themeSeg button').forEach(b => b.addEventListener('click', () => {
+  state.themeChoice = b.dataset.themeChoice; applyTheme(); persist();
+  toast('info', '主题已切换为' + ({ auto: '跟随系统', light: '浅色', dark: '深色' })[state.themeChoice]);
+}));
+
+/* SECTION: nav (视图切换) */
+const NAV_TITLES = { config: '配置', build: '打包文件', history: '历史构建', versions: '下载与版本', logs: '日志' };
+function showView(id) {
+  $$('.view').forEach(v => v.classList.toggle('is-active', v.id === 'view-' + id));
+  $$('.nav-item').forEach(n => {
+    if (n.dataset.view === id) n.setAttribute('aria-current', 'page');
+    else n.removeAttribute('aria-current');
+  });
+  $('#nav').classList.remove('open');
+  $('#content').scrollTop = 0;
+}
+$$('.nav-item').forEach(n => n.addEventListener('click', () => showView(n.dataset.view)));
+$('#menuBtn').addEventListener('click', () => $('#nav').classList.toggle('open'));
+
+/* SECTION: toast */
+const TOAST_IC = {
+  ok: '<path d="M5 12.5 9.5 17 19 7"/>',
+  err: '<circle cx="12" cy="12" r="9"/><path d="M12 7.5v5.5M12 16.2v.6"/>',
+  warn: '<path d="M12 4.5 21 19.5H3L12 4.5Z"/><path d="M12 10v4M12 16.6v.5"/>',
+  info: '<circle cx="12" cy="12" r="9"/><path d="M12 11v5.5M12 7.8v.6"/>'
+};
+function toast(kind, msg) {
+  const el = document.createElement('div');
+  el.className = 'toast ' + kind;
+  el.innerHTML = '<svg class="ic" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round">'
+    + TOAST_IC[kind] + '</svg><span></span>';
+  $('span', el).textContent = msg;
+  $('#toastHost').appendChild(el);
+  setTimeout(() => { el.classList.add('out'); setTimeout(() => el.remove(), 200); }, 2600);
+}
+
+/* SECTION: modal */
+let modalAction = null;
+function confirmModal(title, body, okText, fn) {
+  $('#modalTitle').textContent = title;
+  $('#modalBody').textContent = body;
+  $('#modalOk').textContent = okText || '确定';
+  modalAction = fn;
+  $('#scrim').classList.add('open'); $('#modal').classList.add('open'); $('#modalOk').focus();
+}
+function closeModal() { $('#scrim').classList.remove('open'); $('#modal').classList.remove('open'); modalAction = null; }
+$('#modalCancel').addEventListener('click', closeModal);
+$('#scrim').addEventListener('click', () => { closeModal(); closeDrawer(); });
+$('#modalOk').addEventListener('click', () => { const f = modalAction; closeModal(); if (f) f(); });
+document.addEventListener('keydown', e => { if (e.key === 'Escape') { closeModal(); closeDrawer(); } });
+
+/* SECTION: drawer */
+function closeDrawer() { $('#drawer').classList.remove('open'); if (!$('#modal').classList.contains('open')) $('#scrim').classList.remove('open'); }
+$('#tokensBtn').addEventListener('click', () => { $('#drawer').classList.add('open'); $('#scrim').classList.add('open'); });
+$('#drawerClose').addEventListener('click', closeDrawer);
+function renderSwatches() {
+  const cs = getComputedStyle(document.documentElement);
+  const items = [['--accent', '主色'], ['--bg-app', '画布'], ['--bg-surface', '表面'], ['--line', '描边'],
+  ['--text-1', '主文字'], ['--text-3', '次文字'], ['--ok', '成功'], ['--err', '失败'], ['--warn', '警告']];
+  $('#swatches').innerHTML = items.map(([v, label]) => {
+    const hex = cs.getPropertyValue(v).trim();
+    return '<div class="swatch"><i style="background:' + hex + '"></i>' + label + ' ' + hex + '</div>';
+  }).join('');
+}
+
+/* SECTION: config form (REQ-002) */
+const F = { appName: $('#fAppName'), version: $('#fVersion'), outDir: $('#fOutDir'), split: $('#fSplit'), channel: $('#fChannel') };
+let savedSnapshot = JSON.stringify(state.config);
+
+function fillForm() {
+  F.appName.value = state.config.appName; F.version.value = state.config.version;
+  F.outDir.value = state.config.outDir; F.split.value = state.config.split; F.channel.value = state.config.channel;
+  $$('.switch').forEach(s => {
+    const k = s.dataset.switch;
+    s.setAttribute('aria-checked', String(!!(state.config.opts && state.config.opts[k])));
+  });
+}
+function validate() {
+  let ok = true;
+  const name = F.appName.value.trim(), ver = F.version.value.trim(), split = Number(F.split.value);
+  if (!/^[a-z0-9][a-z0-9-]{0,31}$/.test(name)) { fail(F.appName, 'hAppName', '只能用小写字母、数字与短横线，且以字母或数字开头'); ok = false; }
+  else hint('hAppName', '用于 <span class="mono">{app}_{version}.zip.001</span> 命名，仅限小写字母、数字与短横线');
+  if (!/^\d+\.\d+\.\d+$/.test(ver)) { fail(F.version, 'hVersion', '需要形如 0.4.29 的三段版本号'); ok = false; }
+  else hint('hVersion', '语义化版本 <span class="mono">主.次.修订</span>，需大于线上版本');
+  if (!Number.isFinite(split) || split < 1 || split > 4096) { fail(F.split, 'hSplit', '单卷大小需在 1 – 4096 MB 之间'); ok = false; }
+  else hint('hSplit', '超过该体积自动切分，编号 <span class="mono">.001 / .002</span>');
+  if (!F.outDir.value.trim()) { fail(F.outDir, null, ''); ok = false; }
+  return ok;
+}
+function fail(input, hintId, msg) {
+  input.setAttribute('aria-invalid', 'true');
+  if (hintId) { const h = $('#' + hintId); h.dataset.def = h.dataset.def || h.innerHTML; h.textContent = msg; h.classList.add('err'); }
+}
+function hint(id, html) { const h = $('#' + id); h.classList.remove('err'); h.innerHTML = h.dataset.def || html; }
+$$('.input').forEach(i => i.addEventListener('input', () => {
+  i.removeAttribute('aria-invalid'); markDirty();
+}));
+function isDirty() { return JSON.stringify(readForm()) !== savedSnapshot; }
+function refreshDirty() {
+  const d = isDirty();
+  $('#dirtyTag').hidden = !d;
+  const b = $('#badgeConfig');
+  b.textContent = d ? '未保存' : '';
+  b.hidden = !d;
+  b.style.background = 'var(--warn-soft)'; b.style.color = 'var(--warn)';
+}
+function markDirty() { refreshDirty(); }
+function readForm() {
+  const opts = {};
+  $$('.switch').forEach(s => opts[s.dataset.switch] = s.getAttribute('aria-checked') === 'true');
+  return {
+    appName: F.appName.value.trim(), version: F.version.value.trim(), outDir: F.outDir.value.trim(),
+    split: Number(F.split.value), channel: F.channel.value, opts
+  };
+}
+$('#saveBtn').addEventListener('click', () => {
+  if (!validate()) { toast('err', '配置有 ' + $$('.input[aria-invalid="true"]').length + ' 处需要修正'); log('ERR', '配置校验未通过，已阻止写入 packager.toml'); return; }
+  state.config = readForm(); savedSnapshot = JSON.stringify(state.config);
+  persist(); refreshDirty();
+  const t = new Date();
+  $('#savedAt').textContent = '上次保存 ' + [t.getHours(), t.getMinutes(), t.getSeconds()].map(n => String(n).padStart(2, '0')).join(':');
+  syncChrome(); renderFiles(); renderHistory(); renderVersions();
+  log('OK', '配置已写入 packager.toml（' + state.config.appName + ' ' + state.config.version + ' / ' + state.config.channel + '）');
+  toast('ok', '配置已保存');
+});
+$('#revertBtn').addEventListener('click', () => {
+  confirmModal('还原未保存的改动', '把表单恢复成上次保存的配置？当前编辑内容会丢失。', '还原', () => {
+    state.config = JSON.parse(savedSnapshot); fillForm(); refreshDirty(); syncChrome();
+    toast('info', '已还原到上次保存的配置');
+  });
+});
+$$('.switch').forEach(s => s.addEventListener('click', () => {
+  s.setAttribute('aria-checked', s.getAttribute('aria-checked') === 'true' ? 'false' : 'true');
+  if (s.dataset.switch === 'sign' && s.getAttribute('aria-checked') === 'true') {
+    toast('warn', '未检测到私钥 packager.key，打包时会跳过签名');
+    log('WARN', '签名已开启，但本地缺少私钥 packager.key');
+  }
+  markDirty();
+}));
+$$('[data-browse]').forEach(b => b.addEventListener('click', () => {
+  toast('info', '目录选择器由原生层提供，原型内保留入口');
+}));
+
+function syncChrome() {
+  $('#sbOut').textContent = state.config.outDir.split(/[\\/]/).pop() + '\\';
+  $('#sbChan').textContent = state.config.channel;
+  $('#chanLabel').textContent = state.config.channel;
+  $('#badgeHistory').textContent = state.history.length;
+  $('#badgeLogs').textContent = state.logs.length;
+  refreshDirty();
+  const used = 0.62, free = 214.6;
+  $('#diskFree').textContent = free.toFixed(1) + ' GB';
+  $('#diskBar').style.width = (used * 100).toFixed(0) + '%';
+}
+
+/* SECTION: build files (REQ-004 前置) */
+const DIFF_LABEL = { changed: ['已变更', 'tag-warn'], new: ['新增', 'tag-ok'], same: ['未变', 'tag-mute'] };
+let fileFilter = 'all', fileQuery = '';
+function renderFiles() {
+  const q = fileQuery.toLowerCase();
+  const rows = state.files.filter(f =>
+    (fileFilter === 'all' || (fileFilter === 'new' ? f.d === 'new' : f.d === 'changed')) &&
+    (!q || f.p.toLowerCase().includes(q))
+  );
+  $('#fileEmpty').hidden = rows.length > 0;
+  $('#fileRows').innerHTML = rows.map((f, i) => {
+    const [label, cls] = DIFF_LABEL[f.d];
+    const idx = state.files.indexOf(f);
+    return '<tr><td><input type="checkbox" class="ckFile" data-i="' + idx + '" style="width:14px;height:14px;accent-color:var(--accent)" '
+      + (f.d !== 'same' ? 'checked' : '') + ' aria-label="选择 ' + f.p + '"></td>'
+      + '<td><div class="fname"><span class="fi"><svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7"><path d="M13.5 3H7a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h10a2 2 0 0 0 2-2V8.5L13.5 3Z"/><path d="M13.5 3v5.5H19"/></svg></span>'
+      + '<span class="n">' + hl(f.p, q) + '</span></div></td>'
+      + '<td class="hide-sm"><span class="tag ' + cls + '">' + label + '</span></td>'
+      + '<td class="num">' + f.size.toFixed(2) + ' MB</td>'
+      + '<td class="num hide-sm">' + f.lines + '</td></tr>';
+  }).join('');
+  $$('.ckFile').forEach(c => c.addEventListener('change', updateStats));
+  updateStats();
+}
+function hl(text, q) {
+  if (!q) return text;
+  const i = text.toLowerCase().indexOf(q);
+  if (i < 0) return text;
+  return text.slice(0, i) + '<mark>' + text.slice(i, i + q.length) + '</mark>' + text.slice(i + q.length);
+}
+function updateStats() {
+  const on = $$('.ckFile').filter(c => c.checked);
+  const raw = on.reduce((s, c) => s + state.files[+c.dataset.i].size, 0);
+  const est = state.config.opts.compress ? raw * 0.66 : raw;
+  $('#stSelected').innerHTML = on.length + '<small>/ ' + state.files.length + '</small>';
+  $('#stRaw').textContent = raw.toFixed(2) + ' MB';
+  $('#stParts').textContent = Math.max(1, Math.ceil(est / state.config.split)) + ' 卷';
+  $('#stVer').textContent = state.config.version;
+  $('#badgeBuild').textContent = on.length;
+}
+$('#fileSearch').addEventListener('input', e => { fileQuery = e.target.value.trim(); renderFiles(); });
+$$('#diffFilter button').forEach(b => b.addEventListener('click', () => {
+  fileFilter = b.dataset.diff;
+  $$('#diffFilter button').forEach(x => x.setAttribute('aria-pressed', String(x === b)));
+  renderFiles();
+}));
+$('#toggleAll').addEventListener('click', () => {
+  const anyOff = $$('.ckFile').some(c => !c.checked);
+  $$('.ckFile').forEach(c => c.checked = anyOff);
+  updateStats();
+});
+$('#ckAll').addEventListener('change', e => { $$('.ckFile').forEach(c => c.checked = e.target.checked); updateStats(); });
+
+/* SECTION: packing (REQ-004) */
+const STAGES = [
+  { k: 'collect', t: '收集文件', d: '按勾选清单解析路径与体积' },
+  { k: 'compress', t: '压缩内容', d: 'deflate-9，逐文件写入' },
+  { k: 'split', t: '切分分卷', d: '按单卷上限切片' },
+  { k: 'hash', t: '计算校验', d: 'SHA-256 逐卷摘要' },
+  { k: 'manifest', t: '写入清单', d: '生成 manifest.json 与登记记录' }
+];
+let packing = false, packTimer = null, packStart = 0, packCancelled = false;
+
+function startPack() {
+  if (packing) { toast('info', '已有打包任务在进行'); return; }
+  if (!validate()) { toast('err', '请先修正配置再打包'); showView('config'); return; }
+  const picked = $$('.ckFile').filter(c => c.checked);
+  if (!picked.length) { toast('err', '至少要选择一个文件'); showView('build'); return; }
+  state.config = readForm(); savedSnapshot = JSON.stringify(state.config); persist(); syncChrome();
+  refreshDirty();
+
+  packing = true; packCancelled = false; packStart = performance.now();
+  const raw = picked.reduce((s, c) => s + state.files[+c.dataset.i].size, 0);
+  const total = state.config.opts.compress ? raw * 0.66 : raw;
+  const parts = Math.max(1, Math.ceil(total / state.config.split));
+  const outName = state.config.appName + '_' + state.config.version + '.zip';
+
+  $('#progressCard').hidden = false;
+  $('#progTitle').textContent = '正在打包';
+  $('#progDesc').textContent = outName + ' · ' + parts + ' 卷 · ' + total.toFixed(1) + ' MB';
+  $('#progTag').className = 'tag tag-info'; $('#progTag').innerHTML = '<i class="dot live"></i>进行中';
+  $('#cancelBtn').hidden = false;
+  $('#console').innerHTML = '';
+  $('#stageList').innerHTML = STAGES.map((s, i) =>
+    '<li class="stage" data-i="' + i + '"><span class="mark"></span><span>' + s.t + '</span><span class="t"></span></li>'
+  ).join('');
+  log('INFO', '开始打包 ' + outName + '，共 ' + picked.length + ' 个文件、预计 ' + parts + ' 卷');
+  $('#sbTask').textContent = '打包中 ' + outName;
+
+  let si = 0, sub = 0;
+  const tick = () => {
+    if (packCancelled) return;
+    const st = STAGES[si];
+    sub++;
+    const done = (si + Math.min(sub / 4, 1)) / STAGES.length;
+    $('#progFill').style.width = (done * 100).toFixed(1) + '%';
+    $('#progPct').textContent = Math.round(done * 100) + '%';
+    $('#progStage').textContent = (si + 1) + ' / ' + STAGES.length;
+    $('#progElapsed').textContent = ((performance.now() - packStart) / 1000).toFixed(1) + 's';
+    $$('#stageList .stage').forEach((el, i) => {
+      el.classList.toggle('is-active', i === si);
+      el.classList.toggle('is-done', i < si);
+      $('.mark', el).innerHTML = i < si
+        ? '<svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round"><path d="M5 12.5 9.5 17 19 7"/></svg>'
+        : (i === si ? '<span class="spinner"></span>' : '<i style="width:5px;height:5px;border-radius:50%;background:var(--text-4);display:block"></i>');
+    });
+    if (st.k === 'collect') clog('INFO', '解析 ' + picked.length + ' 个文件，原始体积 ' + raw.toFixed(2) + ' MB');
+    if (st.k === 'compress') clog('INFO', 'deflate-9 压缩中… 已处理 ' + Math.min(picked.length, sub * 3) + '/' + picked.length);
+    if (st.k === 'split') clog('INFO', '按 ' + state.config.split + ' MB 切分，写出 ' + outName + '.00' + Math.min(sub, 9));
+    if (st.k === 'hash') clog('INFO', 'sha256 校验分卷 ' + Math.min(sub, parts) + '/' + parts);
+    if (st.k === 'manifest') clog('INFO', '生成 manifest.json（通道 ' + state.config.channel + '）');
+
+    if (sub >= 4) {
+      sub = 0;
+      $('#stageList .stage[data-i="' + si + '"] .t').textContent = (0.4 + Math.random() * 1.4).toFixed(1) + 's';
+      si++;
+      if (si >= STAGES.length) return finish(outName, parts, total);
+    }
+    packTimer = setTimeout(tick, 420);
+  };
+  tick();
+}
+
+function finish(outName, parts, total) {
+  packing = false; clearTimeout(packTimer);
+  $('#progFill').style.width = '100%'; $('#progPct').textContent = '100%';
+  $('#progElapsed').textContent = ((performance.now() - packStart) / 1000).toFixed(1) + 's';
+  $$('#stageList .stage').forEach(el => { el.classList.remove('is-active'); el.classList.add('is-done'); $('.mark', el).innerHTML = '<svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round"><path d="M5 12.5 9.5 17 19 7"/></svg>'; });
+  $('#progTitle').textContent = '打包完成';
+  $('#progTag').className = 'tag tag-ok'; $('#progTag').innerHTML = '<i class="dot"></i>成功';
+  $('#cancelBtn').hidden = true;
+  clog('OK', '全部 ' + parts + ' 卷写入完成，合计 ' + total.toFixed(1) + ' MB');
+  log('OK', '打包完成：' + outName + ' 共 ' + parts + ' 卷');
+
+  const now = fmt(new Date());
+  state.history.unshift({ name: outName + '.001', size: Math.min(total, state.config.split), time: now, status: 'ok', parts: parts });
+  persist(); renderHistory(); syncChrome();
+  $('#sbTask').textContent = '空闲';
+  toast('ok', '打包完成，已登记 ' + parts + ' 个分卷');
+}
+function cancelPack() {
+  if (!packing) return;
+  confirmModal('取消打包', '当前进度会丢弃，已写出的分卷会保留在输出目录。', '取消打包', () => {
+    packCancelled = true; packing = false; clearTimeout(packTimer);
+    $('#progTitle').textContent = '已取消';
+    $('#progTag').className = 'tag tag-err'; $('#progTag').innerHTML = '<i class="dot"></i>已中止';
+    $('#cancelBtn').hidden = true; $('#sbTask').textContent = '空闲';
+    clog('ERR', '用户中止，任务未写入清单');
+    log('WARN', '打包被用户取消');
+    toast('info', '打包已取消');
+  });
+}
+$('#cancelBtn').addEventListener('click', cancelPack);
+$('#packBtn').addEventListener('click', () => { showView('build'); startPack(); });
+$$('[data-start-pack]').forEach(b => b.addEventListener('click', startPack));
+
+function clog(lv, msg) {
+  const el = $('#console');
+  const line = document.createElement('div');
+  line.className = 'ln';
+  line.innerHTML = '<span class="ts">' + new Date().toTimeString().slice(0, 8) + '</span><span class="lv ' + lv.toLowerCase() + '">' + lv + '</span><span class="msg"></span>';
+  $('.msg', line).textContent = msg;
+  el.appendChild(line);
+  el.scrollTop = el.scrollHeight;
+}
+function fmt(d) {
+  const p = n => String(n).padStart(2, '0');
+  return d.getFullYear() + '-' + p(d.getMonth() + 1) + '-' + p(d.getDate()) + ' ' + p(d.getHours()) + ':' + p(d.getMinutes());
+}
+
+/* SECTION: history (REQ-003) */
+let histSort = { key: 'time', dir: -1 }, histQuery = '', histStatus = 'all';
+function renderHistory() {
+  const q = histQuery.toLowerCase();
+  let rows = state.history.filter(h =>
+    (!q || h.name.toLowerCase().includes(q)) &&
+    (histStatus === 'all' || (histStatus === 'ok' ? h.status === 'ok' : h.status !== 'ok'))
+  );
+  rows.sort((a, b) => {
+    const k = histSort.key;
+    const va = k === 'size' ? a.size : (k === 'name' ? a.name : a.time);
+    const vb = k === 'size' ? b.size : (k === 'name' ? b.name : b.time);
+    return (va > vb ? 1 : va < vb ? -1 : 0) * histSort.dir;
+  });
+  $('#histEmpty').hidden = rows.length > 0;
+  $('#histRows').innerHTML = rows.map(h => {
+    const i = state.history.indexOf(h);
+    const st = h.status === 'ok' ? '<span class="tag tag-ok"><i class="dot"></i>成功</span>'
+      : '<span class="tag tag-err" title="' + (h.err || '') + '"><i class="dot"></i>失败</span>';
+    return '<tr><td><div class="fname"><span class="fi"><svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linejoin="round"><path d="M20 7 12 3 4 7v10l8 4 8-4V7Z"/></svg></span>'
+      + '<div><div class="n">' + hl(h.name, q) + '</div><div class="vrow-meta">' + h.parts + ' 卷 · 通道 ' + state.config.channel + '</div></div></div></td>'
+      + '<td class="hide-sm">' + st + '</td>'
+      + '<td class="num hide-sm">' + h.size.toFixed(1) + ' MB</td>'
+      + '<td class="num">' + h.time + '</td>'
+      + '<td><div class="actions">'
+      + '<button class="icon-btn" data-copy="' + i + '" aria-label="复制路径" title="复制路径"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7"><rect x="9" y="9" width="11" height="11" rx="2"/><path d="M15 5H6a2 2 0 0 0-2 2v9"/></svg></button>'
+      + '<button class="icon-btn" data-del="' + i + '" aria-label="删除" title="删除"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7"><path d="M4 7h16M9.5 7V4.8h5V7M6.5 7l.9 12.2A1.8 1.8 0 0 0 9.2 21h5.6a1.8 1.8 0 0 0 1.8-1.8L17.5 7"/></svg></button>'
+      + '</div></td></tr>';
+  }).join('');
+  const sum = rows.reduce((s, h) => s + h.size, 0);
+  $('#histCount').textContent = rows.length + ' 条记录 · 合计 ' + sum.toFixed(1) + ' MB';
+  $('#badgeHistory').textContent = state.history.length;
+  $$('[data-del]').forEach(b => b.addEventListener('click', () => {
+    const h = state.history[+b.dataset.del];
+    confirmModal('删除分卷', '把 ' + h.name + ' 移到回收站？该分卷会让整包无法下载，需要重新打包。', '删除', () => {
+      state.history.splice(+b.dataset.del, 1); persist(); renderHistory(); syncChrome();
+      log('WARN', '已删除分卷 ' + h.name); toast('ok', '已移到回收站');
+    });
+  }));
+  $$('[data-copy]').forEach(b => b.addEventListener('click', () => {
+    const h = state.history[+b.dataset.copy];
+    const path = state.config.outDir + '\\' + h.name;
+    if (navigator.clipboard) navigator.clipboard.writeText(path).catch(() => {});
+    toast('info', '路径已复制'); log('INFO', '复制路径 ' + path);
+  }));
+}
+$('#histSearch').addEventListener('input', e => { histQuery = e.target.value.trim(); renderHistory(); });
+$$('#histFilter button').forEach(b => b.addEventListener('click', () => {
+  histStatus = b.dataset.status;
+  $$('#histFilter button').forEach(x => x.setAttribute('aria-pressed', String(x === b)));
+  renderHistory();
+}));
+$$('.tbl th.sortable').forEach(th => th.addEventListener('click', () => {
+  const k = th.dataset.sort;
+  histSort = { key: k, dir: histSort.key === k ? -histSort.dir : -1 };
+  $$('.tbl th.sortable').forEach(x => x.removeAttribute('aria-sort'));
+  th.setAttribute('aria-sort', histSort.dir === 1 ? 'ascending' : 'descending');
+  renderHistory();
+}));
+$('#resetDemo').addEventListener('click', () => {
+  confirmModal('重置示例数据', '恢复到初始的历史记录、配置与日志？', '重置', () => {
+    localStorage.removeItem(LS); state = structuredClone(DEFAULTS);
+    savedSnapshot = JSON.stringify(state.config);
+    fillForm(); applyTheme(); syncChrome(); renderFiles(); renderHistory(); renderVersions(); renderLogs();
+    toast('ok', '已恢复示例数据');
+  });
+});
+
+/* SECTION: versions (REQ-005) */
+function renderVersions() {
+  $('#verList').innerHTML = state.versions.map((v, i) => {
+    const chanCls = v.chan === 'stable' ? 'tag-ok' : v.chan === 'beta' ? 'tag-warn' : 'tag-info';
+    return '<div class="ver-row"><div class="ver-main">'
+      + '<div class="ver-name">' + v.v + (v.live ? ' <span class="tag tag-accent" style="color:var(--accent);background:var(--accent-soft);border-color:var(--accent-line)">线上</span>' : '') + '</div>'
+      + '<div class="ver-sub"><span class="tag ' + chanCls + '">' + v.chan + '</span><span>' + v.date + '</span><span class="mono">' + v.size.toFixed(1) + ' MB</span><span>' + v.parts + ' 卷</span></div>'
+      + '</div><div class="ver-side">'
+      + (v.live ? '<button class="btn btn-sm" data-rollback="' + i + '">回滚到此</button>' : '<button class="btn btn-sm" data-publish="' + i + '">设为线上</button>')
+      + '<button class="btn btn-sm btn-ghost" data-dl="' + i + '" aria-label="下载清单"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M12 4v11m0 0 4-4m-4 4-4-4M5 19h14"/></svg></button>'
+      + '</div></div>';
+  }).join('');
+  $$('[data-publish]').forEach(b => b.addEventListener('click', () => {
+    const i = +b.dataset.publish, v = state.versions[i];
+    confirmModal('设为线上版本', '把 ' + v.v + ' 切到 ' + state.config.channel + ' 通道？客户端会在下次轮询时拉取该版本。', '确认切换', () => {
+      state.versions.forEach(x => x.live = false); v.live = true;
+      renderVersions(); log('OK', '线上版本切换为 ' + v.v + '（' + v.chan + '）'); toast('ok', '已切换线上版本 ' + v.v);
+    });
+  }));
+  $$('[data-rollback]').forEach(b => b.addEventListener('click', () => {
+    const v = state.versions[+b.dataset.rollback];
+    toast('info', '当前已是线上版本 ' + v.v);
+  }));
+  $$('[data-dl]').forEach(b => b.addEventListener('click', () => {
+    const v = state.versions[+b.dataset.dl];
+    log('INFO', '导出 manifest 快照 ' + v.v); toast('ok', '清单已导出到下载目录');
+  }));
+}
+$('#refreshVer').addEventListener('click', () => { renderVersions(); log('INFO', '刷新线上版本列表'); toast('info', '已是最新'); });
+
+/* SECTION: logs (REQ-006) */
+let logQuery = '', logLv = 'ALL';
+function log(lv, msg) {
+  state.logs.push({ t: new Date().toTimeString().slice(0, 8), lv, msg });
+  if (state.logs.length > 400) state.logs.shift();
+  persist(); $('#badgeLogs').textContent = state.logs.length; renderLogs();
+}
+function renderLogs() {
+  const q = logQuery.toLowerCase();
+  const rows = state.logs.filter(l => (logLv === 'ALL' || l.lv === logLv) && (!q || l.msg.toLowerCase().includes(q)));
+  $('#logEmpty').hidden = rows.length > 0;
+  $('#logList').innerHTML = rows.slice().reverse().map(l =>
+    '<div class="log-row"><span class="ts">' + l.t + '</span><span class="lv ' + l.lv + '">' + l.lv + '</span><span class="msg">'
+    + hl(l.msg.replace(/&/g, '&amp;').replace(/</g, '&lt;'), q) + '</span></div>'
+  ).join('');
+  $('#badgeLogs').textContent = state.logs.length;
+}
+$('#logSearch').addEventListener('input', e => { logQuery = e.target.value.trim(); renderLogs(); });
+$$('#logFilter button').forEach(b => b.addEventListener('click', () => {
+  logLv = b.dataset.lv;
+  $$('#logFilter button').forEach(x => x.setAttribute('aria-pressed', String(x === b)));
+  renderLogs();
+}));
+$('#clearLogs').addEventListener('click', () => {
+  confirmModal('清空日志', '删除本次会话的全部运行记录？', '清空', () => {
+    state.logs = []; persist(); renderLogs(); toast('ok', '日志已清空');
+  });
+});
+
+/* SECTION: init */
+F.channel.addEventListener('change', markDirty);
+fillForm(); applyTheme(); syncChrome(); renderFiles(); renderHistory(); renderVersions(); renderLogs();
+log('INFO', '界面重设计原型已加载，数据保存在当前浏览器');
+
+</script>
+</body>
+</html>
