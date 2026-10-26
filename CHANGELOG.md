@@ -20,6 +20,12 @@
 
 
 
+
+## v0.1.20 (2026-10-27)
+### 🚀 新增功能
+
+- [0a1003a](/-/commit/0a1003abf293e5356313d716fff9b50447a942e4) 新增(src-pkgtool): 新增Rust GUI版更新包打包工具替代Python脚本 (scripts/versionTools.py, src-egui/version.rc, src-pkgtool/Cargo.lock, src-pkgtool/Cargo.toml, src-pkgtool/assets/icon.ico, src-pkgtool/assets/icon.png, src-pkgtool/src/main.rs)
+
 ## v0.1.19 (2026-10-27)
 ### 🚀 新增功能
 

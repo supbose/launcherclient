@@ -8,5 +8,5 @@
     "egui:build": "python scripts/build_egui.py",
     "egui:dev": "cd src-egui && cargo run"
   },
-  "version": "0.1.19"
+  "version": "0.1.20"
 }
