@@ -30,6 +30,8 @@ walkdir = "2"
 regex = "1"
 # 原生文件/目录选择对话框（Windows 走系统对话框）
 rfd = "0.14"
+# 解析 icon.ico → egui::IconData（窗口/任务栏图标，直接 embed 进二进制，免运行时文件依赖）
+ico = "0.4"
 
 # 本 crate 的 release profile：放宽 LTO / 优化级别，规避沙箱里 rustc 编译
 # windows-sys（rfd 传递依赖）时偶发的访问越界崩溃；debug 构建不受影响
@@ -38,3 +40,7 @@ opt-level = 2
 lto = false
 codegen-units = 16
 strip = true
+
+[build-dependencies]
+# Windows exe 图标资源嵌入（调用系统 rc.exe；非 Windows 平台自动跳过）
+embed-resource = "3"

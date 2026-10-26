@@ -408,7 +408,9 @@ struct PackToolApp {
 }
 
 impl PackToolApp {
-    fn new() -> Self {
+    fn new(cc: &eframe::CreationContext<'_>) -> Self {
+        // 安装中文字体，修复中文豆腐块（乱码）显示
+        install_fonts(&cc.egui_ctx);
         let config = Config::load();
         let version = suggest_version(&config.output_dir, &config.app_name);
         PackToolApp {
@@ -583,19 +585,88 @@ impl eframe::App for PackToolApp {
     }
 }
 
+/// Windows 系统中文字体候选（按序取第一个存在的；微软雅黑优先）。
+/// egui 默认字体无 CJK 字形（会显示豆腐块），从系统字体目录加载中文字体修复。
+/// 与 `src-egui/src/theme.rs::install_fonts` 同方案。
+const FONT_CANDIDATES: [&str; 5] = [
+    "C:/Windows/Fonts/msyh.ttc",
+    "C:/Windows/Fonts/msyhl.ttc",
+    "C:/Windows/Fonts/simhei.ttf",
+    "C:/Windows/Fonts/Deng.ttf",
+    "C:/Windows/Fonts/simsun.ttc",
+];
+
+/// 安装中文字体：把系统中文字体插到 egui 字体族最前，修复中文豆腐块显示。
+fn install_fonts(ctx: &Context) {
+    let Some(path) = FONT_CANDIDATES.iter().find(|p| std::path::Path::new(p).exists()) else {
+        eprintln!("[pkgtool] 未找到系统中文字体，中文将无法显示");
+        return;
+    };
+    let Ok(data) = std::fs::read(path) else {
+        eprintln!("[pkgtool] 读取系统字体失败: {}", path);
+        return;
+    };
+    eprintln!("[pkgtool] 使用中文字体: {}", path);
+
+    let mut fonts = egui::FontDefinitions::default();
+    fonts
+        .font_data
+        .insert("cjk".to_owned(), egui::FontData::from_owned(data).into());
+    if let Some(prop) = fonts.families.get_mut(&egui::FontFamily::Proportional) {
+        prop.insert(0, "cjk".to_owned());
+    }
+    if let Some(mono) = fonts.families.get_mut(&egui::FontFamily::Monospace) {
+        mono.insert(0, "cjk".to_owned());
+    }
+    ctx.set_fonts(fonts);
+}
+
+/// 把 `assets/icon.ico` 编进二进制并解码为 egui::IconData，用于窗口/任务栏图标。
+/// 用 `include_bytes!` 直接内嵌，避免运行时依赖外部文件；取尺寸最大的那一帧。
+fn load_window_icon() -> Option<egui::IconData> {
+    const ICON_BYTES: &[u8] = include_bytes!("../assets/icon.ico");
+    let cursor = std::io::Cursor::new(&ICON_BYTES[..]);
+    let icon_dir = ico::IconDir::read(cursor).ok()?;
+    // 取尺寸最大的那一帧（任务栏通常用 32×32，但取最大最通用）
+    let mut best: Option<&ico::IconDirEntry> = None;
+    for entry in icon_dir.entries() {
+        let take = match best {
+            Some(b) => entry.width() > b.width(),
+            None => true,
+        };
+        if take {
+            best = Some(entry);
+        }
+    }
+    let entry = best?;
+    let image = entry.decode().ok()?;
+    let rgba = image.rgba_data().to_vec();
+    Some(egui::IconData {
+        rgba,
+        width: image.width(),
+        height: image.height(),
+    })
+}
+
 fn main() -> eframe::Result<()> {
+    let icon = load_window_icon();
+    let viewport = egui::ViewportBuilder::default()
+        .with_title("QsLtd 更新包打包工具")
+        .with_inner_size([760.0, 680.0])
+        .with_resizable(true)
+        .with_min_inner_size([640.0, 480.0]);
+    let viewport = match icon {
+        Some(icon) => viewport.with_icon(icon),
+        None => viewport,
+    };
     let native_options = eframe::NativeOptions {
-        viewport: egui::ViewportBuilder::default()
-            .with_title("QsLtd 更新包打包工具")
-            .with_inner_size([760.0, 680.0])
-            .with_resizable(true)
-            .with_min_inner_size([640.0, 480.0]),
+        viewport,
         ..Default::default()
     };
     eframe::run_native(
         "QsLtd 更新包打包工具",
         native_options,
-        Box::new(|_cc| Ok(Box::new(PackToolApp::new()) as Box<dyn eframe::App>)),
+        Box::new(|cc| Ok(Box::new(PackToolApp::new(cc)) as Box<dyn eframe::App>)),
     )
 }
 
@@ -702,5 +773,14 @@ mod tests {
         std::fs::write(out.join("version.json"), r#"{"version":"3.1.9"}"#).unwrap();
         assert_eq!(suggest_version(out.to_string_lossy().as_ref(), "qsm"), "3.1.10");
         let _ = std::fs::remove_dir_all(&base);
+    }
+
+    #[test]
+    fn window_icon_from_ico() {
+        // 验证 icon.ico 经 include_bytes! + ico 解码得到有效的窗口/任务栏图标
+        let icon = load_window_icon().expect("icon.ico 应能被解码为 IconData");
+        assert!(icon.rgba.len() == icon.width as usize * icon.height as usize * 4,
+            "rgba 字节数应等于 width*height*4");
+        assert!(icon.width > 0 && icon.height > 0);
     }
 }
