@@ -73,7 +73,7 @@ fn main() {
         cfg.manifest_urls.join(" → ")
     );
 
-    // 启动决策在窗口创建前完成：无更新 + launch 模式全程无窗口（对齐 zsui 版）
+    // 启动决策在窗口创建前完成：无更新 + launch 模式全程无窗口（早期 zsui 版亦采用此策略）
     let decision = match tokio::runtime::Builder::new_multi_thread().enable_all().build() {
         Ok(rt) => rt.block_on(flow::run_startup(&args, &cfg)),
         Err(e) => {

@@ -81,7 +81,7 @@ impl UpdateSettings {
 /// max_versions 默认值：当前版本 + 1 个旧版本（回滚资产）
 pub const DEFAULT_MAX_VERSIONS: usize = 2;
 
-/// 合法启动器界面模板键（与 `src/components/templates/` 下的组件一一对应）
+/// 合法启动器界面模板键（与 `src-egui/src/templates.rs` 下的五套布局一一对应）
 pub const VALID_LAUNCHER_TEMPLATES: &[&str] = &["A", "B", "C", "D", "E"];
 
 /// 解析生效的启动器界面模板：命令行 > update.json > 内置默认

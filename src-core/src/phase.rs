@@ -1,10 +1,10 @@
 //! 阶段数据与派生视图模型（UI 无关）
 //!
-//! 由 `src-tauri/src/updater.rs` 的 `PhasePayload` 与前端
-//! `src/components/templates/usePhase.js` 的派生逻辑合并抽离而来：
+//! 由 `src-tauri/src/updater.rs`（Tauri 版，已于 2026-10-26 删除）的 `PhasePayload` 与前端
+//! `src/components/templates/usePhase.js`（Vue 版，随 Tauri 壳一并删除）的派生逻辑合并抽离而来：
 //! - `PhasePayload`：阶段事件载荷（字段名与 Tauri 版 serde 输出一一对应，
-//!   未来 src-tauri 迁移到本模块时事件结构不变）
-//! - [`PhaseHandle`]：后台线程 → UI 的共享快照句柄（egui/zsui 轮询式 UI 用）
+//!   结构保持稳定，便于其它推送式 UI 复用）
+//! - [`PhaseHandle`]：后台线程 → UI 的共享快照句柄（egui 轮询式 UI 用）
 //! - [`PhaseView`]：载荷 → 展示文本/状态的纯换算（不含布局与配色，
 //!   与 usePhase.js 逐项对应）
 //!
@@ -171,7 +171,7 @@ pub fn changelog_snapshot() -> Vec<String> {
 
 /// 共享阶段快照句柄（后台更新线程写、UI 线程读）
 ///
-/// egui 等轮询式 UI 每帧调用 [`PhaseHandle::snapshot`]；未来 Tauri 迁移时
+/// egui 等轮询式 UI 每帧调用 [`PhaseHandle::snapshot`]；未来若有其它推送式 UI 接入时
 /// 可在 `set` 处替换为事件 emit（载荷结构不变）。
 #[derive(Clone, Default)]
 pub struct PhaseHandle {

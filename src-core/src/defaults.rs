@@ -2,7 +2,7 @@
 //!
 //! 这些值同时被以下位置引用，保证「回退值」与「生成的配置模板」始终一致：
 //! - `config::generate_default_template()`：生成 update.json 模板时引用
-//! - `src-tauri` / `src-zsui` 的 `updater.rs`：命令行与 update.json 均未配置时的最终回退
+//! - `src-tauri` 的 `updater.rs`（Tauri 版，已于 2026-10-26 删除）：命令行与 update.json 均未配置时的最终回退（历史上亦含已删除的 `src-zsui`）
 //!
 //! 如需调整默认值，只改本文件一处，两套实现与配置模板同步生效。
 
@@ -17,7 +17,7 @@ pub const DEFAULT_APP_NAME: &str = "qsm";
 
 /// 默认启动器界面模板（launcher template）
 ///
-/// 可选值 A/B/C/D/E，对应 `src/components/templates/` 下五套独立布局
+/// 可选值 A/B/C/D/E，对应 `src-egui/src/templates.rs` 下五套独立布局
 /// （A 信息密度 · B 环形居中 · C 顶部步骤条 · D 极简留白 · E 日志为主）。
 /// 与 DEFAULT_MANIFEST_URLS 等一样：配置模板生成与两套实现的最终回退
 /// 都引用此处，改一处即全局生效。

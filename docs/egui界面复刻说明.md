@@ -1,7 +1,13 @@
 # src-egui：更新程序界面的 egui/eframe 复刻说明
 
-本文说明 `src-egui`（egui/eframe 0.35 原生 UI）与既有 Tauri + Vue 前端（`src/` + `src-tauri/`）
-的**对应关系、实现差异与已知限制**。
+> **状态：生产启动器壳（自 2026-10-26 起）**
+>
+> 经 Tauri vs egui 实测对比与产品定位评估，本 `src-egui` 已定为 **生产启动器壳**；
+> `src-tauri`（Tauri 2 + Vue 3）与 `src-zsui`（zsui 原生 UI）均已于 2026-10-26 删除，仓库仅剩 `src-egui` 单一 UI 实现 + 共享 `src-core`。
+> 决策依据与对比数据见 [`Tauri-vs-egui性能对比.md`](./Tauri-vs-egui性能对比.md) 与 [`选型决策记录.md`](./选型决策记录.md)。
+
+本文说明 `src-egui`（egui/eframe 0.35 原生 UI）与已删除的 Tauri + Vue 前端（`src/` + `src-tauri/`，均于 2026-10-26 删除）
+的**对应关系、实现差异与已知限制**（保留作为历史对照与设计溯源）。
 
 ## 一、交付物清单
 
@@ -20,19 +26,19 @@
 
 ## 二、复用改造：先把业务逻辑抽成共享模块
 
-为了避免「UI 换一套、业务重写一遍」，本次先把散落在 `src-tauri/src/updater.rs`、`src-zsui/src/updater.rs`（zsui 版已于 2026-10-26 弃用）以及前端 `src/composables/usePhase.js` 的内容上提到 `src-core`：
+为了避免「UI 换一套、业务重写一遍」，本次先把散落在 `src-tauri/src/updater.rs`（Tauri 版，已于 2026-10-26 删除）、`src-zsui/src/updater.rs`（zsui 版，已于 2026-10-26 删除）以及前端 `src/composables/usePhase.js`（Vue 版，随 Tauri 壳一并删除）的内容上提到 `src-core`：
 
 | 抽取内容 | 原位置 | 现位置 | 说明 |
 | --- | --- | --- | --- |
-| `PhasePayload`（阶段载荷字段与 serde 名） | Tauri `emit("update-phase", …)` 载荷 | `phase::PhasePayload` | 字段名与 Tauri 版完全一致，未来 Tauri 侧也可改用同一结构 |
+| `PhasePayload`（阶段载荷字段与 serde 名） | Tauri `emit("update-phase", …)` 载荷 | `phase::PhasePayload` | 字段名与 Tauri 版完全一致，未来其它推送式 UI 也可改用同一结构 |
 | `percent/size_text/speed_text/eta_text/show_progress/step` 派生 | `usePhase.js` | `phase::PhaseView` | UI 无关的显示层计算，任一 UI 直接复用 |
 | `format_bytes` / `fmt_mb` / `STEP_LABELS` / `resolve_template_key` | `usePhase.js` / `templates/index.js` | `phase.rs` | 含 `show_progress` 按 CSS 语义修正（见第四节第 6 条） |
-| `resolve_config` / `run_startup` / `run_update_flow` / `run_download_parts` / `SpeedTracker` / `resolve_launch_exe` / `launch_target` / `finish_and_launch` / `retry` | `src-tauri/src/updater.rs` + `src-zsui/src/updater.rs` | `flow.rs` | 两版合并去重，`src-egui` 直接调用同一条流水线 |
+| `resolve_config` / `run_startup` / `run_update_flow` / `run_download_parts` / `SpeedTracker` / `resolve_launch_exe` / `launch_target` / `finish_and_launch` / `retry` | `src-tauri/src/updater.rs` + `src-zsui/src/updater.rs`（两版均已于 2026-10-26 删除） | `flow.rs` | 两版合并去重，`src-egui` 直接调用同一条流水线 |
 
 受益面：
 
 - `src-egui` 后端业务流程与 Tauri 版**逐行相同**，不存在第二套实现；
-- `src-tauri` 经 `cargo check` 验证未被破坏（公开 API 保持兼容）；`src-zsui` 已弃用，保留仅作历史参考；
+- `src-tauri` 与 `src-zsui` 均已于 2026-10-26 删除；`src-core` 为共享逻辑，与外壳无关，保留；
 - 阶段/流程相关的纯逻辑进入 `src-core` 单测（本次 135 条全绿）。
 
 ## 三、对应关系
@@ -184,7 +190,7 @@
    若目标机器上这些字体都被移除，界面文字会退化为方块。
 4. **渐变/环形为近似实现。** 160deg 斜向渐变 → 纵向近似；`conic-gradient` → 64 段描边近似；
    spinner 的 `animation-timing-function` 复刻为匀速旋转。
-5. **仅 Windows 验证。** 与 `src-tauri` / `src-zsui` 相同，服务端操作（`sc`、`services`）、路径规则、
+5. **仅 Windows 验证。** 与已删除的 Tauri 版相同，服务端操作（`sc`、`services`）、路径规则、
    字体加载路径均为 Windows 语义；未在 Linux/macOS 上编译或运行。
 6. **无 WebView 层带来的能力缺失。** 没有 console、`--devtools`、热更新；调试需依赖 stderr 日志。
    若将来要在原生 UI 内嵌远端 HTML（如富文本更新公告），egui 版做不到，Tauri 版可以。
@@ -198,8 +204,8 @@
 | 项 | 命令 | 结果 |
 | --- | --- | --- |
 | 共享模块单测 | `cargo test --lib`（src-core） | **134 passed / 0 failed** |
-| 既有 Tauri 应用未被破坏 | `cargo check`（src-tauri） | Finished，无错误 |
-| 既有 zsui 原生版未被破坏 | `cargo check`（src-zsui） | Finished，无错误 |
+| 既有 Tauri 应用（src-tauri） | 已于 2026-10-26 删除，不再验证 |
+| 既有 zsui 原生版 | 已于 2026-10-26 删除，不再验证 |
 | egui debug 构建 | `cargo build -j 2`（src-egui） | Finished（55MB exe） |
 | egui release 构建 | `cargo build -j 2 --release` | Finished（15MB exe，16m41s） |
 | 可执行文件启动 | `.exe --check-only --app-name qsm`（debug + release 均跑） | 正常拉 manifest → 「已是最新版本: 0.4.27」→ 退出码 0 |
@@ -256,7 +262,7 @@ cargo run -p qsltdupdater-egui -- --app-name qsm
   | E | 标题 + 「共 N 项」+ 列表/空态 | 5215 | 781 | 已渲染 |
 
   E 的差异分散在主体区（每行条目一行差异），故下半部计数小；D 为内联样式，同理。
-- `cargo test --lib`（src-core）135 passed；src-tauri / src-zsui `cargo check` 通过；src-egui clippy 无警告。
+- `cargo test --lib`（src-core）135 passed；src-egui clippy 无警告。（`src-tauri` / `src-zsui` 已于 2026-10-26 删除，不再纳入验证。）
 
 注：manifest 覆盖参数为 `--manifest <地址>`（非 `--manifest-url`）。
 本机存在 `http_proxy` 代理变量，访问 127.0.0.1 的 mock 服务需设 `NO_PROXY=127.0.0.1,localhost`。

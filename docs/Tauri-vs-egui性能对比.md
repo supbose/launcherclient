@@ -1,7 +1,8 @@
 # Tauri 与 egui 桌面开发性能对比与选型建议
 
 > 生成时间：2026-10-26
-> 数据来源：**本仓库实测**（launcherclient 项目内同时存在 Tauri 版 `src-tauri` 与 egui 版 `src-egui`，是同一个"更新程序"应用的两套实现，界面、窗口尺寸、后端逻辑完全一致，是罕见的天然对照组）+ 公开资料交叉验证。
+> ⚠️ **状态说明**：本文为历史对照数据。`src-tauri`（Tauri 版）与 `src-zsui`（zsui 版）已于 2026-10-26 删除，仓库现仅保留 `src-egui` 单一生产壳 + 共享 `src-core`。下列对比基于删除前的同仓双实现实测，保留作为选型依据存档。
+> 数据来源：**本仓库实测**（launcherclient 项目内曾同时存在 Tauri 版 `src-tauri` 与 egui 版 `src-egui`，是同一个"更新程序"应用的两套实现，界面、窗口尺寸、后端逻辑完全一致，是罕见的天然对照组）+ 公开资料交叉验证。
 > 测试环境：Windows 11 x64 / release 构建（`opt-level=3, lto=true, strip=true`）/ 本地 mock 更新服务器（1.1MB 包、限速 ~200KB/s）/ 采样工具为自研 ctypes 脚本（ctypes + Win32 API，无第三方依赖）。
 
 ---
