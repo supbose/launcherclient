@@ -105,7 +105,7 @@
 
 | Vue 控件 / CSS 类 | egui 实现 | 关键参数 |
 | --- | --- | --- |
-| `.tpl-c__steps`（步骤条） | `templates::draw_steps` | 三段连接线贯穿圆点（完成段=绿、当前=蓝+光晕+外环描边、未达=灰） |
+| `.tpl-c__steps`（步骤条） | `templates::draw_steps` | 首尾对称内缩（`margin = dot_r+8`，不再贴右边界被裁剪）；三段连接线从圆点右缘贯穿到下一圆点左缘（完成段=绿、当前=蓝+光晕+外环描边、未达=灰） |
 | `.tpl-c__pct` 大号百分比 | `templates::metrics_row` | 数字 26px + `%` 14px |
 | `.tpl-c__bar` 进度条 | `widgets::progress_track` | 轨道 8px / 圆角 4 / `W10` 底 + 蓝→绿渐变填充 |
 | `.tpl-b__ring` 环形进度 | `widgets::progress_ring` | 外径 96px、描边 9px、内盘 `#1a2029`、中心百分比 + 副标题 |
@@ -276,3 +276,22 @@ cargo run -p qsltdupdater-egui -- --app-name qsm
 
 注：manifest 覆盖参数为 `--manifest <地址>`（非 `--manifest-url`）。
 本机存在 `http_proxy` 代理变量，访问 127.0.0.1 的 mock 服务需设 `NO_PROXY=127.0.0.1,localhost`。
+
+## 修正记录（2026-10-26 后续）
+
+1. **C 模板步骤条最右「完成」节点被裁剪**：原 `draw_steps` 节点圆心公式 `(2*i+1)*seg` 使第 4 个节点落在 `area.right()`（区域右边界），而 `painter_at(area)` 按区域矩形裁剪，圆点与标签超出右界被切（只露半截「完」字）。改为**首尾对称内缩**（`margin = dot_r + 8`、中间等分），连接线仍从圆点右缘连到下一圆点左缘，两端不再贴边、不被裁剪。
+2. **下载标题与徽标重复**：分卷下载时 `flow.rs` 曾同时把「分卷 x/y」写进标题 message 与右上角 badge，导致 C 模板标题「正在下载更新包（分卷 1/28）」与徽标「分卷 1/28」冗余拥挤。已将分卷下载的标题统一改为「正在下载更新包...」，分卷进度仅由徽标承载（与单包模式标题语义一致）。`src-core` 单测 135 passed 无回归。
+
+3. **检测更新态圆点"没显示完整"**：Checking 阶段 4 个节点均为 todo 态，原 todo 圆点仅用 `W12`（白色 12% 填充）+ `W18` 细描边，在 `#1e2430` 深色背景上填充近乎不可见，呈现"空心/没画满"的观感。已将 todo 圆点改为 `W18` 实心填充 + `text_alpha(80)` 更亮的环，使其清晰显示为完整圆。另将间距计算改为基于 `area.width()`（实际分配宽度）、圆点中心下移 3px，规避任何贴边裁切风险。
+
+## Windows 资源（图标 + 文件版本信息）
+
+参照 `SupboseService/QsLtdService` 的 `version.rc` / `build.rs` 模式，本启动器（src-egui）的 exe 图标与文件信息统一在 **`src-egui/version.rc`** 管理：
+
+- `VS_VERSION_INFO VERSIONINFO`：公司名（QsLtd）、文件描述（QsLtd 更新程序）、文件/产品版本（取自 Cargo `0.1.8` → `0.1.8.0`）、内部名/原始文件名（`launcherclient` / `launcherclient.exe`）、版权。
+- `StringFileInfo` 用 `080404b0`（中文 + Unicode 代码页 1200），与界面中文一致。
+- 图标：`1 ICON "assets/icon.ico"`（ID 1，保证被 Explorer 作为 exe 图标）。
+
+`src-egui/build.rs` 在 Windows 下调 `embed_resource::compile("version.rc", NONE).manifest_optional()` 编译嵌入；非 Windows 跳过。`rerun-if-changed` 已覆盖 `version.rc` 与 `assets/icon.ico`，改图标/版本无需手动清理缓存。
+
+> 旧实现是在 `build.rs` 运行时于 `$OUT_DIR` 生成 `app.rc`（仅图标一行）；现已由 `version.rc` 源文件取代，信息更完整。

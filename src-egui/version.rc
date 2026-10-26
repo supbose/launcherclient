@@ -1,0 +1,38 @@
+#include "winres.h"
+
+VS_VERSION_INFO VERSIONINFO
+FILEVERSION 0,1,8,0
+PRODUCTVERSION 0,1,8,0
+FILEFLAGSMASK 0x3fL
+#ifdef _DEBUG
+FILEFLAGS 0x1L
+#else
+FILEFLAGS 0x0L
+#endif
+FILEOS 0x40004L
+FILETYPE 0x1L
+FILESUBTYPE 0x0L
+BEGIN
+    BLOCK "StringFileInfo"
+    BEGIN
+        BLOCK "080404b0"
+        BEGIN
+            VALUE "CompanyName", "launcherclient\0"
+            VALUE "FileDescription", "通用启动器程序\0"
+            VALUE "FileVersion", "0.1.8.0\0"
+            VALUE "InternalName", "launcherclient\0"
+            VALUE "LegalCopyright", "Copyright (C) QsLtd. All rights reserved.\0"
+            VALUE "OriginalFilename", "launcherclient.exe\0"
+            VALUE "ProductName", "QsLtd 更新程序\0"
+            VALUE "ProductVersion", "0.1.8.0\0"
+        END
+    END
+    BLOCK "VarFileInfo"
+    BEGIN
+        VALUE "Translation", 0x804, 1200
+    END
+END
+
+// 图标与版本信息统一在本文件管理，由 build.rs 调 rc.exe 嵌入 exe。
+// 使用 ID 1 保证被 Windows Explorer 作为 exe 图标使用。
+1 ICON "assets/icon.ico"

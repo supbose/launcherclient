@@ -450,20 +450,29 @@ fn template_c(ui: &mut Ui, view: &PhaseView, retrying: bool, last_step: i32) -> 
 fn draw_steps(ui: &mut Ui, view: &PhaseView, width: f32, last_step: i32) {
     // 错误态保留最后到达的步骤（view.step() 返回 -2 表示保持不变）
     let step = if view.step() == -2 { last_step } else { view.step() };
-    let n = STEP_LABELS.len() as i32;
-    let seg = width / 7.0; // 7 等分：节点落在 1/3/5/7 段中心
-    let row_h = 37.0;
+    let n = STEP_LABELS.len() as f32; // 4.0
     let dot_r = 8.0;
+    let row_h = 37.0;
+    // 首尾对称内缩：首节点距左 margin、末节点距右 margin，中间等分。
+    // 若按旧式 (2*i+1)*seg 公式，第 4 个节点会落在 area.right()（区域右边界），
+    // 而 painter_at(area) 会按区域矩形裁剪，圆点与标签超出右边界被裁掉（"完成"只露半截）。
+    let margin = dot_r + 8.0; // 16.0：大于圆点半径且留出标签半宽余量，保证两端不贴边、不被裁剪
 
     let (area, _) = ui.allocate_exact_size(Vec2::new(width, row_h), Sense::hover());
     let painter = ui.painter_at(area);
-    let dot_y = area.top() + dot_r;
+    // 间距改用 area.width()（实际分配到的宽度），避免父容器夹紧导致末节点越过右界被裁。
+    let aw = area.width();
+    let spacing = (aw - 2.0 * margin) / (n - 1.0);
+    // 圆点中心下移 3px：避免正好压在区域上边界（抗锯齿裁掉顶部一丝）。
+    let dot_y = area.top() + dot_r + 3.0;
 
-    // 连接线（位于圆点之下，从节点 i 右缘贯穿到节点 i+1 左缘）
-    for i in 0..n - 1 {
-        let x0 = area.left() + (2 * i + 1) as f32 * seg + dot_r;
-        let x1 = area.left() + (2 * (i + 1) + 1) as f32 * seg - dot_r;
-        let done_seg = step >= 0 && i < step;
+    // 连接线（位于圆点中心高度，从节点 i 右缘到节点 i+1 左缘，不压圆点）
+    for i in 0..(STEP_LABELS.len() - 1) {
+        let xi = margin + i as f32 * spacing;
+        let xj = margin + (i + 1) as f32 * spacing;
+        let x0 = area.left() + xi + dot_r;
+        let x1 = area.left() + xj - dot_r;
+        let done_seg = step >= 0 && (i as i32) < step;
         painter.rect_filled(
             egui::Rect::from_min_max(Pos2::new(x0, dot_y - 1.0), Pos2::new(x1, dot_y + 1.0)),
             1.0,
@@ -473,11 +482,11 @@ fn draw_steps(ui: &mut Ui, view: &PhaseView, width: f32, last_step: i32) {
 
     // 节点 + 标签
     for (i, label) in STEP_LABELS.iter().enumerate() {
-        let i = i as i32;
-        let cx = area.left() + (2 * i + 1) as f32 * seg;
+        let i = i as f32;
+        let cx = area.left() + margin + i * spacing;
         let dot_c = Pos2::new(cx, dot_y);
-        let done = step >= 0 && i < step;
-        let on = i == step;
+        let done = step >= 0 && (i as i32) < step;
+        let on = (i as i32) == step;
         let err = on && view.stage() == Stage::Error;
         if err {
             widgets::status_dot(&painter, dot_c, dot_r, theme::DANGER, 4.0);
@@ -488,11 +497,12 @@ fn draw_steps(ui: &mut Ui, view: &PhaseView, width: f32, last_step: i32) {
         } else if done {
             widgets::status_dot(&painter, dot_c, dot_r, theme::SUCCESS, 0.0);
         } else {
-            painter.circle_filled(dot_c, dot_r, theme::W12);
-            painter.circle_stroke(dot_c, dot_r, Stroke::new(1.0, theme::W18));
+            // 未到达（todo）：实心可见灰填充 + 更亮的环，避免深色背景上显得"空心/没画满"。
+            painter.circle_filled(dot_c, dot_r, theme::W18);
+            painter.circle_stroke(dot_c, dot_r, Stroke::new(1.25, theme::text_alpha(80)));
         }
         painter.text(
-            Pos2::new(cx, area.top() + 25.5),
+            Pos2::new(cx, area.top() + 28.0),
             egui::Align2::CENTER_CENTER,
             *label,
             egui::FontId::proportional(11.0),

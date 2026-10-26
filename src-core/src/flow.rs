@@ -550,7 +550,7 @@ async fn run_download_parts(
 
     handle.set(PhasePayload::new(
         Stage::Downloading,
-        "正在下载更新包（分卷）...",
+        "正在下载更新包...",
         &format!("共 {} 卷", urls.len()),
         Some(0.0),
     ));
@@ -561,7 +561,9 @@ async fn run_download_parts(
         let mut t = tracker.lock().unwrap_or_else(|e| e.into_inner());
         let (should, speed) = t.tick(p.downloaded, p.percent() == Some(100.0));
         if should {
-            let msg = format!("正在下载更新包（分卷 {}/{}）...", i + 1, total);
+            // 标题只描述动作，分卷进度交由右上角徽标（"分卷 x/y"）展示，
+            // 避免标题与徽标同时出现"分卷 1/28"造成冗余拥挤（与单包模式标题语义一致）
+            let msg = "正在下载更新包...".to_string();
             // 总大小未知时按卷数估算百分比
             let percent = p
                 .percent()
