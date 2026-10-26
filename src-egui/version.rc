@@ -23,7 +23,7 @@ BEGIN
             VALUE "InternalName", "launcherclient\0"
             VALUE "LegalCopyright", "Copyright (C) QsLtd. All rights reserved.\0"
             VALUE "OriginalFilename", "launcherclient.exe\0"
-            VALUE "ProductName", "QsLtd 更新程序\0"
+            VALUE "ProductName", "通用启动器程序\0"
             VALUE "ProductVersion", "0.1.8.0\0"
         END
     END
