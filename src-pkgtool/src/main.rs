@@ -17,7 +17,9 @@
 use std::fs;
 use std::io::{Read, Write};
 use std::path::{Path, PathBuf};
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex};
+use std::time::Instant;
 
 use chrono::Utc;
 use egui::Context;
@@ -235,6 +237,36 @@ fn clean_old_packages(output_dir: &Path, app: &str, zip_name: &str) -> Vec<Strin
     deleted
 }
 
+/// 打包阶段名（顺序即执行顺序，UI 直接按此列表渲染阶段条）
+const STAGE_NAMES: [&str; 5] = ["展开文件清单", "压缩打包", "计算校验值", "切分分卷", "生成版本清单"];
+
+/// 打包进度快照（后台线程写、UI 线程读）
+#[derive(Clone)]
+struct Progress {
+    /// 当前阶段下标（0-based）
+    stage: usize,
+    /// 当前阶段内的完成比例 0.0~1.0
+    frac: f32,
+    /// 当前阶段内的细节文案，如「12 / 300 个文件」
+    detail: String,
+}
+
+impl Progress {
+    fn new(stage: usize, frac: f32, detail: impl Into<String>) -> Self {
+        Progress {
+            stage,
+            frac: frac.clamp(0.0, 1.0),
+            detail: detail.into(),
+        }
+    }
+
+    /// 总体百分比 0~100
+    fn percent(&self) -> f32 {
+        let total = STAGE_NAMES.len() as f32;
+        ((self.stage as f32 + self.frac) / total * 100.0).min(100.0)
+    }
+}
+
 /// 执行完整打包流程（纯逻辑，日志通过回调逐条输出，便于单测）
 /// 返回成功摘要字符串，错误带原因
 ///
@@ -245,11 +277,29 @@ fn pack_core(
     version: &str,
     changelog_input: &str,
     mut logln: impl FnMut(&str),
+    mut on_progress: impl FnMut(Progress),
+    cancel: &AtomicBool,
 ) -> Result<String, String> {
+    /// 取消检查：用户点「取消」后立即中止，返回 Err
+    macro_rules! check_cancel {
+        () => {
+            if cancel.load(Ordering::Relaxed) {
+                return Err("已取消".into());
+            }
+        };
+    }
+
     // 1. 展开配置项为实际文件清单
+    on_progress(Progress::new(0, 0.0, "扫描配置项"));
     let mut resolved: Vec<(PathBuf, String)> = Vec::new();
     let mut missing: Vec<String> = Vec::new();
-    for entry in &cfg.files {
+    for (i, entry) in cfg.files.iter().enumerate() {
+        check_cancel!();
+        on_progress(Progress::new(
+            0,
+            (i as f32 + 1.0) / cfg.files.len() as f32,
+            format!("{} / {} 项", i + 1, cfg.files.len()),
+        ));
         let found = resolve_entry(entry);
         if found.is_empty() {
             missing.push(entry.clone());
@@ -282,7 +332,14 @@ fn pack_core(
         let mut zip = zip::ZipWriter::new(file);
         // SimpleFileOptions = FileOptions<'static, ()>，默认压缩方式为 Deflated
         let options = zip::write::SimpleFileOptions::default();
-        for (src, arc) in &resolved {
+        let total = resolved.len();
+        for (i, (src, arc)) in resolved.iter().enumerate() {
+            check_cancel!();
+            on_progress(Progress::new(
+                1,
+                (i as f32 + 1.0) / total as f32,
+                format!("{} / {} 个文件", i + 1, total),
+            ));
             zip.start_file(arc, options)
                 .map_err(|e| format!("写入 {} 失败: {}", arc, e))?;
             let mut f = fs::File::open(src).map_err(|e| format!("打开 {} 失败: {}", src.display(), e))?;
@@ -292,24 +349,32 @@ fn pack_core(
     }
 
     // 3. 完整包大小与 sha256（分卷合并后客户端整体校验用）
+    check_cancel!();
+    on_progress(Progress::new(2, 0.2, "读取包体大小"));
     let size_bytes = fs::metadata(&zip_path).map_err(|e| e.to_string())?.len();
+    on_progress(Progress::new(2, 0.6, "计算 sha256"));
     let digest = sha256_file(&zip_path)?;
+    on_progress(Progress::new(2, 1.0, "校验完成"));
 
     // 4. 超限切分分卷
+    check_cancel!();
     let volume_size = cfg.volume_size_mb * 1024 * 1024;
     let parts = if size_bytes > volume_size {
         logln(&format!(
             "包体 {} 字节超过单卷上限 {} MB，正在切分分卷:",
             size_bytes, cfg.volume_size_mb
         ));
+        on_progress(Progress::new(3, 0.1, "切分中"));
         let ps = split_zip(&zip_path, volume_size)?;
         for (p, h) in &ps {
             logln(&format!("  {} ({} 字节, sha256 {})", p.display(), p.metadata().map(|m| m.len()).unwrap_or(0), &h[..16]));
         }
         fs::remove_file(&zip_path)
             .map_err(|e| format!("删除完整包失败: {}", e))?;
+        on_progress(Progress::new(3, 1.0, format!("{} 卷", ps.len())));
         ps
     } else {
+        on_progress(Progress::new(3, 1.0, "未超限，跳过"));
         Vec::new()
     };
 
@@ -344,12 +409,21 @@ fn pack_core(
     };
 
     // 6. 每个下载前缀生成一份 version 文件
+    check_cancel!();
+    on_progress(Progress::new(4, 0.1, "解析更新日志"));
     let release_date = Utc::now().format("%Y-%m-%dT%H:%M:%S.000Z").to_string();
     let version_files: Vec<PathBuf> = std::iter::once(output_dir.join("version.json"))
         .chain((2..=cfg.download_prefixes.len()).map(|i| output_dir.join(format!("version_{}.json", i))))
         .collect();
 
-    for (prefix, vfile) in cfg.download_prefixes.iter().zip(version_files.iter()) {
+    let npre = cfg.download_prefixes.len().max(1);
+    for (i, (prefix, vfile)) in cfg.download_prefixes.iter().zip(version_files.iter()).enumerate() {
+        check_cancel!();
+        on_progress(Progress::new(
+            4,
+            0.1 + 0.7 * ((i as f32 + 1.0) / npre as f32),
+            format!("{} / {} 份清单", i + 1, npre),
+        ));
         let mut map = serde_json::Map::new();
         map.insert("version".into(), serde_json::json!(version));
         map.insert("update".into(), serde_json::json!(true));
@@ -382,10 +456,12 @@ fn pack_core(
     }
 
     // 7. 清理旧包
+    on_progress(Progress::new(4, 0.92, "清理旧包"));
     let deleted = clean_old_packages(output_dir, &cfg.app_name, &zip_name);
     for name in &deleted {
         logln(&format!("已删除旧包: {}", name));
     }
+    on_progress(Progress::new(4, 1.0, "完成"));
 
     let summary = format!(
         "打包完成: {}\n大小: {} 字节\nsha256: {}\n下载地址: {}{}",
