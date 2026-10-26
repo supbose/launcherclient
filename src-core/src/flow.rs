@@ -26,7 +26,7 @@ use crate::defaults::{DEFAULT_APP_NAME, DEFAULT_MANIFEST_URLS, PROGRESS_INTERVAL
 use crate::download;
 use crate::install;
 use crate::manifest;
-use crate::phase::{fmt_mb, PhaseHandle, PhasePayload, Stage};
+use crate::phase::{self, fmt_mb, PhaseHandle, PhasePayload, Stage};
 use crate::services;
 
 /// 配置合并后的生效配置（优先级：命令行 > update.json > 默认值）
@@ -232,6 +232,10 @@ pub async fn run_startup(args: &CliArgs, cfg: &ResolvedConfig) -> StartupDecisio
         }
     };
 
+    // 登记更新日志：此后所有阶段载荷都携带它，界面在发现新版本起到
+    // 更新完成全程可见（下载/安装期间用户正好有空看更新了什么）
+    phase::set_changelog(m.changelog.clone());
+
     if !manifest::need_update(&current_version, &m) {
         eprintln!("[更新器] 已是最新版本: {}", current_version);
         // 拉起目标程序后静默退出；launch 失败时显示错误窗口让用户知道
@@ -362,6 +366,9 @@ async fn run_check_flow(args: &CliArgs, cfg: &ResolvedConfig, handle: &PhaseHand
             return Err(e);
         }
     };
+
+    // 登记更新日志：此后所有阶段载荷都携带它（重试路径同样要带）
+    phase::set_changelog(m.changelog.clone());
 
     if !manifest::need_update(&current_version, &m) {
         eprintln!("[更新器] 已是最新版本: {}", current_version);

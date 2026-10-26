@@ -11,7 +11,7 @@
 //! 业务布局与配色由各 UI 实现自己持有（Vue 模板 / egui 模板），互不覆盖。
 
 use std::sync::atomic::{AtomicBool, Ordering};
-use std::sync::{Arc, Mutex};
+use std::sync::{Arc, Mutex, OnceLock};
 
 use serde::Serialize;
 
@@ -104,7 +104,7 @@ impl PhasePayload {
             downloaded_bytes: None,
             total_bytes: None,
             speed_bps: None,
-            changelog: Vec::new(),
+            changelog: changelog_snapshot(),
             template: String::new(),
             badge: None,
         }
@@ -128,7 +128,7 @@ impl PhasePayload {
             downloaded_bytes: Some(downloaded),
             total_bytes: total,
             speed_bps,
-            changelog: Vec::new(),
+            changelog: changelog_snapshot(),
             template: String::new(),
             badge,
         }
@@ -138,6 +138,35 @@ impl PhasePayload {
     pub fn stage(&self) -> Stage {
         Stage::from_stage_str(&self.stage)
     }
+}
+
+/// 进程级更新日志副本（对齐 Tauri 版 `set_changelog` / `changelog_snapshot`）
+///
+/// manifest 拉取成功后登记一次，此后 [`PhasePayload::new`] / [`PhasePayload::download`]
+/// 构造的每个阶段载荷都自动携带它 —— 界面在「发现新版本 → 更新完成」全程可见
+/// 更新日志（下载/安装期间用户正好有空看更新了什么）。
+///
+/// manifest 拉取之前产生的阶段（检测中）日志为空，界面据此不展示该区块。
+static CHANGELOG: OnceLock<Mutex<Vec<String>>> = OnceLock::new();
+
+fn changelog_cell() -> &'static Mutex<Vec<String>> {
+    CHANGELOG.get_or_init(|| Mutex::new(Vec::new()))
+}
+
+/// 登记本次更新的更新日志（manifest.changelog）
+pub fn set_changelog(items: Vec<String>) {
+    let mut guard = changelog_cell()
+        .lock()
+        .unwrap_or_else(|poisoned| poisoned.into_inner());
+    *guard = items;
+}
+
+/// 读取当前生效的更新日志副本
+pub fn changelog_snapshot() -> Vec<String> {
+    changelog_cell()
+        .lock()
+        .unwrap_or_else(|poisoned| poisoned.into_inner())
+        .clone()
 }
 
 /// 共享阶段快照句柄（后台更新线程写、UI 线程读）
@@ -470,5 +499,22 @@ mod tests {
         assert!(h.is_critical());
         h.set(PhasePayload::new(Stage::Done, "", "", None));
         assert!(!h.is_critical());
+    }
+
+    #[test]
+    fn changelog_registered_then_attached_to_payload() {
+        // 回归：更新日志必须随阶段载荷一起进 UI（生产环境曾整段消失）
+        set_changelog(vec!["修复了某些bugs".to_string()]);
+        let p = PhasePayload::new(Stage::Available, "发现新版本", "0.0.0 → 1.0.0", None);
+        assert_eq!(p.changelog, vec!["修复了某些bugs".to_string()]);
+        // 下载阶段同样携带（Tauri 版 push_phase 统一注入）
+        let d = PhasePayload::download("下载", None, Some(10.0), 1024, Some(2048), Some(2048));
+        assert_eq!(d.changelog, vec!["修复了某些bugs".to_string()]);
+        // 副本可被覆盖（重试路径重新登记）
+        set_changelog(vec!["第二条".to_string()]);
+        assert_eq!(changelog_snapshot(), vec!["第二条".to_string()]);
+        // 复位，避免影响并行用例
+        set_changelog(Vec::new());
+        assert!(changelog_snapshot().is_empty());
     }
 }

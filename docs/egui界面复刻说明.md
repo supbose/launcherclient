@@ -20,8 +20,7 @@
 
 ## 二、复用改造：先把业务逻辑抽成共享模块
 
-为了避免「UI 换一套、业务重写一遍」，本次先把散落在 `src-tauri/src/updater.rs`、`src-zsui/src/updater.rs`
-以及前端 `src/composables/usePhase.js` 的内容上提到 `src-core`：
+为了避免「UI 换一套、业务重写一遍」，本次先把散落在 `src-tauri/src/updater.rs`、`src-zsui/src/updater.rs`（zsui 版已于 2026-10-26 弃用）以及前端 `src/composables/usePhase.js` 的内容上提到 `src-core`：
 
 | 抽取内容 | 原位置 | 现位置 | 说明 |
 | --- | --- | --- | --- |
@@ -32,9 +31,9 @@
 
 受益面：
 
-- `src-egui` 后端业务流程与 Tauri/zsui 版**逐行相同**，不存在第二套实现；
-- `src-tauri` / `src-zsui` 经 `cargo check` 验证未被破坏（公开 API 保持兼容）；
-- 阶段/流程相关的纯逻辑进入 `src-core` 单测（本次 134 条全绿）。
+- `src-egui` 后端业务流程与 Tauri 版**逐行相同**，不存在第二套实现；
+- `src-tauri` 经 `cargo check` 验证未被破坏（公开 API 保持兼容）；`src-zsui` 已弃用，保留仅作历史参考；
+- 阶段/流程相关的纯逻辑进入 `src-core` 单测（本次 135 条全绿）。
 
 ## 三、对应关系
 
@@ -235,11 +234,29 @@ cargo run -p qsltdupdater-egui -- --app-name qsm
 | --- | --- | --- |
 | 安装完成后目标程序已启动，但更新器窗口停在「更新完成」不关闭 | 共享 `flow.rs` 自动拉起目标程序成功后只返回 `Ok(())`，无退出信号（Tauri 版在自家 updater.rs 里是 `app.exit(0)`，egui 版走了共享 flow 就缺了这一步） | `PhaseHandle` 新增 `request_exit()` / `exit_requested()` 退出信号；`flow.rs` 三处启动成功后置位（`run_update_flow` 完成分支、`run_check_flow` 无更新分支、`finish_and_launch`）；`app.rs` 帧循环轮询到信号即发 `ViewportCommand::Close`，原 `EXIT_AFTER_FINISH` 静态标志随之移除 |
 | 更新器窗口未水平垂直居中 | `tauri.conf.json` 有 `"center": true`，而 egui 的 `ViewportBuilder` 无 `with_center`，winit 用默认级联位置 | `app.rs` 首帧（`logic()`）读 `ViewportInfo.monitor_size` + `outer_rect`，按屏幕中心发 `ViewportCommand::OuterPosition`；窗口改为 `with_visible(false)` 隐藏启动、居中完成后再显示，避免「先在默认位置闪现再跳中心」；约 1s 拿不到显示器信息时兜底直接显示 |
+| 生产环境下「更新日志」整段消失 | 共享 `flow.rs` 从未把 `manifest.changelog` 写进阶段载荷（`PhasePayload::new` 恒 `changelog: Vec::new()`），而 Tauri 版靠 `set_changelog()` + `push_phase()` 统一注入 —— 走共享 flow 的 egui 版就漏了这一整环 | `phase.rs` 增加进程级更新日志副本 `set_changelog()` / `changelog_snapshot()`（与 Tauri 版同语义），`PhasePayload::new` / `PhasePayload::download` 构造时自动携带；`flow.rs` 在 `run_startup` / `run_check_flow` 拿到 manifest 后登记一次，此后「发现新版本 → 下载 → 安装 → 完成」全程可见更新日志 |
 
 验证（debug 构建）：
 
 - 居中：1920×1080 下窗口实测中心 `(960,540)`，偏差 `(0,0)`，窗口可见。
 - 自动关窗：真实端点全流程（发现 0.4.27 → 28 分卷下载 → 合并 → SHA256 → 服务跳过 → 安装 → 清理 → 启动 `qsm.exe`）后更新器进程 **51.1s 自动退出，退出码 0**；日志确认 `QSLTD_FROM_UPDATER=1` 已注入（目标程序跳过更新检测）。
-- `cargo test --lib`（src-core）134 passed；src-tauri / src-zsui `cargo check` 通过；src-egui clippy 无警告。
+- 更新日志：mock manifest（3 条 changelog）跑真实流程，用**像素对照实验**判定（因无法直接读图）：
+  「有 changelog」vs「无 changelog」的 Available 阶段截图差异 5187px，其中 **5096px 连续集中在 y233-398**（日志卡片区域）；
+  「无 changelog」vs「无 changelog」基线差异 **0px**（画面完全确定，无动画噪声干扰）。
+  截图存 `docs/egui-preview-shots/egui_C_changelog.png` 与 `egui_C_no-changelog.png`。
+  生产 manifest 确认带 `changelog` 字段（`["修复了某些bugs"]`），故问题在客户端而非服务端。
+- **五套模板逐个验证更新日志**（真实流程 + 像素对照，「有/无 changelog」差异）：
+
+  | 模板 | 日志呈现方式 | 差异像素 | 下半部差异 | 判定 |
+  | --- | --- | --- | --- | --- |
+  | A | 吸底日志卡（动态高度） | 7198 | 4456 | 已渲染 |
+  | B | 固定 96px 日志卡（列表滚动） | 5584 | 5071 | 已渲染 |
+  | C | 吸底日志卡（默认模板） | 6700 | 5156 | 已渲染 |
+  | D | 内联日志（无卡片，分隔线） | 5107 | 3268 | 已渲染 |
+  | E | 标题 + 「共 N 项」+ 列表/空态 | 5215 | 781 | 已渲染 |
+
+  E 的差异分散在主体区（每行条目一行差异），故下半部计数小；D 为内联样式，同理。
+- `cargo test --lib`（src-core）135 passed；src-tauri / src-zsui `cargo check` 通过；src-egui clippy 无警告。
 
 注：manifest 覆盖参数为 `--manifest <地址>`（非 `--manifest-url`）。
+本机存在 `http_proxy` 代理变量，访问 127.0.0.1 的 mock 服务需设 `NO_PROXY=127.0.0.1,localhost`。
