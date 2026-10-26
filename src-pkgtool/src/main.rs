@@ -398,6 +398,70 @@ fn pack_core(
     Ok(summary)
 }
 
+/// 左侧导航页
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum Page {
+    Config,
+    Files,
+    Version,
+    Log,
+}
+
+impl Page {
+    fn title(self) -> &'static str {
+        match self {
+            Page::Config => "配置",
+            Page::Files => "打包文件",
+            Page::Version => "下载与版本",
+            Page::Log => "日志",
+        }
+    }
+}
+
+/// 历史构建条目（只读展示）
+struct HistoryItem {
+    name: String,
+    size: String,
+    date: String,
+}
+
+/// 扫描输出目录下 `{app}_*.zip` 历史包（只读展示用）
+fn scan_history(output_dir: &str, app: &str) -> Vec<HistoryItem> {
+    let mut items = Vec::new();
+    if let Ok(entries) = std::fs::read_dir(output_dir) {
+        let prefix = format!("{}_", app);
+        for e in entries.flatten() {
+            let path = e.path();
+            if !path.is_file() {
+                continue;
+            }
+            let name = path.file_name().unwrap().to_string_lossy().to_string();
+            if !name.starts_with(&prefix) || !name.contains(".zip") {
+                continue;
+            }
+            if let Ok(meta) = std::fs::metadata(&path) {
+                let size = meta.len();
+                let size_str = if size >= 1024 * 1024 {
+                    format!("{:.1} MB", size as f64 / 1024.0 / 1024.0)
+                } else {
+                    format!("{} B", size)
+                };
+                let date = meta
+                    .modified()
+                    .ok()
+                    .map(|t| {
+                        let dt: chrono::DateTime<Utc> = t.into();
+                        dt.format("%Y-%m-%d %H:%M").to_string()
+                    })
+                    .unwrap_or_default();
+                items.push(HistoryItem { name, size: size_str, date });
+            }
+        }
+    }
+    items.sort_by(|a, b| b.name.cmp(&a.name));
+    items
+}
+
 /// 打包工具应用状态
 struct PackToolApp {
     config: Config,
@@ -405,6 +469,7 @@ struct PackToolApp {
     changelog: String,
     log: Arc<Mutex<Vec<String>>>,
     running: Arc<Mutex<bool>>,
+    current_page: Page,
 }
 
 impl PackToolApp {
@@ -419,6 +484,7 @@ impl PackToolApp {
             changelog: String::new(),
             log: Arc::new(Mutex::new(Vec::new())),
             running: Arc::new(Mutex::new(false)),
+            current_page: Page::Config,
         }
     }
 
@@ -456,130 +522,168 @@ impl PackToolApp {
             ctx.request_repaint();
         });
     }
+
+    /// 配置页：基础信息 + 保存 + 历史构建
+    fn page_config(&mut self, ui: &mut egui::Ui) {
+        ui.heading("配置");
+        ui.horizontal(|ui| {
+            ui.label("应用名:");
+            ui.text_edit_singleline(&mut self.config.app_name);
+        });
+        ui.label("用于 {app}_{version}.zip 与旧包清理匹配");
+        ui.horizontal(|ui| {
+            ui.label("输出目录:");
+            ui.text_edit_singleline(&mut self.config.output_dir);
+            if ui.button("浏览").clicked() {
+                if let Some(p) = rfd::FileDialog::new().pick_folder() {
+                    self.config.output_dir = p.to_string_lossy().replace('\\', "/");
+                }
+            }
+        });
+        ui.horizontal(|ui| {
+            ui.label("单卷大小(MB):");
+            ui.add(egui::DragValue::new(&mut self.config.volume_size_mb).range(1..=2048));
+            ui.label("包体超过则切分 .001/.002 分卷");
+        });
+        if ui.button("保存配置").clicked() {
+            match self.config.save() {
+                Ok(_) => self.log.lock().unwrap().push("配置已保存到 packtool.json".into()),
+                Err(e) => self.log.lock().unwrap().push(format!("保存失败: {}", e)),
+            }
+        }
+        ui.separator();
+        ui.label("历史构建");
+        let history = scan_history(&self.config.output_dir, &self.config.app_name);
+        egui::ScrollArea::vertical().max_height(180.0).show(ui, |ui| {
+            if history.is_empty() {
+                ui.label("（暂无历史包）");
+            } else {
+                for h in &history {
+                    ui.label(format!("{}   {}   {}", h.name, h.date, h.size));
+                }
+            }
+        });
+    }
+
+    /// 打包文件页：文件/目录列表
+    fn page_files(&mut self, ui: &mut egui::Ui) {
+        ui.heading("打包文件");
+        ui.label("待打包文件 / 目录（目录以 /* 结尾表示内容平铺到 zip 根）:");
+        let mut remove_file: Option<usize> = None;
+        for (i, f) in self.config.files.iter_mut().enumerate() {
+            ui.horizontal(|ui| {
+                ui.text_edit_singleline(f);
+                if ui.button("删除").clicked() {
+                    remove_file = Some(i);
+                }
+            });
+        }
+        if let Some(i) = remove_file {
+            self.config.files.remove(i);
+        }
+        ui.horizontal(|ui| {
+            if ui.button("+ 文件").clicked() {
+                if let Some(p) = rfd::FileDialog::new().pick_file() {
+                    self.config.files.push(p.to_string_lossy().replace('\\', "/"));
+                }
+            }
+            if ui.button("+ 目录").clicked() {
+                if let Some(p) = rfd::FileDialog::new().pick_folder() {
+                    self.config.files.push(p.to_string_lossy().replace('\\', "/"));
+                }
+            }
+        });
+    }
+
+    /// 下载与版本页：前缀 + 版本号 + 更新日志
+    fn page_version(&mut self, ui: &mut egui::Ui) {
+        ui.heading("下载与版本");
+        ui.label("下载前缀（每个前缀各生成一份 version 文件）:");
+        let mut remove_pre: Option<usize> = None;
+        for (i, p) in self.config.download_prefixes.iter_mut().enumerate() {
+            ui.horizontal(|ui| {
+                ui.text_edit_singleline(p);
+                if ui.button("删除").clicked() {
+                    remove_pre = Some(i);
+                }
+            });
+        }
+        if let Some(i) = remove_pre {
+            self.config.download_prefixes.remove(i);
+        }
+        if ui.button("+ 添加前缀").clicked() {
+            self.config.download_prefixes.push(String::new());
+        }
+        ui.separator();
+        ui.horizontal(|ui| {
+            ui.label("版本号:");
+            ui.text_edit_singleline(&mut self.version);
+            if ui.button("↻ 取默认（末位+1）").clicked() {
+                self.version = suggest_version(&self.config.output_dir, &self.config.app_name);
+            }
+        });
+        ui.label("更新日志（多条用 ; 或换行分隔；留空则沿用上一版）:");
+        ui.text_edit_multiline(&mut self.changelog);
+    }
+
+    /// 日志页
+    fn page_log(&mut self, ui: &mut egui::Ui) {
+        ui.heading("日志");
+        ui.horizontal(|ui| {
+            if ui.button("清空日志").clicked() {
+                self.log.lock().unwrap().clear();
+            }
+        });
+        egui::ScrollArea::vertical().stick_to_bottom(true).show(ui, |ui| {
+            let log = self.log.lock().unwrap();
+            for line in log.iter() {
+                ui.monospace(line);
+            }
+        });
+    }
 }
 
 impl eframe::App for PackToolApp {
     fn ui(&mut self, ui: &mut egui::Ui, _frame: &mut eframe::Frame) {
         egui::CentralPanel::default().show(ui, |ui| {
-            ui.heading("QsLtd 更新包打包工具");
-            ui.label("versionTools.py 的纯 Rust GUI 版 · 配置存于 packtool.json");
-
-            egui::ScrollArea::vertical().show(ui, |ui| {
-                // ---- 配置区 ----
-                ui.collapsing("配置（FILES / 前缀 / 输出目录）", |ui| {
-                    ui.horizontal(|ui| {
-                        ui.label("应用名:");
-                        ui.text_edit_singleline(&mut self.config.app_name);
-                        ui.label("用于 {app}_{version}.zip 与旧包清理匹配");
-                    });
-                    ui.horizontal(|ui| {
-                        ui.label("输出目录:");
-                        ui.text_edit_singleline(&mut self.config.output_dir);
-                        if ui.button("浏览").clicked() {
-                            if let Some(p) = rfd::FileDialog::new().pick_folder() {
-                                self.config.output_dir =
-                                    p.to_string_lossy().replace('\\', "/");
-                            }
-                        }
-                    });
-                    ui.horizontal(|ui| {
-                        ui.label("单卷大小(MB):");
-                        ui.add(egui::DragValue::new(&mut self.config.volume_size_mb).range(1..=2048));
-                        ui.label("包体超过则切分 .001/.002 分卷");
-                    });
-
-                    ui.separator();
-                    ui.label("待打包文件 / 目录（目录以 /* 结尾表示内容平铺到 zip 根）:");
-                    let mut remove_file: Option<usize> = None;
-                    for (i, f) in self.config.files.iter_mut().enumerate() {
-                        ui.horizontal(|ui| {
-                            ui.text_edit_singleline(f);
-                            if ui.button("删除").clicked() {
-                                remove_file = Some(i);
-                            }
-                        });
-                    }
-                    if let Some(i) = remove_file {
-                        self.config.files.remove(i);
-                    }
-                    ui.horizontal(|ui| {
-                        if ui.button("+ 文件").clicked() {
-                            if let Some(p) = rfd::FileDialog::new().pick_file() {
-                                self.config.files.push(p.to_string_lossy().replace('\\', "/"));
-                            }
-                        }
-                        if ui.button("+ 目录").clicked() {
-                            if let Some(p) = rfd::FileDialog::new().pick_folder() {
-                                self.config.files.push(p.to_string_lossy().replace('\\', "/"));
-                            }
-                        }
-                    });
-
-                    ui.separator();
-                    ui.label("下载前缀（每个前缀各生成一份 version 文件）:");
-                    let mut remove_pre: Option<usize> = None;
-                    for (i, p) in self.config.download_prefixes.iter_mut().enumerate() {
-                        ui.horizontal(|ui| {
-                            ui.text_edit_singleline(p);
-                            if ui.button("删除").clicked() {
-                                remove_pre = Some(i);
-                            }
-                        });
-                    }
-                    if let Some(i) = remove_pre {
-                        self.config.download_prefixes.remove(i);
-                    }
-                    if ui.button("+ 添加前缀").clicked() {
-                        self.config.download_prefixes.push(String::new());
-                    }
-
-                    ui.separator();
-                    if ui.button("保存配置").clicked() {
-                        match self.config.save() {
-                            Ok(_) => self.log.lock().unwrap().push("配置已保存到 packtool.json".into()),
-                            Err(e) => self.log.lock().unwrap().push(format!("保存失败: {}", e)),
-                        }
-                    }
-                });
-
-                // ---- 版本号 ----
-                ui.horizontal(|ui| {
-                    ui.label("版本号:");
-                    ui.text_edit_singleline(&mut self.version);
-                    if ui.button("↻ 取默认（末位+1）").clicked() {
-                        self.version = suggest_version(&self.config.output_dir, &self.config.app_name);
-                    }
-                });
-
-                // ---- 更新日志 ----
-                ui.label("更新日志（多条用 ; 或换行分隔；留空则沿用上一版）:");
-                ui.text_edit_multiline(&mut self.changelog);
-
-                // ---- 操作 ----
-                ui.horizontal(|ui| {
+            // 顶部：标题 + 常驻打包按钮
+            ui.horizontal(|ui| {
+                ui.heading("QsLtd 更新包打包工具");
+                ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
                     let running = *self.running.lock().unwrap();
-                    if ui.button("打包").clicked() && !running {
-                        self.start_pack(ui.ctx().clone());
-                    }
                     if running {
                         ui.label("打包中…");
                     }
-                    if ui.button("清空日志").clicked() {
-                        self.log.lock().unwrap().clear();
+                    if ui
+                        .add_enabled(!running, egui::Button::new("打包"))
+                        .clicked()
+                    {
+                        self.start_pack(ui.ctx().clone());
                     }
                 });
+            });
+            ui.separator();
 
-                // ---- 日志 ----
-                ui.separator();
-                ui.label("日志");
-                egui::ScrollArea::vertical()
-                    .stick_to_bottom(true)
-                    .show(ui, |ui| {
-                        let log = self.log.lock().unwrap();
-                        for line in log.iter() {
-                            ui.monospace(line);
+            // 左导航 + 右内容
+            egui::Panel::left("nav")
+                .resizable(false)
+                .default_size(150.0)
+                .show(ui, |ui| {
+                    let pages = [Page::Config, Page::Files, Page::Version, Page::Log];
+                    for p in pages {
+                        if ui
+                            .selectable_label(self.current_page == p, p.title())
+                            .clicked()
+                        {
+                            self.current_page = p;
                         }
-                    });
+                    }
+                });
+            egui::CentralPanel::default().show(ui, |ui| match self.current_page {
+                Page::Config => self.page_config(ui),
+                Page::Files => self.page_files(ui),
+                Page::Version => self.page_version(ui),
+                Page::Log => self.page_log(ui),
             });
         });
     }
