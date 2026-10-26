@@ -18,6 +18,26 @@
 
 
 
+
+## v0.1.18 (2026-10-26)
+### 🚀 新增功能
+
+- [444ed4d](/-/commit/444ed4df21482b39689acb51738eda960db58761) 新增(src-egui): 实现更新检测的懒加载窗口与加载状态反馈 (docs/egui界面复刻说明.md, src-egui/src/app.rs, src-egui/src/main.rs)
+
+### ♻️ 代码重构
+
+- [79cf4be](/-/commit/79cf4be17d9d47ba59ba3ee28f838a0ba8bbaebd) 重构(src-egui): 修复步骤条裁剪与下载标题冗余问题，更新Windows资源管理 (docs/egui界面复刻说明.md, src-core/src/flow.rs, src-egui/build.rs, src-egui/src/templates.rs, src-egui/version.rc)
+- [5dbd09a](/-/commit/5dbd09af1e206268f9c9e5ffdc710cdd232dbaa1) 重构(egui): 重构步骤条绘制逻辑并优化进度连接线样式 (src-egui/src/templates.rs)
+
+### 📝 文档更新
+
+- [fa4fd46](/-/commit/fa4fd4690a846b46b065a5a1926c183a4681c027) 文档(.workbuddy): 更新版本信息与修复步骤条及下载标题问题 (.workbuddy/memory/2026-10-26.md, src-egui/version.rc)
+- [67c44d4](/-/commit/67c44d44dc861d2640c57b4291dce3848758e1ee) 文档(.workbuddy): 更新步骤条实现说明及添加模板美化优化记录 (.workbuddy/memory/2026-10-26.md, docs/egui界面复刻说明.md)
+
+### 📦 构建系统
+
+- [da9001c](/-/commit/da9001ccd2bb50baa9f9466bd0f5305d5dbf2b0a) 构建(egui): 修改二进制名称为 launcherclient (.workbuddy/memory/2026-10-26.md, src-egui/Cargo.toml)
+
 ## v0.1.17 (2026-10-26)
 ### 🚀 新增功能
 
