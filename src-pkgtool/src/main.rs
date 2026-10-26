@@ -462,24 +462,34 @@ fn scan_history(output_dir: &str, app: &str) -> Vec<HistoryItem> {
     items
 }
 
-/// 主题色板（浅色商务风，呼应 QsLtd 品牌蓝）
+/// 主题色板（浅色清爽风：白底卡片 + 极浅侧栏）
+/// 设计原则：整屏只有「打包」按钮用实心品牌蓝，其余靠留白与层级区分，避免色块堆砌。
 const ACCENT: egui::Color32 = egui::Color32::from_rgb(0x2F, 0x6D, 0xF6);
 const ACCENT_TEXT: egui::Color32 = egui::Color32::WHITE;
-const SIDEBAR_BG: egui::Color32 = egui::Color32::from_rgb(0xF4, 0xF6, 0xFB);
-const CARD_BG: egui::Color32 = egui::Color32::from_rgb(0xF7, 0xF9, 0xFC);
-const BORDER: egui::Color32 = egui::Color32::from_rgb(0xE3, 0xE7, 0xEE);
+/// 导航选中态：淡蓝底 + 蓝字（替代实心填充，更清爽）
+const ACCENT_SOFT: egui::Color32 = egui::Color32::from_rgb(0xEA, 0xF1, 0xFE);
+const SIDEBAR_BG: egui::Color32 = egui::Color32::from_rgb(0xFA, 0xFB, 0xFC);
+const CARD_BG: egui::Color32 = egui::Color32::WHITE;
+const BORDER: egui::Color32 = egui::Color32::from_rgb(0xED, 0xEF, 0xF2);
 const INK: egui::Color32 = egui::Color32::from_rgb(0x37, 0x41, 0x51);
+const MUTED: egui::Color32 = egui::Color32::from_rgb(0x6B, 0x72, 0x80);
 
-/// 在 content 区渲染一个带标题的分组卡片：标题用品牌色，下方浅底圆角框。
+/// 在 content 区渲染一个带标题的分组卡片：左侧品牌色竖条 + 深色标题，下方白色圆角卡片。
 fn section<R>(ui: &mut egui::Ui, title: &str, content: impl FnOnce(&mut egui::Ui) -> R) -> R {
-    ui.label(egui::RichText::new(title).size(13.0).strong().color(ACCENT));
+    ui.horizontal(|ui| {
+        let (rect, _) = ui.allocate_exact_size(egui::vec2(3.0, 15.0), egui::Sense::hover());
+        ui.painter().rect_filled(rect, 1.5, ACCENT);
+        ui.add_space(7.0);
+        ui.label(egui::RichText::new(title).size(13.0).strong().color(INK));
+    });
+    ui.add_space(8.0);
     let r = egui::Frame::default()
         .fill(CARD_BG)
         .stroke(egui::Stroke::new(1.0, BORDER))
-        .inner_margin(egui::Margin::symmetric(12, 10))
-        .corner_radius(8.0)
+        .inner_margin(egui::Margin::symmetric(14, 12))
+        .corner_radius(10.0)
         .show(ui, |ui| content(ui));
-    ui.add_space(14.0);
+    ui.add_space(18.0);
     r.inner
 }
 
@@ -594,23 +604,47 @@ impl PackToolApp {
         });
         section(ui, "历史构建", |ui| {
             let history = scan_history(&self.config.output_dir, &self.config.app_name);
-            egui::ScrollArea::vertical().max_height(200.0).show(ui, |ui| {
-                if history.is_empty() {
-                    ui.label(egui::RichText::new("（暂无历史包）").weak());
-                } else {
-                    for h in &history {
-                        ui.horizontal(|ui| {
-                            ui.label(egui::RichText::new(&h.name).strong());
-                            ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                                ui.label(egui::RichText::new(&h.size).weak());
-                                ui.add_space(14.0);
-                                ui.label(egui::RichText::new(&h.date).weak());
+            if history.is_empty() {
+                ui.label(egui::RichText::new("（暂无历史包）").size(13.0).color(MUTED));
+            } else {
+                // 只列最近 10 条：不再嵌 ScrollArea，避免行被裁切且无滚动提示
+                let shown: Vec<&HistoryItem> = history.iter().take(10).collect();
+                let n = shown.len();
+                for (i, h) in shown.iter().enumerate() {
+                    ui.horizontal(|ui| {
+                        ui.label(egui::RichText::new(&h.name).size(13.0).color(INK));
+                        // 右侧时间/大小用固定宽度分列，保证各行对齐
+                        ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                            ui.allocate_ui(egui::vec2(76.0, 18.0), |ui| {
+                                ui.with_layout(
+                                    egui::Layout::right_to_left(egui::Align::Center),
+                                    |ui| {
+                                        ui.label(
+                                            egui::RichText::new(&h.size).size(12.0).color(MUTED),
+                                        );
+                                    },
+                                );
+                            });
+                            ui.allocate_ui(egui::vec2(118.0, 18.0), |ui| {
+                                ui.label(egui::RichText::new(&h.date).size(12.0).color(MUTED));
                             });
                         });
+                    });
+                    if i + 1 < n {
+                        ui.add_space(4.0);
                         ui.separator();
+                        ui.add_space(4.0);
                     }
                 }
-            });
+                if history.len() > n {
+                    ui.add_space(6.0);
+                    ui.label(
+                        egui::RichText::new(format!("共 {} 个构建包，仅显示最近 {}", history.len(), n))
+                            .size(11.0)
+                            .color(MUTED),
+                    );
+                }
+            }
         });
     }
 
@@ -774,27 +808,26 @@ impl eframe::App for PackToolApp {
                 .default_size(168.0)
                 .show(ui, |ui| {
                     egui::Frame::default().fill(SIDEBAR_BG).show(ui, |ui| {
-                        ui.add_space(10.0);
-                        ui.label(egui::RichText::new("导航").small().weak().strong());
-                        ui.add_space(6.0);
+                        ui.add_space(14.0);
                         let pages = [Page::Config, Page::Files, Page::Version, Page::Log];
                         for p in pages {
                             let active = self.current_page == p;
                             let resp = ui.add(
                                 egui::Button::new(
                                     egui::RichText::new(p.title())
-                                        .color(if active { ACCENT_TEXT } else { INK })
+                                        .size(13.0)
+                                        .color(if active { ACCENT } else { MUTED })
                                         .strong(),
                                 )
-                                .fill(if active { ACCENT } else { egui::Color32::TRANSPARENT })
+                                .fill(if active { ACCENT_SOFT } else { egui::Color32::TRANSPARENT })
                                 .stroke(egui::Stroke::NONE)
-                                .corner_radius(6.0)
-                                .min_size(egui::vec2(ui.available_width(), 34.0)),
+                                .corner_radius(8.0)
+                                .min_size(egui::vec2(ui.available_width(), 36.0)),
                             );
                             if resp.clicked() {
                                 self.current_page = p;
                             }
-                            ui.add_space(4.0);
+                            ui.add_space(6.0);
                         }
                     });
                 });
