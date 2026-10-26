@@ -7,7 +7,7 @@ edition = "2021"
 license = "MIT"
 
 [[bin]]
-name = "qsltdupdater-egui"
+name = "launcherclient"
 path = "src/main.rs"
 
 [dependencies]
