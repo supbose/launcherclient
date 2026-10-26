@@ -620,6 +620,12 @@ struct PackToolApp {
     changelog: String,
     log: Arc<Mutex<Vec<String>>>,
     running: Arc<Mutex<bool>>,
+    /// 当前打包进度（后台线程写、UI 线程读；None 表示未在打包）
+    progress: Arc<Mutex<Option<Progress>>>,
+    /// 取消标志：用户点「取消」置 true，后台线程各阶段检查并中止
+    cancel: Arc<AtomicBool>,
+    /// 打包开始时刻，用于显示已用时
+    pack_started: Option<Instant>,
     current_page: Page,
     /// 是否已执行过窗口居中（仅首帧做一次）
     centered_once: bool,
@@ -637,6 +643,9 @@ impl PackToolApp {
             changelog: String::new(),
             log: Arc::new(Mutex::new(Vec::new())),
             running: Arc::new(Mutex::new(false)),
+            progress: Arc::new(Mutex::new(None)),
+            cancel: Arc::new(AtomicBool::new(false)),
+            pack_started: None,
             current_page: Page::Config,
             centered_once: false,
         }
@@ -663,7 +672,11 @@ impl PackToolApp {
         let changelog = self.changelog.clone();
         let log = self.log.clone();
         let running = self.running.clone();
+        let progress = self.progress.clone();
+        let cancel = self.cancel.clone();
+        cancel.store(false, Ordering::Relaxed);
         *running.lock().unwrap() = true;
+        self.pack_started = Some(Instant::now());
         // 打包开始即切到日志页，让用户直接看到进度
         self.current_page = Page::Log;
 
@@ -677,13 +690,41 @@ impl PackToolApp {
                     ctx.request_repaint();
                 }
             };
-            if let Err(e) = pack_core(&cfg, &version, &changelog, emit) {
-                push_log(&log, &format!("[失败] 打包失败: {}", e));
+            // 进度：写快照 → 立即释放锁 → 请求重绘（同样不长期持锁）
+            let report = {
+                let progress = progress.clone();
+                let ctx = ctx.clone();
+                move |p: Progress| {
+                    if let Ok(mut g) = progress.try_lock() {
+                        *g = Some(p);
+                    }
+                    ctx.request_repaint();
+                }
+            };
+            let res = pack_core(&cfg, &version, &changelog, emit, report, &cancel);
+            match res {
+                Ok(summary) => {
+                    for line in summary.lines() {
+                        push_log(&log, line);
+                    }
+                }
+                Err(ref e) if e == "已取消" => {
+                    push_log(&log, "已取消：打包在中途被中止");
+                }
+                Err(e) => push_log(&log, &format!("[失败] 打包失败: {}", e)),
             }
-            push_log(&log, "打包流程结束");
             *running.lock().unwrap() = false;
+            if let Ok(mut g) = progress.try_lock() {
+                *g = None;
+            }
             ctx.request_repaint();
         });
+    }
+
+    /// 请求取消当前打包（协作式：后台线程在下一个检查点退出）
+    fn cancel_pack(&mut self) {
+        self.cancel.store(true, Ordering::Relaxed);
+        push_log(&self.log, "正在取消，等待当前阶段收尾…");
     }
 
     /// 配置页：基本信息 + 保存
@@ -926,10 +967,104 @@ impl PackToolApp {
         });
     }
 
+    /// 打包进度卡片：阶段条 + 百分比 + 已用时 + 取消（仅打包期间显示）
+    fn draw_progress_card(&mut self, ui: &mut egui::Ui) {
+        // 先取出进度快照（clone），避免闭包内再次借用 self.progress
+        let prog = match self.progress.try_lock() {
+            Ok(g) => g.clone(),
+            Err(_) => None,
+        };
+        let elapsed = self
+            .pack_started
+            .map(|t| t.elapsed().as_secs_f32())
+            .unwrap_or(0.0);
+        let title_desc = format!(
+            "{}_{}.zip · 输出到 {}",
+            self.config.app_name, self.version, self.config.output_dir
+        );
+
+        section(ui, "打包进度", |ui| {
+            ui.horizontal(|ui| {
+                ui.label(egui::RichText::new("正在打包").size(14.0).strong().color(INK));
+                ui.label(egui::RichText::new(&title_desc).size(11.0).color(MUTED));
+                ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                    let cancel_btn = egui::Button::new(egui::RichText::new("取消").color(MUTED))
+                        .corner_radius(6.0)
+                        .min_size(egui::vec2(56.0, 26.0));
+                    if ui.add(cancel_btn).clicked() {
+                        self.cancel_pack();
+                    }
+                    ui.label(egui::RichText::new("进行中").size(11.0).color(ACCENT));
+                    ui.add_space(8.0);
+                });
+            });
+            ui.add_space(8.0);
+
+            let pct = prog.as_ref().map(|p| p.percent()).unwrap_or(0.0);
+            ui.add(egui::ProgressBar::new(pct / 100.0).desired_height(8.0).show_percentage());
+            ui.add_space(6.0);
+
+            ui.horizontal(|ui| {
+                let (idx, name, detail) = match &prog {
+                    Some(p) => (
+                        p.stage + 1,
+                        STAGE_NAMES.get(p.stage).copied().unwrap_or(""),
+                        p.detail.clone(),
+                    ),
+                    None => (0, "准备中", String::new()),
+                };
+                ui.label(
+                    egui::RichText::new(format!("阶段 {} / {} · {}", idx, STAGE_NAMES.len(), name))
+                        .size(12.0)
+                        .color(INK),
+                );
+                if !detail.is_empty() {
+                    ui.label(
+                        egui::RichText::new(detail)
+                            .size(11.0)
+                            .color(MUTED)
+                            .font(egui::FontId::monospace(11.0)),
+                    );
+                }
+                ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                    ui.label(
+                        egui::RichText::new(format!("已用时 {:.1}s", elapsed))
+                            .size(11.0)
+                            .color(MUTED)
+                            .font(egui::FontId::monospace(11.0)),
+                    );
+                });
+            });
+            ui.add_space(6.0);
+
+            // 阶段条：已完成 / 进行中 / 未开始
+            ui.horizontal_wrapped(|ui| {
+                for (i, name) in STAGE_NAMES.iter().enumerate() {
+                    let (color, strong) = match &prog {
+                        Some(p) if i < p.stage => (ACCENT, false),
+                        Some(p) if i == p.stage => (ACCENT, true),
+                        _ => (MUTED, false),
+                    };
+                    let mut t = egui::RichText::new(*name).size(11.5).color(color);
+                    if strong {
+                        t = t.strong();
+                    }
+                    ui.label(t);
+                    if i + 1 < STAGE_NAMES.len() {
+                        ui.label(egui::RichText::new("·").size(11.5).color(MUTED));
+                    }
+                }
+            });
+        });
+    }
+
     /// 日志页
     fn page_log(&mut self, ui: &mut egui::Ui) {
         ui.heading(egui::RichText::new("日志").size(18.0).strong().color(INK));
         ui.add_space(4.0);
+        if self.running.try_lock().map(|v| *v).unwrap_or(false) {
+            self.draw_progress_card(ui);
+        }
         ui.horizontal(|ui| {
             if ui.button("清空日志").clicked() {
                 if let Ok(mut v) = self.log.try_lock() {
@@ -1215,10 +1350,23 @@ mod tests {
         };
 
         let mut log = Vec::new();
-        let res = pack_core(&cfg, "1.2.3", "修复了某些bugs;新增下载前缀配置", |s: &str| {
-            log.push(s.to_string())
-        });
+        let mut stages = Vec::new();
+        let res = pack_core(
+            &cfg,
+            "1.2.3",
+            "修复了某些bugs;新增下载前缀配置",
+            |s: &str| log.push(s.to_string()),
+            |p: Progress| stages.push(p.stage),
+            &AtomicBool::new(false),
+        );
         assert!(res.is_ok(), "pack_core 失败: {:?}", log);
+        // 进度应覆盖全部 5 个阶段，且单调不回退
+        assert!(stages.contains(&0) && stages.contains(&4), "进度应覆盖首尾阶段: {:?}", stages);
+        assert!(
+            stages.windows(2).all(|w| w[0] <= w[1]),
+            "阶段下标不应回退: {:?}",
+            stages
+        );
 
         // version.json 字段校验
         let vf = out.join("version.json");
@@ -1303,9 +1451,16 @@ mod tests {
         let log = Arc::new(Mutex::new(Vec::new()));
         let writer = log.clone();
         let handle = std::thread::spawn(move || {
-            pack_core(&cfg, "1.0.0", "t", move |s: &str| {
-                writer.lock().unwrap().push(s.to_string());
-            })
+            pack_core(
+                &cfg,
+                "1.0.0",
+                "t",
+                move |s: &str| {
+                    writer.lock().unwrap().push(s.to_string());
+                },
+                |_p: Progress| {},
+                &AtomicBool::new(false),
+            )
         });
 
         // 模拟 UI 线程：打包期间反复尝试取锁，只要成功一次就说明锁未被长期占用
@@ -1322,6 +1477,38 @@ mod tests {
             "打包期间 UI 线程应能取到日志锁（说明锁被长期占用 → 界面假死）"
         );
 
+        let _ = std::fs::remove_dir_all(&base);
+    }
+
+    /// 取消：协作式中止，返回 Err("已取消") 且不留下半成品
+    #[test]
+    fn pack_core_cancel_aborts() {
+        let base = tmpdir("cancel");
+        let src = base.join("src");
+        std::fs::create_dir_all(&src).unwrap();
+        std::fs::write(src.join("a.txt"), b"hello").unwrap();
+        let out = base.join("out");
+        let cfg = Config {
+            app_name: "cancelapp".into(),
+            files: vec![src.join("a.txt").to_string_lossy().into()],
+            download_prefixes: vec!["https://example.com/u/".into()],
+            volume_size_mb: 64,
+            output_dir: out.to_string_lossy().into(),
+        };
+        // 取消标志一开始就为 true：第一个检查点即中止
+        let res = pack_core(
+            &cfg,
+            "1.0.0",
+            "t",
+            |_s: &str| {},
+            |_p: Progress| {},
+            &AtomicBool::new(true),
+        );
+        assert_eq!(res.unwrap_err(), "已取消");
+        assert!(
+            !out.join("cancelapp_1.0.0.zip").is_file(),
+            "取消后不应留下产物"
+        );
         let _ = std::fs::remove_dir_all(&base);
     }
 
