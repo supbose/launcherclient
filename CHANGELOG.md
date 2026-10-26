@@ -15,6 +15,12 @@
 
 
 
+
+## v0.1.15 (2026-10-26)
+### 📝 文档更新
+
+- [b4d2fb4](/-/commit/b4d2fb4a1b4db131c566afaf34d9334aad75c079) 文档(docs): 弃用 zsui 原生 UI 实现并修复更新日志未传递问题 (.workbuddy/memory/2026-10-26.md, docs/Tauri-vs-egui性能对比.md, docs/egui-preview-shots/egui_C_changelog.png, docs/egui-preview-shots/egui_C_no-changelog.png, docs/egui界面复刻说明.md, src-core/src/flow.rs, src-core/src/lib.rs, src-core/src/phase.rs, src-zsui/README.md, src-zsui/src/main.rs)
+
 ## v0.1.14 (2026-10-26)
 ### 🚀 新增功能
 
