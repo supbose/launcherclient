@@ -21,6 +21,16 @@
 
 
 
+
+## v0.1.21 (2026-10-27)
+### 🚀 新增功能
+
+- [1867438](/-/commit/186743836ce4bd09f7e7cc3495887aae19ad9724) 新增(pkgtool): 新增 egui 更新包打包工具，取代 versionTools.py (scripts/versionTools.py, src-pkgtool/Cargo.lock, src-pkgtool/Cargo.toml, src-pkgtool/assets/icon.png, src-pkgtool/build.rs, src-pkgtool/icon.rc, src-pkgtool/src/main.rs)
+
+### 🔧 工具变更
+
+- [f9fe1bc](/-/commit/f9fe1bc0910e789e37278798820c999c39347862) 工具(pkgtool): 在 package.json 增加 pkgtool 启动脚本 (package.json)
+
 ## v0.1.20 (2026-10-27)
 ### 🚀 新增功能
 
