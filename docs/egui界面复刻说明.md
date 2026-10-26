@@ -105,7 +105,7 @@
 
 | Vue 控件 / CSS 类 | egui 实现 | 关键参数 |
 | --- | --- | --- |
-| `.tpl-c__steps`（步骤条） | `templates::draw_steps` | 三段连接线 + 状态点（完成=绿、当前=蓝+光晕、未达=灰） |
+| `.tpl-c__steps`（步骤条） | `templates::draw_steps` | 三段连接线贯穿圆点（完成段=绿、当前=蓝+光晕+外环描边、未达=灰） |
 | `.tpl-c__pct` 大号百分比 | `templates::metrics_row` | 数字 26px + `%` 14px |
 | `.tpl-c__bar` 进度条 | `widgets::progress_track` | 轨道 8px / 圆角 4 / `W10` 底 + 蓝→绿渐变填充 |
 | `.tpl-b__ring` 环形进度 | `widgets::progress_ring` | 外径 96px、描边 9px、内盘 `#1a2029`、中心百分比 + 副标题 |
