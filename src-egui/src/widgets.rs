@@ -47,7 +47,7 @@ pub fn draw_titlebar(ui: &mut Ui) -> TitleBarAction {
         rect.left_top(),
         Pos2::new(rect.right() - theme::TITLEBAR_BTN_WIDTH * 2.0, rect.bottom()),
     );
-    let drag = ui.interact(drag_rect, ui.id().with("tb-drag"), Sense::click_and_drag());
+    let drag = ui.interact(drag_rect, ui.scope_id().with("tb-drag"), Sense::click_and_drag());
     if drag.drag_started() {
         ui.ctx()
             .send_viewport_cmd(egui::ViewportCommand::StartDrag);
@@ -66,7 +66,7 @@ pub fn draw_titlebar(ui: &mut Ui) -> TitleBarAction {
     );
 
     // 最小化按钮
-    let min_resp = ui.interact(min_rect, ui.id().with("tb-min"), Sense::click());
+    let min_resp = ui.interact(min_rect, ui.scope_id().with("tb-min"), Sense::click());
     if min_resp.hovered() {
         painter.rect_filled(min_rect, 0.0, theme::W10_HOVER);
     }
@@ -86,7 +86,7 @@ pub fn draw_titlebar(ui: &mut Ui) -> TitleBarAction {
     }
 
     // 关闭按钮
-    let close_resp = ui.interact(close_rect, ui.id().with("tb-close"), Sense::click());
+    let close_resp = ui.interact(close_rect, ui.scope_id().with("tb-close"), Sense::click());
     if close_resp.hovered() {
         painter.rect_filled(close_rect, 0.0, theme::DANGER);
     }

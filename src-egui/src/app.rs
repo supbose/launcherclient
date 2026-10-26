@@ -411,7 +411,7 @@ fn card_label_pos(card: egui::Rect, dy: f32) -> egui::Pos2 {
 
 /// 模态内按钮（简版自绘，交互逻辑同 widgets::button）
 fn modal_button(ui: &mut Ui, rect: egui::Rect, label: &str, primary: bool) -> bool {
-    let resp = ui.interact(rect, ui.id().with(label), Sense::click());
+    let resp = ui.interact(rect, ui.scope_id().with(label), Sense::click());
     let painter = ui.painter_at(rect);
     if primary {
         painter.rect_filled(rect, 6.0, theme::ACCENT);

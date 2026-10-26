@@ -11,9 +11,9 @@ name = "launcherclient"
 path = "src/main.rs"
 
 [dependencies]
-# egui/eframe 原生 UI 框架（glow 渲染后端，默认 feature 即可）
-eframe = "0.35"
-egui = "0.35"
+# egui/eframe 原生 UI 框架（默认 feature 即走 wgpu 渲染后端，与 0.35 一致）
+eframe = "0.37"
+egui = "0.37"
 # PNG 解码：assets/icon.png → egui::IconData（窗口/任务栏图标）
 png = "0.17"
 tokio = { version = "1", features = ["full"] }

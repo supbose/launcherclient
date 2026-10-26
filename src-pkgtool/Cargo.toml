@@ -11,8 +11,8 @@ path = "src/main.rs"
 
 [dependencies]
 # egui/eframe 原生 UI 框架（与 src-egui 同版本，保持工具链一致）
-eframe = "0.35"
-egui = "0.35"
+eframe = "0.37"
+egui = "0.37"
 # zip 压缩（含 sha256 分卷打包）
 zip = "2"
 # sha256 计算
