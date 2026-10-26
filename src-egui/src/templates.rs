@@ -394,10 +394,11 @@ fn template_c(ui: &mut Ui, view: &PhaseView, retrying: bool, last_step: i32) -> 
             }
             Stage::Installing => {
                 ui.add_space(14.0);
-                ui.label(
-                    RichText::new(if view.message().is_empty() { "正在安装更新..." } else { view.message() })
-                        .size(16.0)
-                        .color(theme::TEXT),
+                head_with_pill(
+                    ui,
+                    if view.message().is_empty() { "正在安装更新..." } else { view.message() },
+                    view.badge(),
+                    false,
                 );
                 ui.add_space(14.0);
                 spinner_row(ui, view.sub(), theme::SUCCESS);
@@ -442,53 +443,62 @@ fn template_c(ui: &mut Ui, view: &PhaseView, retrying: bool, last_step: i32) -> 
     })
 }
 
-/// 步骤条（.tpl-c__steps：4 节点 + 3 连接线，7 等分）
+/// 步骤条（.tpl-c__steps：4 节点 + 3 连接线）
+///
+/// 整条步骤条占一个区域，用绝对 painter 绘制：先画连接线（贯穿相邻圆点
+/// 边缘，不再留空隙），再画节点与标签。已完成段连接线为绿色半透明。
 fn draw_steps(ui: &mut Ui, view: &PhaseView, width: f32, last_step: i32) {
     // 错误态保留最后到达的步骤（view.step() 返回 -2 表示保持不变）
     let step = if view.step() == -2 { last_step } else { view.step() };
-    ui.horizontal(|ui| {
-        let seg = width / 7.0;
-        for (i, label) in STEP_LABELS.iter().enumerate() {
-            let i = i as i32;
-            let done = step >= 0 && i < step;
-            let on = i == step;
-            let err = on && view.stage() == Stage::Error;
+    let n = STEP_LABELS.len() as i32;
+    let seg = width / 7.0; // 7 等分：节点落在 1/3/5/7 段中心
+    let row_h = 37.0;
+    let dot_r = 8.0;
 
-            // 节点：圆点 + 标签（列内居中）
-            let (nr, _) = ui.allocate_exact_size(Vec2::new(seg, 37.0), Sense::hover());
-            let np = ui.painter_at(nr);
-            let cx = nr.center().x;
-            let dot_c = Pos2::new(cx, nr.top() + 8.0);
-            if err {
-                widgets::status_dot(&np, dot_c, 8.0, theme::DANGER, 4.0);
-            } else if on {
-                widgets::status_dot(&np, dot_c, 8.0, theme::ACCENT, 4.0);
-            } else if done {
-                widgets::status_dot(&np, dot_c, 8.0, theme::SUCCESS, 0.0);
-            } else {
-                np.circle_filled(dot_c, 8.0, theme::W12);
-                np.circle_stroke(dot_c, 8.0, Stroke::new(1.0, theme::W18));
-            }
-            np.text(
-                Pos2::new(cx, nr.top() + 18.5 + 7.0),
-                egui::Align2::CENTER_CENTER,
-                *label,
-                egui::FontId::proportional(11.0),
-                if on { theme::ACCENT } else { theme::text_alpha(115) },
-            );
+    let (area, _) = ui.allocate_exact_size(Vec2::new(width, row_h), Sense::hover());
+    let painter = ui.painter_at(area);
+    let dot_y = area.top() + dot_r;
 
-            // 连接线（2px，位于圆点中心高度附近；已完成段绿色半透明）
-            if i < STEP_LABELS.len() as i32 - 1 {
-                let (lr, _) = ui.allocate_exact_size(Vec2::new(seg, 37.0), Sense::hover());
-                let ly = lr.top() + 7.0;
-                ui.painter_at(lr).rect_filled(
-                    egui::Rect::from_min_max(Pos2::new(lr.left(), ly), Pos2::new(lr.right(), ly + 2.0)),
-                    1.0,
-                    if done { theme::tint(theme::SUCCESS, 128) } else { theme::W14 },
-                );
-            }
+    // 连接线（位于圆点之下，从节点 i 右缘贯穿到节点 i+1 左缘）
+    for i in 0..n - 1 {
+        let x0 = area.left() + (2 * i + 1) as f32 * seg + dot_r;
+        let x1 = area.left() + (2 * (i + 1) + 1) as f32 * seg - dot_r;
+        let done_seg = step >= 0 && i < step;
+        painter.rect_filled(
+            egui::Rect::from_min_max(Pos2::new(x0, dot_y - 1.0), Pos2::new(x1, dot_y + 1.0)),
+            1.0,
+            if done_seg { theme::tint(theme::SUCCESS, 128) } else { theme::W14 },
+        );
+    }
+
+    // 节点 + 标签
+    for (i, label) in STEP_LABELS.iter().enumerate() {
+        let i = i as i32;
+        let cx = area.left() + (2 * i + 1) as f32 * seg;
+        let dot_c = Pos2::new(cx, dot_y);
+        let done = step >= 0 && i < step;
+        let on = i == step;
+        let err = on && view.stage() == Stage::Error;
+        if err {
+            widgets::status_dot(&painter, dot_c, dot_r, theme::DANGER, 4.0);
+        } else if on {
+            // 当前步：外环描边增强焦点（在 halo 之外再加一圈蓝边）
+            painter.circle_stroke(dot_c, dot_r + 3.0, Stroke::new(1.0, theme::tint(theme::ACCENT, 128)));
+            widgets::status_dot(&painter, dot_c, dot_r, theme::ACCENT, 4.0);
+        } else if done {
+            widgets::status_dot(&painter, dot_c, dot_r, theme::SUCCESS, 0.0);
+        } else {
+            painter.circle_filled(dot_c, dot_r, theme::W12);
+            painter.circle_stroke(dot_c, dot_r, Stroke::new(1.0, theme::W18));
         }
-    });
+        painter.text(
+            Pos2::new(cx, area.top() + 25.5),
+            egui::Align2::CENTER_CENTER,
+            *label,
+            egui::FontId::proportional(11.0),
+            if on { theme::ACCENT } else { theme::text_alpha(115) },
+        );
+    }
 }
 
 // ---------------------------------------------------------------------------
