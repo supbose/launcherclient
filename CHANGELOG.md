@@ -17,6 +17,12 @@
 
 
 
+
+## v0.1.17 (2026-10-26)
+### 🚀 新增功能
+
+- [a42fb1f](/-/commit/a42fb1fe5daf7ba67f9eb0b25f122602be947bcb) 新增(src-egui): 添加应用图标支持（嵌入exe与运行时窗口图标） (src-egui/Cargo.lock, src-egui/Cargo.toml, src-egui/assets/icon.ico, src-egui/assets/icon.png, src-egui/build.rs, src-egui/src/main.rs)
+
 ## v0.1.16 (2026-10-26)
 ### ♻️ 代码重构
 
