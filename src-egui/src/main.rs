@@ -119,7 +119,7 @@ fn main() {
 ///
 /// - `phase`: 共享阶段快照（真实模式已含首帧阶段；预览模式为空）
 /// - `preview`: true 时渲染模板/阶段切换面板（复刻 Preview.vue）
-fn run_ui(args: &CliArgs, phase: PhaseHandle, startup: Arc<Mutex<Option<StartupDecision>>>, preview: bool, preview_stage: usize) {
+fn run_ui(args: &CliArgs, phase: PhaseHandle, startup: Arc<Mutex<Option<StartupDecision>>>, preview: bool, preview_stage: usize, app_name: String) {
     // 生效模板：命令行 --template > 默认（C）；预览模式可在面板里切换
     let template = qsltd_updater_core::phase::resolve_template_key(
         args.template.as_deref().unwrap_or(""),
@@ -154,7 +154,7 @@ fn run_ui(args: &CliArgs, phase: PhaseHandle, startup: Arc<Mutex<Option<StartupD
         app::WINDOW_TITLE,
         native_options,
         Box::new(move |cc| {
-            Ok(Box::new(app::UpdaterApp::new(cc, phase, startup, template, preview, preview_stage))
+            Ok(Box::new(app::UpdaterApp::new(cc, phase, startup, template, preview, preview_stage, app_name))
                 as Box<dyn eframe::App>)
         }),
     );
