@@ -1,0 +1,40 @@
+[package]
+name = "qsltd-pkgtool"
+version = "0.1.0"
+edition = "2021"
+description = "QsLtd 更新包打包工具（egui 版，versionTools.py 的纯 Rust GUI 重实现）"
+license = "MIT"
+
+[[bin]]
+name = "pkgtool"
+path = "src/main.rs"
+
+[dependencies]
+# egui/eframe 原生 UI 框架（与 src-egui 同版本，保持工具链一致）
+eframe = "0.35"
+egui = "0.35"
+# zip 压缩（含 sha256 分卷打包）
+zip = "2"
+# sha256 计算
+sha2 = "0.10"
+# 字节 hex 编码
+hex = "0.4"
+# 配置（FILES/前缀/输出目录）序列化到 packtool.json
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+# 发布时间（UTC ISO8601，对齐 python datetime.now(timezone.utc)）
+chrono = { version = "0.4", default-features = false, features = ["clock"] }
+# 目录递归收集待打包文件
+walkdir = "2"
+# 版本号格式校验
+regex = "1"
+# 原生文件/目录选择对话框（Windows 走系统对话框）
+rfd = "0.14"
+
+# 本 crate 的 release profile：放宽 LTO / 优化级别，规避沙箱里 rustc 编译
+# windows-sys（rfd 传递依赖）时偶发的访问越界崩溃；debug 构建不受影响
+[profile.release]
+opt-level = 2
+lto = false
+codegen-units = 16
+strip = true
