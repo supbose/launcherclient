@@ -65,6 +65,10 @@ pub struct UpdateSettings {
     /// 缺省或空串用 [`defaults::DEFAULT_HOMEPAGE`]
     #[serde(default)]
     pub homepage: Option<String>,
+    /// 同一环节（下载 / 解压校验）的自动重试次数（含首次尝试），
+    /// 缺省用 [`defaults::DEFAULT_RETRY_TIMES`]，0 或 1 视为只试一次
+    #[serde(default)]
+    pub retry_times: Option<u32>,
 }
 
 impl UpdateSettings {
@@ -79,6 +83,18 @@ impl UpdateSettings {
             .map(str::trim)
             .filter(|v| !v.is_empty())
             .map(|v| v.to_ascii_uppercase())
+    }
+}
+
+/// 解析生效的自动重试次数（含首次尝试）
+///
+/// 未配置 → 默认值；显式 0 → 同 1（「试一次」而不是「不试」，配置笔误
+/// 不该让下载变成空转）。上限 10：再多也只是让用户对着进度条等更久。
+pub fn resolve_retry_times(specified: Option<u32>) -> u32 {
+    match specified {
+        None => defaults::DEFAULT_RETRY_TIMES,
+        Some(0) => 1,
+        Some(n) => n.min(10),
     }
 }
 
@@ -154,7 +170,8 @@ fn generate_default_template(dir: &std::path::Path) -> bool {
             "max_versions": "保留的版本目录数量（含当前版本，旧目录即回滚资产），默认 2",
             "services": "更新前需卸载的 Windows 服务名数组；运行中的先停止后卸载，卸载后不恢复不重启",
             "launcher_template": "启动器界面模板，可选 A/B/C/D/E（大小写不敏感）：A 信息密度 · B 环形居中 · C 顶部步骤条 · D 极简留白 · E 日志为主；留空或未知值用默认 C",
-            "homepage": "官网首页地址；下载地址全部失败时界面上的「前往官网」按钮跳这里，留空用内置默认"
+            "homepage": "官网首页地址；下载地址全部失败时界面上的「前往官网」按钮跳这里，留空用内置默认",
+            "retry_times": "同一环节（下载 / 解压校验）的自动重试次数（含首次尝试），默认 3：失败后自动再试 2 次，仍失败才提示前往官网重新下载"
         },
         "manifest_url": defaults::DEFAULT_MANIFEST_URLS,
         "app_name": defaults::DEFAULT_APP_NAME,
@@ -163,7 +180,8 @@ fn generate_default_template(dir: &std::path::Path) -> bool {
         "max_versions": DEFAULT_MAX_VERSIONS,
         "services": ["QsmServer"],
         "launcher_template": defaults::DEFAULT_LAUNCHER_TEMPLATE,
-        "homepage": defaults::DEFAULT_HOMEPAGE
+        "homepage": defaults::DEFAULT_HOMEPAGE,
+        "retry_times": defaults::DEFAULT_RETRY_TIMES
     });
     let Ok(content) = serde_json::to_string_pretty(&template) else {
         eprintln!("[配置] 默认模板序列化失败");
@@ -359,6 +377,17 @@ mod tests {
         // 没配就是 None，由 resolve_config 回落到 DEFAULT_HOMEPAGE
         let s: UpdateSettings = serde_json::from_str("{}").expect("解析");
         assert!(s.homepage.is_none());
+    }
+
+    #[test]
+    fn retry_times_resolution() {
+        // 未配置用默认 3；0 视为「只试一次」而不是「不试」
+        assert_eq!(resolve_retry_times(None), defaults::DEFAULT_RETRY_TIMES);
+        assert_eq!(resolve_retry_times(Some(0)), 1);
+        assert_eq!(resolve_retry_times(Some(1)), 1);
+        assert_eq!(resolve_retry_times(Some(5)), 5);
+        // 上限 10：避免配置手滑写个 1000 让用户干等
+        assert_eq!(resolve_retry_times(Some(1000)), 10);
     }
 
     #[test]

@@ -18,7 +18,7 @@ const CHANGELOG: [&str; 4] = [
 ];
 
 /// 阶段预设名（与 Preview.vue STAGE_PRESETS 顺序一致）
-const STAGES: [&str; 8] = [
+const STAGES: [&str; 9] = [
     "检测中",
     "下载中（分卷）",
     "校验中",
@@ -27,6 +27,7 @@ const STAGES: [&str; 8] = [
     "已是最新",
     "更新完成",
     "错误",
+    "重试中",
 ];
 
 /// 模板元信息（index.js TEMPLATE_META）
@@ -150,11 +151,19 @@ pub fn payload(state: &PreviewState) -> PhasePayload {
             p.changelog = log.clone();
             p
         }
-        // 预览错误态即「下载地址全挂」场景，顺带展示「前往官网」按钮
-        _ => PhasePayload::failure(
+        // 预览错误态即「自动重试用尽、地址全挂」场景，顺带展示「前往官网」按钮
+        7 => PhasePayload::failure(
             "更新包下载失败",
-            "全部 3 个 manifest 地址均拉取失败，最后错误: 连接超时",
+            "下载失败: 连接超时",
             true,
+        )
+        .with_attempt("download", 3, 3),
+        // 「重试中」：流程仍活着，标题带第几次，界面不该亮 error
+        _ => PhasePayload::new(
+            qsltd_updater_core::phase::Stage::Downloading,
+            "正在下载更新包...（第 2/3 次）",
+            "第 1/3 次尝试失败，正在自动重试（下载失败: 连接超时）",
+            Some(0.0),
         ),
     }
 }

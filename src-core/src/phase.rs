@@ -95,6 +95,16 @@ pub struct PhasePayload {
     /// 下载地址全挂时再点「重试」也是徒劳，得让用户有条直接拿到安装包的路。
     #[serde(default)]
     pub download_failed: bool,
+    /// 本次失败的环节：download / install / ""（其它）。界面据此把
+    /// 「自动重试的哪些环节」说清楚——用户有权知道重试的是下载还是解压。
+    #[serde(default)]
+    pub failed_stage: String,
+    /// 该环节已尝试次数（含首次）
+    #[serde(default)]
+    pub attempt: u32,
+    /// 该环节的尝试上限（含首次）；0 表示该错误不自动重试
+    #[serde(default)]
+    pub max_attempts: u32,
 }
 
 impl PhasePayload {
@@ -112,6 +122,9 @@ impl PhasePayload {
             template: String::new(),
             badge: None,
             download_failed: false,
+            failed_stage: String::new(),
+            attempt: 0,
+            max_attempts: 0,
         }
     }
 
@@ -124,6 +137,14 @@ impl PhasePayload {
         let mut p = Self::new(Stage::Error, message, sub, None);
         p.download_failed = download_failed;
         p
+    }
+
+    /// 补上「失败环节 / 已试次数」，链式调用（错误态文案用）
+    pub fn with_attempt(mut self, stage_name: &str, attempt: u32, max_attempts: u32) -> Self {
+        self.failed_stage = stage_name.to_string();
+        self.attempt = attempt;
+        self.max_attempts = max_attempts;
+        self
     }
 
     /// 构造下载阶段载荷（携带字节数与速度）
@@ -148,12 +169,37 @@ impl PhasePayload {
             template: String::new(),
             badge,
             download_failed: false,
+            failed_stage: String::new(),
+            attempt: 0,
+            max_attempts: 0,
         }
     }
 
     /// 阶段枚举（未知值回落 Checking）
     pub fn stage(&self) -> Stage {
         Stage::from_stage_str(&self.stage)
+    }
+
+    /// 失败环节的自动重试次数说明（未走重试时为空串）
+    ///
+    /// 用户点「重试」前该知道系统已经替他试过几次，否则一个干巴巴的错误页
+    /// 会让人觉得程序一开始就没使劲。有上限写「已自动重试 N 次（共 M 次
+    /// 尝试）」，本地错误只写「已尝试 N 次」。
+    pub fn attempt_text(&self) -> String {
+        match (self.attempt, self.max_attempts) {
+            (0, _) => String::new(),
+            (n, 0) => format!("已尝试 {} 次", n),
+            (n, m) => format!("已自动重试 {} 次（共 {} 次尝试）", n.saturating_sub(1), m),
+        }
+    }
+
+    /// 失败环节的中文名（"下载" / "解压校验" / 空串）
+    pub fn failed_stage_name(&self) -> &'static str {
+        match self.failed_stage.as_str() {
+            "download" => "下载",
+            "install" => "解压校验",
+            _ => "",
+        }
     }
 }
 
@@ -356,6 +402,34 @@ impl<'a> PhaseView<'a> {
         self.stage() == Stage::Error && self.payload.download_failed
     }
 
+    /// 失败环节的自动重试次数说明（未走重试时为空串；错误态文案用）
+    pub fn attempt_text(&self) -> String {
+        self.payload.attempt_text()
+    }
+
+    /// 失败环节的中文名（"下载" / "解压校验" / 空串）
+    pub fn failed_stage_name(&self) -> &'static str {
+        self.payload.failed_stage_name()
+    }
+
+    /// 错误态是否该亮「前往官网」而不是继续劝「重试」
+    ///
+    /// 判据：失败出在下载链路，且该环节的自动重试已经用尽。自动重试还没
+    /// 用完时（流程本身在跑）压根不在 error 态，这里多一层判断是为了让
+    /// 语义自证：重试还有余地就不该跳官网。
+    ///
+    /// 注：重试期间流程仍在 running 态（不在 error），所以实际到达这一屏时
+    /// 重试次数早已用尽；`has_retry_left` 的判断是防止调用方硬置 download_failed
+    /// 时冒出「还能重试却劝跳官网」的自相矛盾。
+    pub fn needs_homepage(&self) -> bool {
+        self.download_failed() && !self.has_retry_left()
+    }
+
+    /// 该环节还有没有自动重试次数（0/0 视为没有重试机制）
+    pub fn has_retry_left(&self) -> bool {
+        self.payload.max_attempts > 0 && self.payload.attempt < self.payload.max_attempts
+    }
+
     /// 是否显示进度条：下载/安装/合并（checking 带副文本即合并分卷）
     pub fn show_progress(&self) -> bool {
         match self.stage() {
@@ -534,6 +608,37 @@ mod tests {
         // 非法值回落默认模板（与后端 DEFAULT_LAUNCHER_TEMPLATE 一致）
         assert_eq!(resolve_template_key("x"), "C");
         assert_eq!(resolve_template_key(""), "C");
+    }
+
+    #[test]
+    fn attempt_text_shows_progress_and_omits_when_retry_disabled() {
+        // 不自动重试的错误：不出现「已尝试 N 次」，免得用户以为还会再试
+        let p = PhasePayload::new(Stage::Error, "更新安装失败", "", None);
+        assert_eq!(p.attempt_text(), "");
+        // 有上限（下载 / 解压校验环节）
+        let mut q = PhasePayload::failure("更新包下载失败", "下载失败: 连接超时", true);
+        q.failed_stage = "download".to_string();
+        q.attempt = 3;
+        q.max_attempts = 3;
+        assert_eq!(q.attempt_text(), "已自动重试 2 次（共 3 次尝试）");
+        assert_eq!(q.failed_stage_name(), "下载");
+        // 无上限（本地错误，只试一次）
+        let mut r = PhasePayload::failure("更新包校验失败", "SHA256 不匹配", false);
+        r.attempt = 1;
+        assert_eq!(r.attempt_text(), "已尝试 1 次");
+    }
+
+    #[test]
+    fn needs_homepage_only_after_retries_exhausted() {
+        // 重试用尽 + 下载链路 → 亮「前往官网重新下载」
+        let p = PhasePayload::failure("更新包下载失败", "下载失败: 连接超时", true)
+            .with_attempt("download", 3, 3);
+        let v = PhaseView::new(&p, true);
+        assert!(v.needs_homepage());
+        // 解压环节耗尽重试也不引导去官网（换地址解决不了）
+        let q = PhasePayload::failure("更新安装失败", "读取更新包结构失败", false)
+            .with_attempt("install", 3, 3);
+        assert!(!PhaseView::new(&q, true).needs_homepage());
     }
 
     #[test]
