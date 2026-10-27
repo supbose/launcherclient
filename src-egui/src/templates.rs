@@ -53,49 +53,38 @@ fn end_dot_color(view: &PhaseView) -> (Color32, f32) {
     }
 }
 
+/// 「检测中」极简屏文案
+const CHECKING_TEXT: &str = "正在检查更新...";
+
 /// 启动决策前的「检测中」极简屏
 ///
-/// 仅 spinner + 文案，**不渲染步骤条/更新日志**。对应「检测到更新才展示
+/// 仅 spinner + 主文案，**不渲染步骤条/更新日志**。对应「检测到更新才展示
 /// 完整界面」的诉求：弱网慢 manifest（>300ms）弹窗时用户有加载反馈，但
 /// 不会在还没确定要不要更新时就先铺开一大片完整 UI；当且仅当后台
 /// `run_startup` 判定有更新（Show 决策）后，`app.rs` 才切到完整模板。
 ///
-/// 区别于 `Stage::Checking` 的「重试路径」（payload 为 Some），此极简屏
-/// 仅在 `payload` 为 None（决策前）时由 `app.rs` 调用，故不影响流程内
-/// 重检/校验阶段对完整模板的渲染。
-pub fn draw_checking_minimal(ui: &mut Ui, app_name: &str) {
-    let full = ui.max_rect();
-    let _ = full;
-    ui.with_layout(
-        Layout::centered_and_justified(egui::Direction::TopDown),
-        |ui| {
-            ui.vertical_centered(|ui| {
-                let (r, _) =
-                    ui.allocate_exact_size(Vec2::new(22.0, 22.0), Sense::hover());
-                widgets::spinner(
-                    &ui.painter_at(r),
-                    r.center(),
-                    9.0,
-                    3.0,
-                    theme::ACCENT,
-                );
-                ui.add_space(16.0);
-                ui.label(
-                    RichText::new("正在检查更新...")
-                        .size(16.0)
-                        .color(theme::TEXT),
-                );
-                if !app_name.is_empty() {
-                    ui.add_space(8.0);
-                    ui.label(
-                        RichText::new(format!("正在为「{}」检查更新", app_name))
-                            .size(12.0)
-                            .color(theme::text_alpha(140)),
-                    );
-                }
-            });
-        },
+/// 加载指示器按整个窗口区域居中（含标题栏以下的可视区），不随文案高度
+/// 漂移；配置的应用名属于装饰信息，检测阶段不展示（用户看的是「在转」，
+/// 而不是「在为谁转」）。
+pub fn draw_checking_minimal(ui: &mut Ui) {
+    let rect = ui.max_rect();
+    let painter = ui.painter_at(rect);
+    let center = rect.center();
+
+    // 大号 spinner：36px 半径，重心压在中心略偏上（视觉居中）
+    let spinner_r = 36.0;
+    let spinner_c = Pos2::new(center.x, center.y - 12.0);
+    widgets::spinner(&painter, spinner_c, spinner_r, 4.0, theme::ACCENT);
+
+    // 文案排在 spinner 下方，水平居中
+    let font = egui::FontId::proportional(17.0);
+    let galley = painter.layout_no_wrap(CHECKING_TEXT.to_owned(), font, theme::TEXT);
+    // 图标 + 文案整块的重心落在中心附近
+    let text_pos = Pos2::new(
+        center.x - galley.size().x / 2.0,
+        spinner_c.y + spinner_r + 26.0,
     );
+    painter.galley(text_pos, galley, theme::TEXT);
 }
 
 /// 在 padding 区内开一层垂直布局
