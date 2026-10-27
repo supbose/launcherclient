@@ -58,8 +58,6 @@ pub struct UpdaterApp {
     preview_event: String,
     /// 首检决策（后台线程写、UI 线程消费一次）：None=检测中，Some=已决
     startup: Arc<Mutex<Option<flow::StartupDecision>>>,
-    /// 应用名（来自配置，用于「检测中」极简屏文案；仅装饰，不进入流程）
-    app_name: String,
     /// 首检决策是否已消费（Show 分支的 set/spawn 只做一次）
     startup_consumed: bool,
     /// 首检决策为 Show（有更新/失败），窗口最终需显示
@@ -78,7 +76,6 @@ impl UpdaterApp {
         template: String,
         preview: bool,
         preview_stage: usize,
-        app_name: String,
     ) -> Self {
         theme::install_fonts(&cc.egui_ctx);
         theme::zero_item_spacing(&cc.egui_ctx);
@@ -103,7 +100,6 @@ impl UpdaterApp {
             startup_show: false,
             start_time: Instant::now(),
             homepage_error: None,
-            app_name,
         }
     }
 
@@ -304,7 +300,7 @@ impl eframe::App for UpdaterApp {
         // 不铺开完整模板（步骤条/日志），待检测到更新才切换为完整界面
         let action = if !self.preview && self.payload.is_none() {
             let mut child = ui.new_child(egui::UiBuilder::new().max_rect(area));
-            templates::draw_checking_minimal(&mut child, &self.app_name);
+            templates::draw_checking_minimal(&mut child);
             None
         } else {
             let (payload, has_downloaded, template) = if self.preview {
