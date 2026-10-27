@@ -475,7 +475,7 @@ fn pack_core(
     Ok(summary)
 }
 
-/// 左侧导航页
+/// 页面（顶部标签行切换）
 #[derive(Clone, Copy, PartialEq, Eq)]
 enum Page {
     Config,
@@ -496,12 +496,6 @@ impl Page {
         }
     }
 }
-
-/// 导航分组：工作区（本地操作） / 分发（面向更新服务）
-const NAV_GROUPS: [(&str, &[Page]); 2] = [
-    ("工作区", &[Page::Config, Page::Files, Page::History]),
-    ("分发", &[Page::Version, Page::Log]),
-];
 
 /// 历史构建条目（只读展示）
 struct HistoryItem {
@@ -547,25 +541,267 @@ fn scan_history(output_dir: &str, app: &str) -> Vec<HistoryItem> {
     items
 }
 
-/// 主题色板（浅色清爽风：白底卡片 + 极浅侧栏）
-/// 设计原则：整屏只有「打包」按钮用实心品牌蓝，其余靠留白与层级区分，避免色块堆砌。
-const ACCENT: egui::Color32 = egui::Color32::from_rgb(0x2F, 0x6D, 0xF6);
-const ACCENT_TEXT: egui::Color32 = egui::Color32::WHITE;
-/// 导航选中态：淡蓝底 + 蓝字（替代实心填充，更清爽）
-const ACCENT_SOFT: egui::Color32 = egui::Color32::from_rgb(0xEA, 0xF1, 0xFE);
-const SIDEBAR_BG: egui::Color32 = egui::Color32::from_rgb(0xFA, 0xFB, 0xFC);
-const CARD_BG: egui::Color32 = egui::Color32::WHITE;
-const BORDER: egui::Color32 = egui::Color32::from_rgb(0xED, 0xEF, 0xF2);
-const INK: egui::Color32 = egui::Color32::from_rgb(0x37, 0x41, 0x51);
-const MUTED: egui::Color32 = egui::Color32::from_rgb(0x6B, 0x72, 0x80);
+// ---- 深色主题色板（对齐 launcherclient `src-egui/src/theme.rs`）----
 
-/// 在 content 区渲染一个带标题的分组卡片：左侧品牌色竖条 + 深色标题，下方白色圆角卡片。
+/// 根背景渐变起色（#1e2430）
+const BG_TOP: egui::Color32 = egui::Color32::from_rgb(0x1e, 0x24, 0x30);
+/// 根背景渐变止色（#171c26）
+const BG_BOTTOM: egui::Color32 = egui::Color32::from_rgb(0x17, 0x1c, 0x26);
+/// 主文字色（#e8eaf0）
+const TEXT: egui::Color32 = egui::Color32::from_rgb(0xe8, 0xea, 0xf0);
+/// 强调蓝（#4a9eff）：主按钮、导航选中、进度、当前阶段
+const ACCENT: egui::Color32 = egui::Color32::from_rgb(0x4a, 0x9e, 0xff);
+/// 成功绿（#35c26e）：已完成阶段、进度渐变终点
+const SUCCESS: egui::Color32 = egui::Color32::from_rgb(0x35, 0xc2, 0x6e);
+/// 错误红（#e81123）：关闭按钮悬停底色
+const DANGER: egui::Color32 = egui::Color32::from_rgb(0xe8, 0x11, 0x23);
+const ACCENT_TEXT: egui::Color32 = egui::Color32::WHITE;
+/// 导航选中态：蓝色低透明叠层（rgba(74,158,255,0.16)）
+const ACCENT_SOFT: egui::Color32 = egui::Color32::from_rgba_unmultiplied_const(0x4a, 0x9e, 0xff, 40);
+/// 卡片/侧栏底（白色 4% 叠层）
+const CARD_BG: egui::Color32 = egui::Color32::from_rgba_unmultiplied_const(255, 255, 255, 10);
+/// 卡片描边（白色 8% 叠层）
+const BORDER: egui::Color32 = egui::Color32::from_rgba_unmultiplied_const(255, 255, 255, 20);
+/// 次要文字（主文字色 55%）
+const MUTED: egui::Color32 = egui::Color32::from_rgba_unmultiplied_const(0xe8, 0xea, 0xf0, 140);
+/// 标题栏高度 / 按钮宽度（theme.rs TITLEBAR_HEIGHT / TITLEBAR_BTN_WIDTH）
+const TITLEBAR_HEIGHT: f32 = 32.0;
+const TITLEBAR_BTN_WIDTH: f32 = 46.0;
+
+/// 主文字色低透明叠层
+#[inline]
+fn text_alpha(a: u8) -> egui::Color32 {
+    egui::Color32::from_rgba_unmultiplied(0xe8, 0xea, 0xf0, a)
+}
+
+/// 语义色低透明叠层
+#[inline]
+fn tint(c: egui::Color32, a: u8) -> egui::Color32 {
+    egui::Color32::from_rgba_unmultiplied(c.r(), c.g(), c.b(), a)
+}
+
+/// 标准控件（输入框/按钮/DragValue/滚动条）配色对齐深色色板；
+/// 面板背景置透明，由 paint_bg 统一绘制渐变底。
+fn apply_theme(ctx: &egui::Context) {
+    ctx.all_styles_mut(|style| {
+        let v = &mut style.visuals;
+        *v = egui::Visuals::dark();
+        v.panel_fill = egui::Color32::TRANSPARENT;
+        v.window_fill = BG_BOTTOM;
+        v.faint_bg_color = CARD_BG;
+        v.extreme_bg_color = egui::Color32::from_rgb(0x14, 0x18, 0x21);
+        v.hyperlink_color = ACCENT;
+        v.widgets.noninteractive.fg_stroke.color = TEXT;
+        v.widgets.noninteractive.bg_fill = CARD_BG;
+        v.widgets.noninteractive.bg_stroke.color = BORDER;
+        v.widgets.inactive.fg_stroke.color = TEXT;
+        v.widgets.inactive.bg_fill = egui::Color32::from_rgba_unmultiplied(255, 255, 255, 18);
+        v.widgets.inactive.bg_stroke.color = BORDER;
+        v.widgets.hovered.fg_stroke.color = TEXT;
+        v.widgets.hovered.bg_fill = egui::Color32::from_rgba_unmultiplied(255, 255, 255, 30);
+        v.widgets.hovered.bg_stroke.color = tint(ACCENT, 140);
+        v.widgets.active.fg_stroke.color = TEXT;
+        v.widgets.active.bg_fill = ACCENT_SOFT;
+        v.widgets.active.bg_stroke.color = ACCENT;
+        v.selection.bg_fill = tint(ACCENT, 90);
+        v.selection.stroke = egui::Stroke::new(1.0, ACCENT);
+    });
+}
+
+/// 背景垂直渐变（#1e2430 → #171c26，gouraud 四顶点网格，复刻 widgets.rs::paint_bg）
+fn paint_bg(painter: &egui::Painter, rect: egui::Rect) {
+    let mut mesh = egui::Mesh::default();
+    mesh.colored_vertex(rect.left_top(), BG_TOP);
+    mesh.colored_vertex(egui::pos2(rect.right(), rect.top()), BG_TOP);
+    mesh.colored_vertex(rect.right_bottom(), BG_BOTTOM);
+    mesh.colored_vertex(rect.left_bottom(), BG_BOTTOM);
+    mesh.add_triangle(0, 1, 2);
+    mesh.add_triangle(0, 2, 3);
+    painter.add(egui::Shape::mesh(mesh));
+}
+
+/// 标题栏按钮动作
+enum TitleBarAction {
+    None,
+    Minimize,
+    Close,
+}
+
+/// 自绘标题栏：32px 高、左侧标题、右侧最小化/关闭按钮，其余区域可拖拽
+/// （复刻 widgets.rs::draw_titlebar：悬停白 10% 底、关闭悬停红底白叉）
+fn draw_titlebar(ui: &mut egui::Ui, title: &str) -> TitleBarAction {
+    let scope = ui.scope_id().with("titlebar");
+    let (rect, _) = ui.allocate_exact_size(
+        egui::vec2(ui.available_width(), TITLEBAR_HEIGHT),
+        egui::Sense::hover(),
+    );
+    let painter = ui.painter_at(rect);
+
+    painter.text(
+        rect.left_top() + egui::vec2(12.0, TITLEBAR_HEIGHT / 2.0),
+        egui::Align2::LEFT_CENTER,
+        title,
+        egui::FontId::proportional(13.0),
+        text_alpha(220),
+    );
+
+    // 拖拽区（按钮区除外）
+    let drag_rect = egui::Rect::from_min_max(
+        rect.left_top(),
+        egui::pos2(rect.right() - TITLEBAR_BTN_WIDTH * 2.0, rect.bottom()),
+    );
+    let drag = ui.interact(drag_rect, scope.with("drag"), egui::Sense::click_and_drag());
+    if drag.drag_started() {
+        ui.ctx()
+            .send_viewport_cmd(egui::ViewportCommand::StartDrag);
+    }
+
+    let mut action = TitleBarAction::None;
+    let cy = rect.center().y;
+    let close_rect = egui::Rect::from_min_size(
+        egui::pos2(rect.right() - TITLEBAR_BTN_WIDTH, rect.top()),
+        egui::vec2(TITLEBAR_BTN_WIDTH, TITLEBAR_HEIGHT),
+    );
+    let min_rect = egui::Rect::from_min_size(
+        egui::pos2(close_rect.left() - TITLEBAR_BTN_WIDTH, rect.top()),
+        egui::vec2(TITLEBAR_BTN_WIDTH, TITLEBAR_HEIGHT),
+    );
+
+    // 最小化
+    let min_resp = ui.interact(min_rect, scope.with("min"), egui::Sense::click());
+    if min_resp.hovered() {
+        painter.rect_filled(
+            min_rect,
+            0.0,
+            egui::Color32::from_rgba_unmultiplied(255, 255, 255, 26),
+        );
+    }
+    let mc = if min_resp.hovered() {
+        egui::Color32::WHITE
+    } else {
+        text_alpha(178)
+    };
+    let mx = min_rect.center().x;
+    painter.line_segment(
+        [egui::pos2(mx - 7.0, cy), egui::pos2(mx + 7.0, cy)],
+        egui::Stroke::new(2.0, mc),
+    );
+    if min_resp.clicked() {
+        action = TitleBarAction::Minimize;
+    }
+
+    // 关闭
+    let close_resp = ui.interact(close_rect, scope.with("close"), egui::Sense::click());
+    if close_resp.hovered() {
+        painter.rect_filled(close_rect, 0.0, DANGER);
+    }
+    let cc = if close_resp.hovered() {
+        egui::Color32::WHITE
+    } else {
+        text_alpha(178)
+    };
+    let cx = close_rect.center().x;
+    painter.line_segment(
+        [egui::pos2(cx - 6.0, cy - 6.0), egui::pos2(cx + 6.0, cy + 6.0)],
+        egui::Stroke::new(2.0, cc),
+    );
+    painter.line_segment(
+        [egui::pos2(cx - 6.0, cy + 6.0), egui::pos2(cx + 6.0, cy - 6.0)],
+        egui::Stroke::new(2.0, cc),
+    );
+    if close_resp.clicked() {
+        action = TitleBarAction::Close;
+    }
+    action
+}
+
+/// 进度条（8px 圆角轨道 + 蓝→绿渐变填充，复刻 widgets.rs::progress_track）
+fn progress_track(ui: &mut egui::Ui, width: f32, percent: f32) {
+    let height = 8.0;
+    let (rect, _) = ui.allocate_exact_size(egui::vec2(width, height), egui::Sense::hover());
+    let painter = ui.painter_at(rect);
+    painter.rect_filled(
+        rect,
+        4.0,
+        egui::Color32::from_rgba_unmultiplied(255, 255, 255, 26),
+    );
+    let fill_w = (rect.width() * percent.clamp(0.0, 100.0) / 100.0).max(6.0);
+    let fill = egui::Rect::from_min_size(rect.left_top(), egui::vec2(fill_w, height));
+    let mut mesh = egui::Mesh::default();
+    mesh.colored_vertex(fill.left_top(), ACCENT);
+    mesh.colored_vertex(fill.right_top(), SUCCESS);
+    mesh.colored_vertex(fill.right_bottom(), SUCCESS);
+    mesh.colored_vertex(fill.left_bottom(), ACCENT);
+    mesh.add_triangle(0, 1, 2);
+    mesh.add_triangle(0, 2, 3);
+    painter.add(egui::Shape::mesh(mesh));
+}
+
+/// 两色线性插值（进度环 蓝→绿 渐变用）
+fn lerp_color(a: egui::Color32, b: egui::Color32, t: f32) -> egui::Color32 {
+    let t = t.clamp(0.0, 1.0);
+    egui::Color32::from_rgba_premultiplied(
+        (a.r() as f32 + (b.r() as f32 - a.r() as f32) * t) as u8,
+        (a.g() as f32 + (b.g() as f32 - a.g() as f32) * t) as u8,
+        (a.b() as f32 + (b.b() as f32 - a.b() as f32) * t) as u8,
+        (a.a() as f32 + (b.a() as f32 - a.a() as f32) * t) as u8,
+    )
+}
+
+/// 环形进度（方案 E 仪表盘右栏）：全圆轨道 + 蓝→绿渐变填充弧，中心两行文字
+fn draw_progress_ring(ui: &mut egui::Ui, diameter: f32, pct: f32, big: &str, sub: &str) {
+    let (rect, _) = ui.allocate_exact_size(egui::vec2(diameter, diameter), egui::Sense::hover());
+    let painter = ui.painter_at(rect);
+    let c = rect.center();
+    let r_out = diameter / 2.0 - 3.0;
+    let r_in = r_out - 9.0;
+    let n = 64usize;
+    let filled = (pct.clamp(0.0, 100.0) / 100.0 * n as f32) as usize;
+    let start = -std::f32::consts::FRAC_PI_2;
+    for i in 0..n {
+        let a0 = start + (i as f32) / n as f32 * std::f32::consts::TAU;
+        let a1 = start + ((i + 1) as f32) / n as f32 * std::f32::consts::TAU;
+        let color = if i < filled {
+            lerp_color(
+                ACCENT,
+                SUCCESS,
+                i as f32 / (n.saturating_sub(1) as f32).max(1.0),
+            )
+        } else {
+            egui::Color32::from_rgba_unmultiplied(255, 255, 255, 26)
+        };
+        let mut mesh = egui::Mesh::default();
+        mesh.colored_vertex(c + egui::vec2(a0.cos(), a0.sin()) * r_in, color);
+        mesh.colored_vertex(c + egui::vec2(a0.cos(), a0.sin()) * r_out, color);
+        mesh.colored_vertex(c + egui::vec2(a1.cos(), a1.sin()) * r_out, color);
+        mesh.colored_vertex(c + egui::vec2(a1.cos(), a1.sin()) * r_in, color);
+        mesh.add_triangle(0, 1, 2);
+        mesh.add_triangle(0, 2, 3);
+        painter.add(egui::Shape::mesh(mesh));
+    }
+    painter.text(
+        c + egui::vec2(0.0, -6.0),
+        egui::Align2::CENTER_CENTER,
+        big,
+        egui::FontId::proportional(22.0),
+        TEXT,
+    );
+    painter.text(
+        c + egui::vec2(0.0, 16.0),
+        egui::Align2::CENTER_CENTER,
+        sub,
+        egui::FontId::proportional(11.0),
+        MUTED,
+    );
+}
+
+/// 在 content 区渲染一个带标题的分组卡片：左侧品牌色竖条 + 主文字色标题，下方半透明圆角卡片。
 fn section<R>(ui: &mut egui::Ui, title: &str, content: impl FnOnce(&mut egui::Ui) -> R) -> R {
     ui.horizontal(|ui| {
         let (rect, _) = ui.allocate_exact_size(egui::vec2(3.0, 15.0), egui::Sense::hover());
         ui.painter().rect_filled(rect, 1.5, ACCENT);
         ui.add_space(7.0);
-        ui.label(egui::RichText::new(title).size(13.0).strong().color(INK));
+        ui.label(egui::RichText::new(title).size(13.0).strong().color(TEXT));
     });
     ui.add_space(8.0);
     let r = egui::Frame::default()
@@ -593,7 +829,7 @@ fn push_log(log: &Arc<Mutex<Vec<String>>>, line: &str) {
 /// 对照设计稿「标签从左侧改为顶部，输入框可以占满整行；说明文字下挂并降一级灰度，
 /// 不再和值抢注意力」——原先标签与控件同行会挤压输入框宽度，长路径只能横向滚动。
 fn field<R>(ui: &mut egui::Ui, label: &str, hint: &str, add: impl FnOnce(&mut egui::Ui) -> R) -> R {
-    ui.label(egui::RichText::new(label).size(12.5).strong().color(INK));
+    ui.label(egui::RichText::new(label).size(12.5).strong().color(TEXT));
     ui.add_space(4.0);
     let r = add(ui);
     if !hint.is_empty() {
@@ -629,12 +865,18 @@ struct PackToolApp {
     current_page: Page,
     /// 是否已执行过窗口居中（仅首帧做一次）
     centered_once: bool,
+    /// 上一次打包耗时（秒），打包结束时写入，仪表盘「最近耗时」指标用
+    last_secs: Option<f64>,
+    /// 上一帧打包中状态（true→false 下降沿时结算 last_secs）
+    prev_running: bool,
 }
 
 impl PackToolApp {
     fn new(cc: &eframe::CreationContext<'_>) -> Self {
         // 安装中文字体，修复中文豆腐块（乱码）显示
         install_fonts(&cc.egui_ctx);
+        // 深色主题对齐 launcherclient（src-egui/src/theme.rs 色板）
+        apply_theme(&cc.egui_ctx);
         let config = Config::load();
         let version = suggest_version(&config.output_dir, &config.app_name);
         PackToolApp {
@@ -648,6 +890,8 @@ impl PackToolApp {
             pack_started: None,
             current_page: Page::Config,
             centered_once: false,
+            last_secs: None,
+            prev_running: false,
         }
     }
 
@@ -677,8 +921,7 @@ impl PackToolApp {
         cancel.store(false, Ordering::Relaxed);
         *running.lock().unwrap() = true;
         self.pack_started = Some(Instant::now());
-        // 打包开始即切到日志页，让用户直接看到进度
-        self.current_page = Page::Log;
+        // 仪表盘右栏进度环 + 日志常驻，无需切页
 
         std::thread::spawn(move || {
             // 每条日志：加锁 → push → 立即释放 → 请求重绘
@@ -727,74 +970,316 @@ impl PackToolApp {
         push_log(&self.log, "正在取消，等待当前阶段收尾…");
     }
 
-    /// 配置页：基本信息 + 保存
+    /// 仪表盘主屏（方案 E）：指标条 + 左栏表单 + 右栏进度环与最近日志
     fn page_config(&mut self, ui: &mut egui::Ui) {
-        ui.heading(egui::RichText::new("配置").size(18.0).strong().color(INK));
-        ui.add_space(4.0);
-        section(ui, "基本信息", |ui| {
-            field(
-                ui,
-                "应用名",
-                "决定产物文件名 {app}_{version}.zip，同时也是旧包清理的匹配前缀",
-                |ui| mono_edit(ui, &mut self.config.app_name),
-            );
-            field(
-                ui,
-                "输出目录",
-                "分卷产物与 version.json 清单都会写到这里",
+        let running = self.running.try_lock().map(|v| *v).unwrap_or(false);
+        let prog = match self.progress.try_lock() {
+            Ok(g) => g.clone(),
+            Err(_) => None,
+        };
+
+        // ---- 指标条：版本号 / 配置项 / 下载前缀 / 最近耗时 ----
+        let metrics: [( &str, String, bool); 4] = [
+            ("版本号", self.version.clone(), true),
+            ("配置项", format!("{} 项", self.config.files.len()), false),
+            (
+                "下载前缀",
+                format!("{} 条", self.config.download_prefixes.len()),
+                false,
+            ),
+            (
+                "最近耗时",
+                match self.last_secs {
+                    Some(s) => format!("{:.1} s", s),
+                    None => "—".into(),
+                },
+                false,
+            ),
+        ];
+        ui.horizontal(|ui| {
+            let w = (ui.available_width() - 3.0 * 10.0) / 4.0;
+            for (k, v, accent) in metrics {
+                ui.allocate_ui(egui::vec2(w, 58.0), |ui| {
+                    egui::Frame::default()
+                        .fill(CARD_BG)
+                        .stroke(egui::Stroke::new(1.0, BORDER))
+                        .inner_margin(egui::Margin::symmetric(12, 9))
+                        .corner_radius(8.0)
+                        .show(ui, |ui| {
+                            ui.set_min_width(w - 24.0);
+                            ui.label(egui::RichText::new(k).size(11.0).color(MUTED));
+                            ui.label(
+                                egui::RichText::new(v)
+                                    .size(17.0)
+                                    .strong()
+                                    .color(if accent { ACCENT } else { TEXT })
+                                    .font(egui::FontId::monospace(17.0)),
+                            );
+                        });
+                });
+            }
+        });
+        ui.add_space(12.0);
+
+        // ---- 两栏：左 = 表单（打包输入集中一屏），右 = 进度环 + 最近日志 ----
+        // 注意：allocate_ui 会继承父 ui 的横向布局（horizontal 内子项全部横排居中），
+        // 两栏必须显式指定 top_down，否则内容挤成一行。
+        let h = ui.available_height();
+        let right_w = 236.0;
+        let top_down = egui::Layout::top_down(egui::Align::Min);
+        ui.horizontal(|ui| {
+            let left_w = (ui.available_width() - right_w - 14.0).max(280.0);
+            ui.allocate_ui_with_layout(
+                egui::vec2(left_w, h),
+                top_down,
                 |ui| {
-                    ui.horizontal(|ui| {
-                        // 输入框吃掉除「浏览」按钮外的全部宽度
-                        ui.add_sized(
-                            egui::vec2(ui.available_width() - 58.0, 26.0),
-                            egui::TextEdit::singleline(&mut self.config.output_dir)
-                                .font(egui::FontId::monospace(13.0)),
-                        );
-                        if ui.button("浏览…").clicked() {
-                            if let Some(p) = rfd::FileDialog::new().pick_folder() {
-                                self.config.output_dir = p.to_string_lossy().replace('\\', "/");
+                    egui::ScrollArea::vertical()
+                        .auto_shrink([false, false])
+                        .show(ui, |ui| {
+                            section(ui, "基本信息", |ui| {
+                                field(
+                                    ui,
+                                    "应用名",
+                                    "决定产物文件名 {app}_{version}.zip，同时也是旧包清理的匹配前缀",
+                                    |ui| mono_edit(ui, &mut self.config.app_name),
+                                );
+                                field(
+                                    ui,
+                                    "输出目录",
+                                    "分卷产物与 version.json 清单都会写到这里",
+                                    |ui| {
+                                        ui.horizontal(|ui| {
+                                            ui.add_sized(
+                                                egui::vec2(ui.available_width() - 58.0, 26.0),
+                                                egui::TextEdit::singleline(
+                                                    &mut self.config.output_dir,
+                                                )
+                                                .font(egui::FontId::monospace(13.0)),
+                                            );
+                                            if ui.button("浏览…").clicked() {
+                                                if let Some(p) =
+                                                    rfd::FileDialog::new().pick_folder()
+                                                {
+                                                    self.config.output_dir =
+                                                        p.to_string_lossy().replace('\\', "/");
+                                                }
+                                            }
+                                        });
+                                    },
+                                );
+                                field(
+                                    ui,
+                                    "单卷大小 (MB)",
+                                    "包体超过该体积自动切分，编号 .001 / .002",
+                                    |ui| {
+                                        ui.add(
+                                            egui::DragValue::new(&mut self.config.volume_size_mb)
+                                                .range(1..=2048),
+                                        );
+                                    },
+                                );
+                                ui.horizontal(|ui| {
+                                    if ui
+                                        .add(
+                                            egui::Button::new(
+                                                egui::RichText::new("保存配置")
+                                                    .strong()
+                                                    .color(ACCENT_TEXT),
+                                            )
+                                            .fill(ACCENT)
+                                            .corner_radius(6.0)
+                                            .min_size(egui::vec2(88.0, 28.0)),
+                                        )
+                                        .clicked()
+                                    {
+                                        match self.config.save() {
+                                            Ok(_) => push_log(
+                                                &self.log,
+                                                "配置已保存到 packtool.json",
+                                            ),
+                                            Err(e) => push_log(
+                                                &self.log,
+                                                &format!("保存失败: {}", e),
+                                            ),
+                                        }
+                                    }
+                                    ui.label(
+                                        egui::RichText::new("未保存的改动不会写进 packtool.json")
+                                            .size(11.0)
+                                            .color(MUTED),
+                                    );
+                                });
+                            });
+                            section(ui, "版本与更新日志", |ui| {
+                                field(
+                                    ui,
+                                    "版本号",
+                                    "语义化版本 主.次.修订，需大于已发布的线上版本",
+                                    |ui| {
+                                        ui.horizontal(|ui| {
+                                            ui.add_sized(
+                                                egui::vec2(ui.available_width() - 140.0, 26.0),
+                                                egui::TextEdit::singleline(&mut self.version)
+                                                    .font(egui::FontId::monospace(13.0)),
+                                            );
+                                            if ui.button("取默认（末位+1）").clicked() {
+                                                self.version = suggest_version(
+                                                    &self.config.output_dir,
+                                                    &self.config.app_name,
+                                                );
+                                            }
+                                        });
+                                    },
+                                );
+                                field(
+                                    ui,
+                                    "更新日志",
+                                    "多条用 ; 或换行分隔；留空则沿用上一版",
+                                    |ui| {
+                                        ui.add(
+                                            egui::TextEdit::multiline(&mut self.changelog)
+                                                .desired_rows(3)
+                                                .desired_width(f32::INFINITY),
+                                        );
+                                    },
+                                );
+                            });
+                        });
+                },
+            );
+
+            // ---- 右栏：进度环 + 状态 + 最近日志（常驻，打包免切页） ----
+            ui.allocate_ui_with_layout(egui::vec2(right_w, h), top_down, |ui| {
+                egui::Frame::default()
+                    .fill(CARD_BG)
+                    .stroke(egui::Stroke::new(1.0, BORDER))
+                    .inner_margin(egui::Margin::symmetric(14, 14))
+                    .corner_radius(8.0)
+                    .show(ui, |ui| {
+                        let pct = prog.as_ref().map(|p| p.percent()).unwrap_or(0.0);
+                        let sub = match &prog {
+                            Some(p) => STAGE_NAMES.get(p.stage).copied().unwrap_or(""),
+                            None => {
+                                if running {
+                                    "准备中"
+                                } else {
+                                    "待打包"
+                                }
+                            }
+                        };
+                        let big = if running || prog.is_some() {
+                            format!("{:.0}%", pct)
+                        } else {
+                            "—".into()
+                        };
+                        ui.vertical_centered(|ui| {
+                            draw_progress_ring(ui, 118.0, pct, &big, sub);
+                        });
+                        ui.add_space(6.0);
+                        if running {
+                            ui.horizontal(|ui| {
+                                ui.with_layout(
+                                    egui::Layout::right_to_left(egui::Align::Center),
+                                    |ui| {
+                                        let cancel_btn = egui::Button::new(
+                                            egui::RichText::new("取消").color(MUTED),
+                                        )
+                                        .corner_radius(6.0)
+                                        .stroke(egui::Stroke::new(1.0, BORDER))
+                                        .min_size(egui::vec2(56.0, 26.0));
+                                        if ui.add(cancel_btn).clicked() {
+                                            self.cancel_pack();
+                                        }
+                                        ui.label(
+                                            egui::RichText::new("打包中…")
+                                                .size(12.0)
+                                                .color(ACCENT)
+                                                .strong(),
+                                        );
+                                    },
+                                );
+                            });
+                        } else {
+                            ui.vertical_centered(|ui| {
+                                ui.label(
+                                    egui::RichText::new("点右上角「打包」开始")
+                                        .size(11.5)
+                                        .color(MUTED),
+                                );
+                            });
+                        }
+                        ui.add_space(10.0);
+                        ui.horizontal(|ui| {
+                            ui.label(
+                                egui::RichText::new("最近日志")
+                                    .size(11.0)
+                                    .color(MUTED)
+                                    .strong(),
+                            );
+                            ui.with_layout(
+                                egui::Layout::right_to_left(egui::Align::Center),
+                                |ui| {
+                                    if ui
+                                        .add(
+                                            egui::Button::new(
+                                                egui::RichText::new("查看全部")
+                                                    .size(10.5)
+                                                    .color(ACCENT),
+                                            )
+                                            .fill(egui::Color32::TRANSPARENT)
+                                            .corner_radius(4.0),
+                                        )
+                                        .clicked()
+                                    {
+                                        self.current_page = Page::Log;
+                                    }
+                                },
+                            );
+                        });
+                        ui.add_space(4.0);
+                        // 最新 3 条：try_lock 短暂取样，绝不阻塞 UI
+                        let tail: Vec<String> = match self.log.try_lock() {
+                            Ok(log) => {
+                                let mut t: Vec<String> = log
+                                    .iter()
+                                    .rev()
+                                    .take(3)
+                                    .cloned()
+                                    .collect();
+                                t.reverse();
+                                t
+                            }
+                            Err(_) => Vec::new(),
+                        };
+                        if tail.is_empty() {
+                            ui.label(
+                                egui::RichText::new("（暂无日志）").size(11.5).color(MUTED),
+                            );
+                        } else {
+                            for (i, line) in tail.iter().enumerate() {
+                                let last = i + 1 == tail.len();
+                                let text = if line.chars().count() > 30 {
+                                    let cut: String = line.chars().take(30).collect();
+                                    format!("{}…", cut)
+                                } else {
+                                    line.clone()
+                                };
+                                ui.label(
+                                    egui::RichText::new(text)
+                                        .size(11.5)
+                                        .font(egui::FontId::monospace(11.5))
+                                        .color(if last && running { ACCENT } else { MUTED }),
+                                );
                             }
                         }
                     });
-                },
-            );
-            field(
-                ui,
-                "单卷大小 (MB)",
-                "包体超过该体积自动切分，编号 .001 / .002",
-                |ui| {
-                    ui.add(egui::DragValue::new(&mut self.config.volume_size_mb).range(1..=2048));
-                },
-            );
-            ui.horizontal(|ui| {
-                if ui
-                    .add(
-                        egui::Button::new(
-                            egui::RichText::new("保存配置").strong().color(ACCENT_TEXT),
-                        )
-                        .fill(ACCENT)
-                        .corner_radius(6.0)
-                        .min_size(egui::vec2(88.0, 28.0)),
-                    )
-                    .clicked()
-                {
-                    match self.config.save() {
-                        Ok(_) => push_log(&self.log, "配置已保存到 packtool.json"),
-                        Err(e) => push_log(&self.log, &format!("保存失败: {}", e)),
-                    }
-                }
-                ui.label(
-                    egui::RichText::new("未保存的改动不会写进 packtool.json")
-                        .size(11.0)
-                        .color(MUTED),
-                );
             });
         });
     }
 
     /// 历史构建页：输出目录内已有产物（按名称倒序 = 版本由新到旧）
     fn page_history(&mut self, ui: &mut egui::Ui) {
-        ui.heading(egui::RichText::new("历史构建").size(18.0).strong().color(INK));
+        ui.heading(egui::RichText::new("历史构建").size(18.0).strong().color(TEXT));
         ui.add_space(4.0);
         section(ui, "输出目录内的历史产物", |ui| {
             ui.label(
@@ -820,7 +1305,7 @@ impl PackToolApp {
                     ui.label(
                         egui::RichText::new(&h.name)
                             .size(13.0)
-                            .color(INK)
+                            .color(TEXT)
                             .font(egui::FontId::monospace(13.0)),
                     );
                     ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
@@ -861,7 +1346,7 @@ impl PackToolApp {
 
     /// 打包文件页：文件/目录列表
     fn page_files(&mut self, ui: &mut egui::Ui) {
-        ui.heading(egui::RichText::new("打包文件").size(18.0).strong().color(INK));
+        ui.heading(egui::RichText::new("打包文件").size(18.0).strong().color(TEXT));
         ui.add_space(4.0);
         section(ui, "待打包文件 / 目录", |ui| {
             ui.label(
@@ -904,7 +1389,7 @@ impl PackToolApp {
 
     /// 下载与版本页：前缀 + 版本号 + 更新日志
     fn page_version(&mut self, ui: &mut egui::Ui) {
-        ui.heading(egui::RichText::new("下载与版本").size(18.0).strong().color(INK));
+        ui.heading(egui::RichText::new("下载与版本").size(18.0).strong().color(TEXT));
         ui.add_space(4.0);
         section(ui, "下载前缀", |ui| {
             ui.label(
@@ -933,38 +1418,7 @@ impl PackToolApp {
                 self.config.download_prefixes.push(String::new());
             }
         });
-        section(ui, "版本与更新日志", |ui| {
-            field(
-                ui,
-                "版本号",
-                "语义化版本 主.次.修订，需大于已发布的线上版本",
-                |ui| {
-                    ui.horizontal(|ui| {
-                        ui.add_sized(
-                            egui::vec2(ui.available_width() - 140.0, 26.0),
-                            egui::TextEdit::singleline(&mut self.version)
-                                .font(egui::FontId::monospace(13.0)),
-                        );
-                        if ui.button("取默认（末位+1）").clicked() {
-                            self.version =
-                                suggest_version(&self.config.output_dir, &self.config.app_name);
-                        }
-                    });
-                },
-            );
-            field(
-                ui,
-                "更新日志",
-                "多条用 ; 或换行分隔；留空则沿用上一版",
-                |ui| {
-                    ui.add(
-                        egui::TextEdit::multiline(&mut self.changelog)
-                            .desired_rows(4)
-                            .desired_width(f32::INFINITY),
-                    );
-                },
-            );
-        });
+        // 版本与更新日志已并入仪表盘主屏（方案 E：打包输入集中一屏）
     }
 
     /// 打包进度卡片：阶段条 + 百分比 + 已用时 + 取消（仅打包期间显示）
@@ -985,11 +1439,12 @@ impl PackToolApp {
 
         section(ui, "打包进度", |ui| {
             ui.horizontal(|ui| {
-                ui.label(egui::RichText::new("正在打包").size(14.0).strong().color(INK));
+                ui.label(egui::RichText::new("正在打包").size(14.0).strong().color(TEXT));
                 ui.label(egui::RichText::new(&title_desc).size(11.0).color(MUTED));
                 ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
                     let cancel_btn = egui::Button::new(egui::RichText::new("取消").color(MUTED))
                         .corner_radius(6.0)
+                        .stroke(egui::Stroke::new(1.0, BORDER))
                         .min_size(egui::vec2(56.0, 26.0));
                     if ui.add(cancel_btn).clicked() {
                         self.cancel_pack();
@@ -1001,7 +1456,17 @@ impl PackToolApp {
             ui.add_space(8.0);
 
             let pct = prog.as_ref().map(|p| p.percent()).unwrap_or(0.0);
-            ui.add(egui::ProgressBar::new(pct / 100.0).desired_height(8.0).show_percentage());
+            ui.horizontal(|ui| {
+                let w = ui.available_width() - 46.0;
+                progress_track(ui, w, pct);
+                ui.add_space(8.0);
+                ui.label(
+                    egui::RichText::new(format!("{:.0}%", pct))
+                        .size(12.0)
+                        .color(ACCENT)
+                        .strong(),
+                );
+            });
             ui.add_space(6.0);
 
             ui.horizontal(|ui| {
@@ -1016,7 +1481,7 @@ impl PackToolApp {
                 ui.label(
                     egui::RichText::new(format!("阶段 {} / {} · {}", idx, STAGE_NAMES.len(), name))
                         .size(12.0)
-                        .color(INK),
+                        .color(TEXT),
                 );
                 if !detail.is_empty() {
                     ui.label(
@@ -1041,7 +1506,7 @@ impl PackToolApp {
             ui.horizontal_wrapped(|ui| {
                 for (i, name) in STAGE_NAMES.iter().enumerate() {
                     let (color, strong) = match &prog {
-                        Some(p) if i < p.stage => (ACCENT, false),
+                        Some(p) if i < p.stage => (SUCCESS, false),
                         Some(p) if i == p.stage => (ACCENT, true),
                         _ => (MUTED, false),
                     };
@@ -1060,7 +1525,7 @@ impl PackToolApp {
 
     /// 日志页
     fn page_log(&mut self, ui: &mut egui::Ui) {
-        ui.heading(egui::RichText::new("日志").size(18.0).strong().color(INK));
+        ui.heading(egui::RichText::new("日志").size(18.0).strong().color(TEXT));
         ui.add_space(4.0);
         if self.running.try_lock().map(|v| *v).unwrap_or(false) {
             self.draw_progress_card(ui);
@@ -1087,7 +1552,9 @@ impl PackToolApp {
                         match self.log.try_lock() {
                             Ok(log) => {
                                 if log.is_empty() {
-                                    ui.label(egui::RichText::new("（暂无日志）").weak());
+                                    ui.label(
+                                        egui::RichText::new("（暂无日志）").size(12.0).color(MUTED),
+                                    );
                                 } else {
                                     for line in log.iter() {
                                         ui.monospace(line);
@@ -1095,7 +1562,11 @@ impl PackToolApp {
                                 }
                             }
                             Err(_) => {
-                                ui.label(egui::RichText::new("（日志正被写入，稍后刷新）").weak());
+                                ui.label(
+                                    egui::RichText::new("（日志正被写入，稍后刷新）")
+                                        .size(12.0)
+                                        .color(MUTED),
+                                );
                             }
                         }
                     });
@@ -1118,16 +1589,58 @@ impl eframe::App for PackToolApp {
         if running {
             ui.ctx().request_repaint();
         }
+        // 打包结束（true→false 下降沿）：结算仪表盘「最近耗时」指标
+        if self.prev_running && !running {
+            self.last_secs = self.pack_started.map(|t| t.elapsed().as_secs_f64());
+        }
+        self.prev_running = running;
+
+        // 全窗口自绘渐变背景 + 自定义标题栏（对齐 launcherclient 无边框风格）
+        let full = ui.max_rect();
+        paint_bg(ui.painter(), full);
+        let tb = draw_titlebar(ui, "QsLtd 更新包打包工具");
+        match tb {
+            TitleBarAction::Minimize => {
+                ui.ctx()
+                    .send_viewport_cmd(egui::ViewportCommand::Minimized(true));
+            }
+            TitleBarAction::Close => {
+                ui.ctx().send_viewport_cmd(egui::ViewportCommand::Close);
+            }
+            TitleBarAction::None => {}
+        }
 
         egui::CentralPanel::default().show(ui, |ui| {
-            // 顶部：标题 + 常驻打包按钮
+            // 顶部行：页面标签（替代左导航，方案 E 顶栏）+ 常驻打包按钮（右）
             ui.horizontal(|ui| {
-                ui.heading(
-                    egui::RichText::new("QsLtd 更新包打包工具")
-                        .size(18.0)
-                        .strong()
-                        .color(INK),
-                );
+                for p in [
+                    Page::Config,
+                    Page::Files,
+                    Page::History,
+                    Page::Version,
+                    Page::Log,
+                ] {
+                    let active = self.current_page == p;
+                    let resp = ui.add(
+                        egui::Button::new(
+                            egui::RichText::new(p.title())
+                                .size(12.5)
+                                .color(if active { ACCENT } else { MUTED })
+                                .strong(),
+                        )
+                        .fill(if active { ACCENT_SOFT } else { egui::Color32::TRANSPARENT })
+                        .stroke(if active {
+                            egui::Stroke::new(1.0, tint(ACCENT, 80))
+                        } else {
+                            egui::Stroke::NONE
+                        })
+                        .corner_radius(6.0)
+                        .min_size(egui::vec2(0.0, 28.0)),
+                    );
+                    if resp.clicked() {
+                        self.current_page = p;
+                    }
+                }
                 ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
                     if running {
                         ui.spinner();
@@ -1146,72 +1659,22 @@ impl eframe::App for PackToolApp {
             });
             ui.add_space(6.0);
             ui.separator();
+            ui.add_space(8.0);
 
-            // 左导航 + 右内容
-            egui::Panel::left("nav")
-                .resizable(false)
-                .default_size(168.0)
-                .show(ui, |ui| {
-                    egui::Frame::default().fill(SIDEBAR_BG).show(ui, |ui| {
-                        ui.add_space(14.0);
-                        // 分组导航（工作区 / 分发）+ 当前项左侧指示条
-                        for (gname, pages) in NAV_GROUPS {
-                            ui.label(egui::RichText::new(gname).size(10.5).color(MUTED).strong());
-                            ui.add_space(6.0);
-                            for p in pages {
-                                let active = self.current_page == *p;
-                                ui.horizontal(|ui| {
-                                    let (rect, _) = ui.allocate_exact_size(
-                                        egui::vec2(3.0, 30.0),
-                                        egui::Sense::hover(),
-                                    );
-                                    ui.painter().rect_filled(
-                                        rect,
-                                        1.5,
-                                        if active {
-                                            ACCENT
-                                        } else {
-                                            egui::Color32::TRANSPARENT
-                                        },
-                                    );
-                                    ui.add_space(5.0);
-                                    let resp = ui.add(
-                                        egui::Button::new(
-                                            egui::RichText::new(p.title())
-                                                .size(13.0)
-                                                .color(if active { ACCENT } else { MUTED })
-                                                .strong(),
-                                        )
-                                        .fill(
-                                            if active {
-                                                ACCENT_SOFT
-                                            } else {
-                                                egui::Color32::TRANSPARENT
-                                            },
-                                        )
-                                        .stroke(egui::Stroke::NONE)
-                                        .corner_radius(8.0)
-                                        .min_size(egui::vec2(ui.available_width(), 30.0)),
-                                    );
-                                    if resp.clicked() {
-                                        self.current_page = *p;
-                                    }
-                                });
-                                ui.add_space(5.0);
-                            }
-                            ui.add_space(12.0);
-                        }
+            // 内容区：仪表盘主屏自带两栏布局，其余页面整页滚动
+            if self.current_page == Page::Config {
+                self.page_config(ui);
+            } else {
+                egui::ScrollArea::vertical()
+                    .auto_shrink([false, false])
+                    .show(ui, |ui| match self.current_page {
+                        Page::Files => self.page_files(ui),
+                        Page::History => self.page_history(ui),
+                        Page::Version => self.page_version(ui),
+                        Page::Log => self.page_log(ui),
+                        Page::Config => unreachable!(),
                     });
-                });
-            egui::CentralPanel::default().show(ui, |ui| {
-                egui::ScrollArea::vertical().show(ui, |ui| match self.current_page {
-                    Page::Config => self.page_config(ui),
-                    Page::Files => self.page_files(ui),
-                    Page::History => self.page_history(ui),
-                    Page::Version => self.page_version(ui),
-                    Page::Log => self.page_log(ui),
-                });
-            });
+            }
         });
     }
 }
@@ -1281,11 +1744,13 @@ fn load_window_icon() -> Option<egui::IconData> {
 
 fn main() -> eframe::Result<()> {
     let icon = load_window_icon();
+    // 无边框窗口：标题栏由 draw_titlebar 自绘（对齐 launcherclient），
+    // 故禁用系统缩放，尺寸固定
     let viewport = egui::ViewportBuilder::default()
         .with_title("QsLtd 更新包打包工具")
         .with_inner_size([760.0, 680.0])
-        .with_resizable(true)
-        .with_min_inner_size([640.0, 480.0]);
+        .with_resizable(false)
+        .with_decorations(false);
     let viewport = match icon {
         Some(icon) => viewport.with_icon(icon),
         None => viewport,
