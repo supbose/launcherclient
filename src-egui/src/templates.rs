@@ -250,6 +250,7 @@ fn template_a(ui: &mut Ui, view: &PhaseView, retrying: bool) -> Option<Action> {
                             .color(if stage == Stage::Error { theme::tint(theme::ERROR_TEXT, 191) } else { theme::text_alpha(140) }),
                     );
                 }
+                error_hint_row(ui, view, 8.0);
             }
         }
 
@@ -273,7 +274,7 @@ fn template_a(ui: &mut Ui, view: &PhaseView, retrying: bool) -> Option<Action> {
                 retrying,
                 stage == Stage::Error,
                 stage == Stage::Done,
-                view.download_failed(),
+                view.needs_homepage(),
             )
         } else {
             None
@@ -371,6 +372,7 @@ fn template_b(ui: &mut Ui, view: &PhaseView, retrying: bool) -> Option<Action> {
                         if stage == Stage::Error { theme::tint(theme::ERROR_TEXT, 191) } else { theme::text_alpha(140) },
                     );
                 }
+                error_hint_centered(ui, view, 8.0);
             }
         }
 
@@ -391,7 +393,7 @@ fn template_b(ui: &mut Ui, view: &PhaseView, retrying: bool) -> Option<Action> {
                         retrying,
                         stage == Stage::Error,
                         stage == Stage::Done,
-                        view.download_failed(),
+                        view.needs_homepage(),
                     );
                 })
             });
@@ -464,6 +466,7 @@ fn template_c(ui: &mut Ui, view: &PhaseView, retrying: bool, last_step: i32) -> 
                             .color(if stage == Stage::Error { theme::tint(theme::ERROR_TEXT, 191) } else { theme::text_alpha(166) }),
                     );
                 }
+                error_hint_row(ui, view, 8.0);
             }
         }
 
@@ -487,7 +490,7 @@ fn template_c(ui: &mut Ui, view: &PhaseView, retrying: bool, last_step: i32) -> 
                 retrying,
                 stage == Stage::Error,
                 stage == Stage::Done,
-                view.download_failed(),
+                view.needs_homepage(),
             )
         } else {
             None
@@ -654,6 +657,7 @@ fn template_d(ui: &mut Ui, view: &PhaseView, retrying: bool) -> Option<Action> {
                         if stage == Stage::Error { theme::tint(theme::ERROR_TEXT, 191) } else { theme::text_alpha(128) },
                     );
                 }
+                error_hint_centered(ui, view, 6.0);
             }
         }
 
@@ -673,7 +677,7 @@ fn template_d(ui: &mut Ui, view: &PhaseView, retrying: bool) -> Option<Action> {
                         retrying,
                         stage == Stage::Error,
                         stage == Stage::Done,
-                        view.download_failed(),
+                        view.needs_homepage(),
                     );
                 })
             });
@@ -779,6 +783,7 @@ fn template_e(ui: &mut Ui, view: &PhaseView, retrying: bool) -> Option<Action> {
             ui.add_space(14.0);
             ui.label(RichText::new(view.sub()).size(12.0).color(theme::text_alpha(153)));
         }
+        error_hint_row(ui, view, 10.0);
 
         // 底部明细：左 sizeText（错误时兜底文案）右 speed/eta，上分割线
         ui.add_space(10.0);
@@ -825,7 +830,7 @@ fn template_e(ui: &mut Ui, view: &PhaseView, retrying: bool) -> Option<Action> {
                 retrying,
                 stage == Stage::Error,
                 stage == Stage::Done,
-                view.download_failed(),
+                view.needs_homepage(),
             )
         } else {
             None
@@ -840,6 +845,42 @@ fn show_percent(view: &PhaseView) -> bool {
         Stage::Checking => view.percent() > 0.0,
         _ => false,
     }
+}
+
+/// 错误态左对齐提示行（「下载失败，已自动重试 2 次（共 3 次尝试）。可点击…」）
+///
+/// 只在错误态出现：正常阶段用户不需要知道自己被重试了几次。
+fn error_hint_row(ui: &mut Ui, view: &PhaseView, gap: f32) {
+    if view.stage() != Stage::Error {
+        return;
+    }
+    let hint = widgets::error_hint(
+        &view.attempt_text(),
+        view.failed_stage_name(),
+        view.needs_homepage(),
+    );
+    if hint.is_empty() {
+        return;
+    }
+    ui.add_space(gap);
+    ui.label(RichText::new(hint).size(11.5).color(theme::text_alpha(153)));
+}
+
+/// 错误态居中提示行（B/D 模板居中版）
+fn error_hint_centered(ui: &mut Ui, view: &PhaseView, gap: f32) {
+    if view.stage() != Stage::Error {
+        return;
+    }
+    let hint = widgets::error_hint(
+        &view.attempt_text(),
+        view.failed_stage_name(),
+        view.needs_homepage(),
+    );
+    if hint.is_empty() {
+        return;
+    }
+    ui.add_space(gap);
+    widgets::centered_label(ui, &hint, 11.5, theme::text_alpha(153));
 }
 
 /// E 模板结束态文案兜底（后端未带 message 时）

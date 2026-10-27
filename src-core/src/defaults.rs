@@ -28,6 +28,13 @@ pub const DEFAULT_APP_NAME: &str = "qsm";
 /// 都引用此处，改一处即全局生效。
 pub const DEFAULT_LAUNCHER_TEMPLATE: &str = "C";
 
+/// 同一环节（下载 / 解压校验）自动重试次数
+///
+/// 弱网抖动、CDN 边缘节点临时 5xx 是常态，用户第一次看到错误页就点
+/// 「重试」纯属把重试成本转嫁给人。次数含首次尝试：3 表示「失败后再
+/// 自动重试 2 次」——保守取值，避免真挂掉时让用户干等两轮完整超时。
+pub const DEFAULT_RETRY_TIMES: u32 = 3;
+
 /// 进度事件推送间隔（毫秒）：UI 编排层的节流参数，与后端逻辑无关，
 /// 仅两版 updater 的进度回调使用，故也集中到此处保持一致
 pub const PROGRESS_INTERVAL_MS: u64 = 300;

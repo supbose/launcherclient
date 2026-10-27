@@ -47,6 +47,8 @@ pub struct ResolvedConfig {
     pub template: String,
     /// 官网首页地址：下载地址全挂时错误态「前往官网」按钮的目标
     pub homepage: String,
+    /// 同一环节自动重试次数（含首次尝试）：下载、解压校验各自独立计数
+    pub retry_times: u32,
 }
 
 /// 启动决策：窗口创建前确定是否需要 UI
@@ -106,6 +108,7 @@ pub fn resolve_config(args: &CliArgs) -> ResolvedConfig {
         template,
         // 配置写了空串当没写：回落到内置默认，按钮点了才有地方去
         homepage: non_empty(settings.homepage).unwrap_or_else(|| DEFAULT_HOMEPAGE.to_string()),
+        retry_times: config::resolve_retry_times(settings.retry_times),
         max_versions: settings
             .max_versions
             .filter(|v| *v > 0)
@@ -416,38 +419,60 @@ pub async fn run_update_flow(
     let is_parts = m.parts.as_ref().is_some_and(|p| !p.is_empty());
     let zip_path = download_dir(&cfg.app_name).join(format!("update_{}.zip", m.version));
 
-    // 下载：分卷模式（parts 存在）或单包模式
-    // 下载失败不直接 `?` 上抛：先给快照打上「下载环节失败」标记，
-    // 界面才知道该亮「前往官网」而不是只在原地劝用户重试
-    if is_parts {
-        if let Err(e) = run_download_parts(handle, m, &cfg.app_name, &zip_path).await {
-            record_download_failure(handle, &e);
-            return Err(e);
-        }
-    } else if m.url.is_empty() {
+    // ---- 下载 + 包完整性校验：同一环节自动重试（默认 3 次，含首次） ----
+    //
+    // 单包模式缺地址属于 manifest 配置问题，重试无意义，直接报错。
+    // 其余失败（网络抖动、CDN 5xx、下载后 SHA256 对不上、分卷合并失败）
+    // 都视为「可能是这次运气不好」，重下一遍比拼人品靠谱 —— 每轮重试
+    // 前会删掉残留包，避免把半包当完整包复用。
+    // 重试次数耗尽才把「可跳官网」标记写进快照：地址确实全挂了，
+    // 界面此时给「前往官网」才是负责任的出口。
+    if !is_parts && m.url.is_empty() {
         // 单包模式却没有地址：等于没有下载这条路，同属「拿不到安装包」
         let e = "manifest 缺少 url 字段（单包模式必填）".to_string();
         eprintln!("[更新器] 下载失败: {}", e);
         handle.set(PhasePayload::failure("更新包下载失败", &e, true));
         return Err(e);
-    } else if let Err(e) = run_download(handle, m, &zip_path).await {
-        record_download_failure(handle, &e);
-        return Err(e);
     }
 
-    // SHA256 校验
-    handle.set(PhasePayload::new(Stage::Checking, "正在校验更新包...", "", None));
-    if let Err(e) = tokio::task::spawn_blocking({
-        let zip_path = zip_path.clone();
-        let sha256 = m.sha256.clone();
-        move || download::verify_sha256(&zip_path, &sha256)
-    })
-    .await
-    .unwrap_or_else(|e| Err(format!("校验任务异常: {}", e)))
-    {
-        eprintln!("[更新器] 更新包校验失败: {}", e);
-        handle.set(PhasePayload::new(Stage::Error, "更新包校验失败", &e, None));
-        return Err(e);
+    let download_max = retry_limit(cfg.retry_times, file_can_be_removed(&zip_path));
+    let mut attempt: u32 = 0;
+    loop {
+        attempt += 1;
+        let outcome = if is_parts {
+            run_download_parts(handle, m, &cfg.app_name, &zip_path, attempt, download_max).await
+        } else {
+            if attempt > 1 {
+                // 重试前丢弃上一轮的残包：复用逻辑只认校验通过的包，
+                // 但 sha256 缺失时它会直接信任本地文件，这里先删干净
+                let _ = tokio::fs::remove_file(&zip_path).await;
+            }
+            run_download(handle, m, &zip_path, attempt, download_max).await
+        };
+
+        // 下载成功后再核一遍完整包 SHA256：早期中断/磁盘写坏都在这关露头
+        let result = match outcome {
+            Ok(()) => verify_package(handle, &zip_path, &m.sha256).await,
+            Err(e) => Err(e),
+        };
+
+        match result {
+            Ok(()) => break,
+            Err(e) if attempt < download_max => {
+                eprintln!(
+                    "[更新器] 下载/校验失败（第 {}/{} 次），自动重试: {}",
+                    attempt, download_max, e
+                );
+                notify_retrying(handle, "download", attempt, download_max, &e);
+                // 失败后清掉残缺产物，下一轮从零开始
+                let _ = tokio::fs::remove_file(&zip_path).await;
+                tokio::time::sleep(retry_backoff(attempt)).await;
+            }
+            Err(e) => {
+                record_download_failure(handle, &e, attempt, download_max);
+                return Err(e);
+            }
+        }
     }
     eprintln!("[更新器] 更新包校验通过: {}", zip_path.display());
 
@@ -483,15 +508,39 @@ pub async fn run_update_flow(
         }
     }
 
-    // 安装
+    // ---- 安装（解压 + 校验文件）：同样允许自动重试 ----
+    //
+    // 解压失败多为「包不完整 / 磁盘瞬时占用」，重试一次常常就好了；
+    // 但这不是「下载地址」的问题，故耗尽后也不引导用户去官网。
     let target_dir = install_dir(&cfg.app_name, &m.version);
-    let install_handle = handle.clone();
-    let install_cb: install::StageCallback =
-        Arc::new(move |msg, pct| install_handle.set(PhasePayload::new(Stage::Installing, "正在安装更新...", msg, pct)));
-    if let Err(e) = install::install(&zip_path, &target_dir, install_cb).await {
-        eprintln!("[更新器] 安装失败: {}", e);
-        handle.set(PhasePayload::new(Stage::Error, "更新安装失败", &e, None));
-        return Err(e);
+    let install_max = retry_limit(cfg.retry_times, true);
+    let mut install_attempt: u32 = 0;
+    loop {
+        install_attempt += 1;
+        let install_handle = handle.clone();
+        let install_cb: install::StageCallback = Arc::new(move |msg, pct| {
+            install_handle.set(PhasePayload::new(Stage::Installing, "正在安装更新...", msg, pct))
+        });
+        match install::install(&zip_path, &target_dir, install_cb).await {
+            Ok(_) => break,
+            Err(e) if install_attempt < install_max => {
+                eprintln!(
+                    "[更新器] 安装失败（第 {}/{} 次），自动重试: {}",
+                    install_attempt, install_max, e
+                );
+                notify_retrying(handle, "install", install_attempt, install_max, &e);
+                tokio::time::sleep(retry_backoff(install_attempt)).await;
+            }
+            Err(e) => {
+                eprintln!("[更新器] 安装失败: {}", e);
+                handle.set(PhasePayload::failure("更新安装失败", &e, false).with_attempt(
+                    "install",
+                    install_attempt,
+                    install_max,
+                ));
+                return Err(e);
+            }
+        }
     }
     eprintln!("[更新器] 安装完成: {}", target_dir.display());
 
@@ -553,6 +602,8 @@ async fn run_download_parts(
     m: &manifest::FlatManifest,
     app_name: &str,
     zip_path: &Path,
+    attempt: u32,
+    max_attempts: u32,
 ) -> Result<(), String> {
     let urls = m.parts.as_ref().ok_or("分卷地址列表缺失")?;
     let parts_dir = download_dir(app_name).join(format!("update_{}_parts", m.version));
@@ -562,7 +613,7 @@ async fn run_download_parts(
 
     handle.set(PhasePayload::new(
         Stage::Downloading,
-        "正在下载更新包...",
+        &retry_title("download", attempt, max_attempts),
         &format!("共 {} 卷", urls.len()),
         Some(0.0),
     ));
@@ -575,7 +626,7 @@ async fn run_download_parts(
         if should {
             // 标题只描述动作，分卷进度交由右上角徽标（"分卷 x/y"）展示，
             // 避免标题与徽标同时出现"分卷 1/28"造成冗余拥挤（与单包模式标题语义一致）
-            let msg = "正在下载更新包...".to_string();
+            let msg = retry_title("download", attempt, max_attempts);
             // 总大小未知时按卷数估算百分比
             let percent = p
                 .percent()
@@ -634,6 +685,8 @@ async fn run_download(
     handle: &PhaseHandle,
     m: &manifest::FlatManifest,
     zip_path: &Path,
+    attempt: u32,
+    max_attempts: u32,
 ) -> Result<(), String> {
     // 复用前提：manifest 提供了非空 SHA256。无校验值时 verify_sha256 直接
     // 放行，等于把上次下载中断的半包当完整包复用（后面安装的就是损坏包），
@@ -677,7 +730,12 @@ async fn run_download(
             .map_err(|e| format!("创建下载目录失败 {}: {}", parent.display(), e))?;
     }
 
-    handle.set(PhasePayload::new(Stage::Downloading, "正在下载更新包...", "", Some(0.0)));
+    handle.set(PhasePayload::new(
+        Stage::Downloading,
+        &retry_title("download", attempt, max_attempts),
+        "",
+        Some(0.0),
+    ));
     let tracker = std::sync::Mutex::new(SpeedTracker::new());
     let handle_cb = handle.clone();
     let result = download::download_file(&m.url, zip_path, move |p| {
@@ -685,7 +743,7 @@ async fn run_download(
         let (should, speed) = t.tick(p.downloaded, p.percent() == Some(100.0));
         if should {
             handle_cb.set(PhasePayload::download(
-                "正在下载更新包...",
+                &retry_title("download", attempt, max_attempts),
                 None,
                 p.percent(),
                 p.downloaded,
@@ -942,10 +1000,104 @@ pub async fn read_installed_path(app_name: &str) -> Option<String> {
 ///
 /// 只在错误信息出自下载链路（带 [`download::DOWNLOAD_FAIL_PREFIX`]）时打标；
 /// 磁盘满、创建目录失败这类本地问题不引导用户去官网——重试或清理磁盘才有用。
-fn record_download_failure(handle: &PhaseHandle, err: &str) {
+fn record_download_failure(handle: &PhaseHandle, err: &str, attempt: u32, max_attempts: u32) {
     let is_download = err.starts_with(download::DOWNLOAD_FAIL_PREFIX);
     eprintln!("[更新器] 下载失败: {}", err);
-    handle.set(PhasePayload::failure("更新包下载失败", err, is_download));
+    handle.set(
+        PhasePayload::failure("更新包下载失败", err, is_download)
+            .with_attempt("download", attempt, max_attempts),
+    );
+}
+
+/// 生效的重试上限（含首次尝试）
+///
+/// - 配置值经 [`config::resolve_retry_times`] 归一（默认 3，上限 10）
+/// - `retryable` 为 false 时只试一次：比如下载目录建不出来，重试同样建不出来
+fn retry_limit(configured: u32, retryable: bool) -> u32 {
+    if retryable {
+        // 上限放在这里兜底，防止直接构造 ResolvedConfig 时传个离谱值
+        configured.clamp(1, 10)
+    } else {
+        1
+    }
+}
+
+/// 重试前先确认失败产物删得掉
+///
+/// 删不掉说明文件被占用或目录只读，重下只会再写一遍半包，白等一轮。
+fn file_can_be_removed(path: &Path) -> bool {
+    if !path.exists() {
+        return true;
+    }
+    match std::fs::remove_file(path) {
+        Ok(()) => true,
+        Err(e) => {
+            eprintln!("[更新器] 无法清理失败产物 {}: {}", path.display(), e);
+            false
+        }
+    }
+}
+
+/// 校验完整包 SHA256（期望值为空时跳过）
+async fn verify_package(handle: &PhaseHandle, zip_path: &Path, sha256: &Option<String>) -> Result<(), String> {
+    handle.set(PhasePayload::new(Stage::Checking, "正在校验更新包...", "", None));
+    let zip_path = zip_path.to_path_buf();
+    let sha256 = sha256.clone();
+    tokio::task::spawn_blocking(move || download::verify_sha256(&zip_path, &sha256))
+        .await
+        .unwrap_or_else(|e| Err(format!("校验任务异常: {}", e)))
+}
+
+/// 失败后自动重试前的等待（1s、2s、3s…，最多 5s）
+///
+/// 递增而非固定：短暂抖动立刻重试就够；持续故障时没必要每 500ms 砸一次服务器。
+fn retry_backoff(attempt: u32) -> std::time::Duration {
+    std::time::Duration::from_secs(u64::from(attempt.clamp(1, 5)))
+}
+
+/// 推送「正在自动重试」快照
+///
+/// 走 download/install 阶段而非 error：error 是终点，这里流程还在跑，
+/// 界面标题会说清楚「第几次」，用户知道程序没死。
+fn notify_retrying(handle: &PhaseHandle, stage_name: &str, attempt: u32, max_attempts: u32, err: &str) {
+    let stage = if stage_name == "install" {
+        Stage::Installing
+    } else {
+        Stage::Downloading
+    };
+    let title = retry_title(stage_name, attempt + 1, max_attempts);
+    // 不带 percent：percent 为 None 时界面按「刚重新开始」渲染（0 进度），
+    // 比硬塞一个 0.0 更诚实——上一轮已下载的字节数已经作废
+    handle.set(PhasePayload::new(
+        stage,
+        &title,
+        &format!(
+            "第 {}/{} 次尝试失败，正在自动重试（{}）",
+            attempt,
+            max_attempts,
+            first_line(err)
+        ),
+        None,
+    ));
+}
+
+/// 阶段标题：首次尝试就是常规文案，重试时标出「第 N/M 次」
+fn retry_title(stage_name: &str, attempt: u32, max_attempts: u32) -> String {
+    let base = if stage_name == "install" {
+        "正在安装更新..."
+    } else {
+        "正在下载更新包..."
+    };
+    if attempt <= 1 {
+        base.to_string()
+    } else {
+        format!("{}（第 {}/{} 次）", base, attempt, max_attempts)
+    }
+}
+
+/// 取错误信息首行：多行错误塞进进度条副标题只会被截断，不如只留关键一句
+fn first_line(s: &str) -> &str {
+    s.lines().next().unwrap_or(s).trim()
 }
 
 /// 在系统浏览器打开官网首页（错误态「前往官网」）
@@ -1023,6 +1175,44 @@ mod tests {
         let _ = std::fs::remove_dir_all(&d);
         std::fs::create_dir_all(&d).expect("建临时目录");
         d
+    }
+
+    #[test]
+    fn retry_limit_never_below_one_and_capped() {
+        // 配置 0 也必须试一次（「不试」不是合法语义）；上限 10 兜底
+        assert_eq!(retry_limit(0, true), 1);
+        assert_eq!(retry_limit(3, true), 3);
+        assert_eq!(retry_limit(99, true), 10);
+        // 不可重试的失败（如下载目录建不出来）只试一次
+        assert_eq!(retry_limit(5, false), 1);
+    }
+
+    #[test]
+    fn retry_backoff_grows_then_caps() {
+        // 1s → 2s → 3s → …，封顶 5s：持续故障时别拿高频重试捶服务器
+        assert_eq!(retry_backoff(1).as_secs(), 1);
+        assert_eq!(retry_backoff(3).as_secs(), 3);
+        assert_eq!(retry_backoff(9).as_secs(), 5);
+    }
+
+    #[test]
+    fn retry_title_marks_attempt_only_after_first() {
+        // 首次尝试保持常规文案，重试才标「第 N/M 次」
+        assert_eq!(retry_title("download", 1, 3), "正在下载更新包...");
+        assert_eq!(retry_title("download", 2, 3), "正在下载更新包...（第 2/3 次）");
+        assert_eq!(retry_title("install", 2, 3), "正在安装更新...（第 2/3 次）");
+    }
+
+    #[test]
+    fn file_can_be_removed_reports_state() {
+        // 不存在 → 视为可重试；存在且删得掉 → 可重试且文件已删
+        let dir = temp_dir("retry_cleanup");
+        let f = dir.join("update_1.0.0.zip");
+        assert!(file_can_be_removed(&f));
+        std::fs::write(&f, b"partial").expect("写残包");
+        assert!(file_can_be_removed(&f));
+        assert!(!f.exists(), "重试前必须把残包清掉");
+        let _ = std::fs::remove_dir_all(&dir);
     }
 
     #[test]

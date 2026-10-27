@@ -336,8 +336,9 @@ pub fn button(ui: &mut Ui, text: &str, primary: bool, enabled: bool) -> bool {
 
 /// 底部动作行（.tpl-x__actions：gap 10）
 ///
-/// - 错误态：重试 + 关闭；若失败出在下载链路（`show_homepage`），
-///   再加一枚「前往官网」——地址全挂时重试是徒劳，得给条能拿到包的路
+/// - 错误态：重试 + 关闭；若自动重试已用尽且失败出在下载链路
+///   （`show_homepage`），再加一枚「前往官网」——地址全挂时重试是徒劳，
+///   得给条能拿到包的路
 /// - 完成态：完成
 pub fn actions_row(
     ui: &mut Ui,
@@ -354,7 +355,7 @@ pub fn actions_row(
                 act = Some(Action::Retry);
             }
             ui.add_space(10.0);
-            if show_homepage && button(ui, "前往官网", false, true) {
+            if show_homepage && button(ui, "前往官网重新下载", false, true) {
                 act = Some(Action::Homepage);
             }
             if show_homepage {
@@ -368,6 +369,31 @@ pub fn actions_row(
         }
     });
     act
+}
+
+/// 错误态一句话说明（接在错误详情下方）
+///
+/// 说清两件事：这次失败在哪个环节试了几次、接下来该点哪个按钮。
+/// 只有下载链路的重试用尽才把用户往官网引——解压失败让他去官网重下，
+/// 相当于让他重走一遍一模一样的坑。
+pub fn error_hint(attempt_text: &str, stage_name: &str, needs_homepage: bool) -> String {
+    // 环节名 + 已试次数：「下载已自动重试 2 次（共 3 次尝试）」
+    let tried = if attempt_text.is_empty() {
+        format!("{}失败", if stage_name.is_empty() { "更新" } else { stage_name })
+    } else if stage_name.is_empty() {
+        attempt_text.to_string()
+    } else {
+        format!("{}{}", stage_name, attempt_text)
+    };
+    if needs_homepage {
+        return format!("{}。可点击「前往官网重新下载」获取完整安装包", tried);
+    }
+    if attempt_text.is_empty() {
+        // 没走自动重试的失败（本地错误）：别劝他去官网，也别假装还有兜底
+        format!("{}，请处理后点「重试」", tried)
+    } else {
+        format!("{}，请检查网络或磁盘后点「重试」", tried)
+    }
 }
 
 /// 底部动作
