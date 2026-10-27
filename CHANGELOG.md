@@ -1,4 +1,14 @@
 
+
+## v0.1.25 (2026-10-27)
+### 📝 文档更新
+
+- [b842e84](/-/commit/b842e84af314f3bb29cb8733f2f1f115c9d9bbb0) 文档(src-pkgtool): 添加 pkgtool UI 原型预览页面和崩溃日志 (.trae-html-share-packages/pkgtool-ui-prototype/pkgtool-ui-prototype.html.zip, pkgtool-ui-prototype/pkgtool-ui-prototype.html, src-pkgtool/bt.log, src-pkgtool/crash.log, src-pkgtool/src/main.rs)
+
+### 📦 构建系统
+
+- [4cde2c1](/-/commit/4cde2c17deef9292083afa6480ca86a3298d4b88) 构建(src-egui): 更新版本号至0.1.24 (src-egui/version.rc)
+
 ## v0.1.24 (2026-10-27)
 ### 🚀 新增功能
 
