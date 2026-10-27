@@ -1,3 +1,25 @@
+
+## v0.1.24 (2026-10-27)
+### 🚀 新增功能
+
+- [0b7810e](/-/commit/0b7810ed3b9c07b910ea8eab43f0247144e48a4a) 新增(src-core): 新增F/G/H三套启动器界面模板并默认切换为F (package.json, src-core/src/config.rs, src-core/src/defaults.rs, src-core/src/flow.rs, src-core/src/phase.rs, src-core/src/shell.rs, src-egui/src/main.rs, src-egui/src/preview.rs, src-egui/src/templates.rs, src-egui/version.rc, update.json)
+- [b30ca4c](/-/commit/b30ca4cbaf7365f020a590f640b806c54ceca561) 新增(src-core): 下载与解压校验失败自动重试 (CHANGELOG.md, README.md, src-core/src/config.rs, src-core/src/defaults.rs, src-core/src/flow.rs, src-core/src/phase.rs, src-egui/src/preview.rs, src-egui/src/templates.rs, src-egui/src/widgets.rs, update.json)
+- [8dc62cf](/-/commit/8dc62cf32ad17b59284f4fcff34ad14212fb8906) 新增(egui): 下载地址全挂时可跳转官网首页 (README.md, src-core/src/config.rs, src-core/src/defaults.rs, src-core/src/download.rs, src-core/src/flow.rs, src-core/src/lib.rs, src-core/src/phase.rs, src-core/src/shell.rs, src-egui/src/app.rs, src-egui/src/preview.rs, src-egui/src/templates.rs, src-egui/src/widgets.rs, update.json)
+
+### 🩹 修复 Bug
+
+- [290218f](/-/commit/290218fd0fa9f408bacb7ec70615d80b62055735) 修复(egui): 检测中加载动画居中并放大 (src-egui/src/app.rs, src-egui/src/main.rs, src-egui/src/templates.rs)
+
+### ♻️ 代码重构
+
+- [3725561](/-/commit/372556189a2e87d15e42dfce1d07547b3cec6483) 重构(egui): 重构日志卡片为固定高度内部滚动，优化布局稳定性 (src-egui/src/templates.rs, src-egui/src/widgets.rs)
+
+### 📝 其他
+
+- [8489dc3](/-/commit/8489dc349785a6d63b0c91cb0521e12a800fce32) 合并来自: 合并来自 auto/retry-download-983f 的合并请求 #5
+- [af8ceed](/-/commit/af8ceeda5c9563dad6fc27a9ccdb2ef9072418c4) 合并来自: 合并来自 auto/loading-center-1024 的合并请求 #4
+- [0f03991](/-/commit/0f03991f9508b4b8c7c8a0512979265ec1a7f40c) 合并来自: 合并来自 auto/homepage-fallback-f216 的合并请求 #2
+
 ## 未发布
 ### 🚀 新增功能
 

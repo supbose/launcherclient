@@ -10,6 +10,6 @@
     "pkgtool": "cd src-pkgtool && cargo build --release",
     "pkgtool:dev": "cd src-pkgtool && cargo run",
     "preview": "cd src-egui/target/release && .\\launcherclient.exe --preview --template F --stage error"
-    },
-  "version": "0.1.23"
+  },
+  "version": "0.1.24"
 }
