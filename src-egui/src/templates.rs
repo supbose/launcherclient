@@ -279,7 +279,13 @@ fn template_a(ui: &mut Ui, view: &PhaseView, retrying: bool) -> Option<Action> {
 
         if show_actions {
             ui.add_space(14.0);
-            widgets::actions_row(ui, retrying, stage == Stage::Error, stage == Stage::Done)
+            widgets::actions_row(
+                ui,
+                retrying,
+                stage == Stage::Error,
+                stage == Stage::Done,
+                view.download_failed(),
+            )
         } else {
             None
         }
@@ -391,7 +397,13 @@ fn template_b(ui: &mut Ui, view: &PhaseView, retrying: bool) -> Option<Action> {
             ui.add_space(14.0);
             ui.with_layout(Layout::top_down(Align::Center), |ui| {
                 ui.horizontal(|ui| {
-                    act = widgets::actions_row(ui, retrying, stage == Stage::Error, stage == Stage::Done);
+                    act = widgets::actions_row(
+                        ui,
+                        retrying,
+                        stage == Stage::Error,
+                        stage == Stage::Done,
+                        view.download_failed(),
+                    );
                 })
             });
         }
@@ -481,7 +493,13 @@ fn template_c(ui: &mut Ui, view: &PhaseView, retrying: bool, last_step: i32) -> 
 
         if show_actions {
             ui.add_space(14.0);
-            widgets::actions_row(ui, retrying, stage == Stage::Error, stage == Stage::Done)
+            widgets::actions_row(
+                ui,
+                retrying,
+                stage == Stage::Error,
+                stage == Stage::Done,
+                view.download_failed(),
+            )
         } else {
             None
         }
@@ -661,7 +679,13 @@ fn template_d(ui: &mut Ui, view: &PhaseView, retrying: bool) -> Option<Action> {
             ui.add_space(14.0);
             ui.with_layout(Layout::top_down(Align::Center), |ui| {
                 ui.horizontal(|ui| {
-                    act = widgets::actions_row(ui, retrying, stage == Stage::Error, stage == Stage::Done);
+                    act = widgets::actions_row(
+                        ui,
+                        retrying,
+                        stage == Stage::Error,
+                        stage == Stage::Done,
+                        view.download_failed(),
+                    );
                 })
             });
         }
@@ -807,7 +831,13 @@ fn template_e(ui: &mut Ui, view: &PhaseView, retrying: bool) -> Option<Action> {
 
         if stage == Stage::Error || stage == Stage::Done {
             ui.add_space(14.0);
-            widgets::actions_row(ui, retrying, stage == Stage::Error, stage == Stage::Done)
+            widgets::actions_row(
+                ui,
+                retrying,
+                stage == Stage::Error,
+                stage == Stage::Done,
+                view.download_failed(),
+            )
         } else {
             None
         }

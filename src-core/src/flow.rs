@@ -23,7 +23,9 @@ use std::time::{Duration, Instant};
 use crate::cleanup;
 use crate::cli::CliArgs;
 use crate::config;
-use crate::defaults::{DEFAULT_APP_NAME, DEFAULT_MANIFEST_URLS, PROGRESS_INTERVAL_MS};
+use crate::defaults::{
+    DEFAULT_APP_NAME, DEFAULT_HOMEPAGE, DEFAULT_MANIFEST_URLS, PROGRESS_INTERVAL_MS,
+};
 use crate::download;
 use crate::install;
 use crate::manifest;
@@ -43,6 +45,8 @@ pub struct ResolvedConfig {
     pub services: Vec<String>,
     /// 生效的启动器界面模板（A/B/C/D/E）
     pub template: String,
+    /// 官网首页地址：下载地址全挂时错误态「前往官网」按钮的目标
+    pub homepage: String,
 }
 
 /// 启动决策：窗口创建前确定是否需要 UI
@@ -100,6 +104,8 @@ pub fn resolve_config(args: &CliArgs) -> ResolvedConfig {
             }),
         launch: args.launch.clone().or_else(|| non_empty(settings.launch)),
         template,
+        // 配置写了空串当没写：回落到内置默认，按钮点了才有地方去
+        homepage: non_empty(settings.homepage).unwrap_or_else(|| DEFAULT_HOMEPAGE.to_string()),
         max_versions: settings
             .max_versions
             .filter(|v| *v > 0)
@@ -411,16 +417,22 @@ pub async fn run_update_flow(
     let zip_path = download_dir(&cfg.app_name).join(format!("update_{}.zip", m.version));
 
     // 下载：分卷模式（parts 存在）或单包模式
+    // 下载失败不直接 `?` 上抛：先给快照打上「下载环节失败」标记，
+    // 界面才知道该亮「前往官网」而不是只在原地劝用户重试
     if is_parts {
-        run_download_parts(handle, m, &cfg.app_name, &zip_path).await?;
-    } else {
-        if m.url.is_empty() {
-            let e = "manifest 缺少 url 字段（单包模式必填）".to_string();
-            eprintln!("[更新器] 下载失败: {}", e);
-            handle.set(PhasePayload::new(Stage::Error, "更新包下载失败", &e, None));
+        if let Err(e) = run_download_parts(handle, m, &cfg.app_name, &zip_path).await {
+            record_download_failure(handle, &e);
             return Err(e);
         }
-        run_download(handle, m, &zip_path).await?;
+    } else if m.url.is_empty() {
+        // 单包模式却没有地址：等于没有下载这条路，同属「拿不到安装包」
+        let e = "manifest 缺少 url 字段（单包模式必填）".to_string();
+        eprintln!("[更新器] 下载失败: {}", e);
+        handle.set(PhasePayload::failure("更新包下载失败", &e, true));
+        return Err(e);
+    } else if let Err(e) = run_download(handle, m, &zip_path).await {
+        record_download_failure(handle, &e);
+        return Err(e);
     }
 
     // SHA256 校验
@@ -578,7 +590,19 @@ async fn run_download_parts(
             ));
         }
     })
-    .await?;
+    .await;
+    let result = match result {
+        Ok(r) => r,
+        Err(e) => {
+            // download_parts 已把卷号补进错误里，这里原样保留
+            let msg = if e.starts_with(download::DOWNLOAD_FAIL_PREFIX) {
+                e
+            } else {
+                format!("{}{}", download::DOWNLOAD_FAIL_PREFIX, e)
+            };
+            return Err(msg);
+        }
+    };
 
     handle.set(PhasePayload::new(Stage::Checking, "正在合并分卷...", "", Some(0.0)));
     eprintln!("[更新器] 合并 {} 个分卷...", result.part_paths.len());
@@ -596,7 +620,11 @@ async fn run_download_parts(
             Some(pct),
         ));
     })
-    .await?;
+    .await
+    .map_err(|e| {
+        // 合并失败多为分卷本身残缺（下载环节的锅），统一按下载环节处理
+        format!("{}分卷合并失败: {}", download::DOWNLOAD_FAIL_PREFIX, e)
+    })?;
     eprintln!("[更新器] 分卷合并完成: {}", zip_path.display());
     Ok(())
 }
@@ -908,6 +936,26 @@ pub async fn read_installed_path(app_name: &str) -> Option<String> {
         Ok(Some(m)) if !m.installed_path.is_empty() => Some(m.installed_path),
         _ => None,
     }
+}
+
+/// 下载环节失败：把「可跳官网」标记写进快照，再按原样上抛错误
+///
+/// 只在错误信息出自下载链路（带 [`download::DOWNLOAD_FAIL_PREFIX`]）时打标；
+/// 磁盘满、创建目录失败这类本地问题不引导用户去官网——重试或清理磁盘才有用。
+fn record_download_failure(handle: &PhaseHandle, err: &str) {
+    let is_download = err.starts_with(download::DOWNLOAD_FAIL_PREFIX);
+    eprintln!("[更新器] 下载失败: {}", err);
+    handle.set(PhasePayload::failure("更新包下载失败", err, is_download));
+}
+
+/// 在系统浏览器打开官网首页（错误态「前往官网」）
+///
+/// 地址取生效配置 `homepage`（update.json > 内置默认），与流程同源，
+/// 避免界面和配置各说各话。
+pub fn open_homepage() -> Result<(), String> {
+    let args = crate::cli::parse();
+    let cfg = resolve_config(&args);
+    crate::shell::open_url(&cfg.homepage)
 }
 
 /// 更新流程运行中标志：首次运行与「重试」共用，防并发双跑

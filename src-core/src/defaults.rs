@@ -12,6 +12,11 @@ pub const DEFAULT_MANIFEST_URLS: &[&str] = &[
     "https://qsw.us.ci/update/qsm/version.json",
 ];
 
+/// 默认官网首页地址（下载地址全部失败时「前往官网」按钮跳这里）。
+/// 官网具体域名随产品线走，通过 update.json 的 `homepage` 覆盖；
+/// 保持内置值非空，避免用户点按钮时无事发生。
+pub const DEFAULT_HOMEPAGE: &str = "https://www.qcsm.ltd";
+
 /// 默认应用名称（决定配置/下载/安装目录）
 pub const DEFAULT_APP_NAME: &str = "qsm";
 

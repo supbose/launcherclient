@@ -150,11 +150,11 @@ pub fn payload(state: &PreviewState) -> PhasePayload {
             p.changelog = log.clone();
             p
         }
-        _ => PhasePayload::new(
-            qsltd_updater_core::phase::Stage::Error,
+        // 预览错误态即「下载地址全挂」场景，顺带展示「前往官网」按钮
+        _ => PhasePayload::failure(
             "更新包下载失败",
-            "全部 3 个 manifest 地址均拉取失败",
-            None,
+            "全部 3 个 manifest 地址均拉取失败，最后错误: 连接超时",
+            true,
         ),
     }
 }

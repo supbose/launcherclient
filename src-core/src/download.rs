@@ -6,6 +6,13 @@ use futures_util::StreamExt;
 use sha2::{Digest, Sha256};
 use tokio::io::AsyncWriteExt;
 
+/// 下载失败错误信息的统一前缀
+///
+/// 单包/分卷下载与合并的所有失败都以此开头，编排层据此判断「是不是
+/// 下载环节挂了」，从而在错误态给出「前往官网」入口。校验不匹配、磁盘
+/// 写失败等本地问题不带这个前缀 —— 换个地址重试能解决，跳官网没用。
+pub const DOWNLOAD_FAIL_PREFIX: &str = "下载失败: ";
+
 /// 下载进度信息
 #[derive(Debug, Clone)]
 pub struct DownloadProgress {
@@ -47,10 +54,14 @@ where
         .get(url)
         .send()
         .await
-        .map_err(|e| format!("下载请求失败: {}", e))?;
+        .map_err(|e| format!("{}请求失败: {}", DOWNLOAD_FAIL_PREFIX, e))?;
 
     if !response.status().is_success() {
-        return Err(format!("下载服务器返回错误状态码: {}", response.status()));
+        return Err(format!(
+            "{}服务器返回错误状态码: {}",
+            DOWNLOAD_FAIL_PREFIX,
+            response.status()
+        ));
     }
 
     let total = response.content_length();
@@ -132,7 +143,7 @@ where
     F: Fn(usize, usize, DownloadProgress) + Send + Sync + 'static,
 {
     if urls.is_empty() {
-        return Err("分卷地址列表为空".to_string());
+        return Err(format!("{}分卷地址列表为空", DOWNLOAD_FAIL_PREFIX));
     }
     tokio::fs::create_dir_all(dir)
         .await
@@ -215,7 +226,17 @@ where
         };
         download_file(url, &part_path, cb)
             .await
-            .map_err(|e| format!("分卷 {}/{} 下载失败: {}", i + 1, total, e))?;
+            .map_err(|e| {
+                // e 已带统一前缀，这里只补卷号定位
+                let detail = e.strip_prefix(DOWNLOAD_FAIL_PREFIX).unwrap_or(&e);
+                format!(
+                    "{}分卷 {}/{} {}",
+                    DOWNLOAD_FAIL_PREFIX,
+                    i + 1,
+                    total,
+                    detail
+                )
+            })?;
 
         // 逐卷校验
         if let Some(exp) = &expected {

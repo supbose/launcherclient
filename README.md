@@ -130,6 +130,7 @@ launcherclient.exe [--app-name <名称>] [--launch <目标程序路径>]
 | `max_versions` | 数字 | 保留的版本目录数量（含当前版本，旧目录即回滚资产），默认 2 |
 | `services` | 字符串数组 | 更新前需卸载的 Windows 服务名；运行中的先停止后卸载，**卸载后不恢复、不重启** |
 | `launcher_template` | 字符串 | 界面模板 A/B/C/D/E，大小写不敏感；留空或未知值回落默认 `C`（未知值会在 stderr 告警，不会白屏） |
+| `homepage` | 字符串 | 官网首页地址；下载/合并环节失败时错误态出现「前往官网」按钮，点击用系统浏览器打开这里。留空则用内置默认 `https://www.qcsm.ltd` |
 
 示例：
 
@@ -144,7 +145,8 @@ launcherclient.exe [--app-name <名称>] [--launch <目标程序路径>]
   "current_version": "",
   "max_versions": 2,
   "services": ["QsmServer"],
-  "launcher_template": "C"
+  "launcher_template": "C",
+  "homepage": "https://www.qcsm.ltd"
 }
 ```
 
@@ -180,6 +182,10 @@ launcherclient.exe [--app-name <名称>] [--launch <目标程序路径>]
 8. 更新完成 → 拉起目标程序
 
 界面阶段（`PhasePayload.stage`）：`checking` → `available` / `up-to-date` → `downloading` → `installing` → `done` / `error`。
+
+**下载地址全挂时**：错误界面除「重试」「关闭」外多一个「前往官网」按钮，用系统默认浏览器打开 `homepage`
+（配置 > 内置默认），用户不必再被卡在没有出口的错误页上。只认下载/合并环节的失败——解压失败、
+磁盘写满这类本地问题换地址也解决不了，不给这个入口，免得把用户往官网引一轮再回来。
 
 ### 4.6 本地目录布局
 

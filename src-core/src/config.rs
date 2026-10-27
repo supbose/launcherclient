@@ -61,6 +61,10 @@ pub struct UpdateSettings {
     /// [`defaults::DEFAULT_LAUNCHER_TEMPLATE`]；取值校验见 [`UpdateSettings::launcher_template`]
     #[serde(default)]
     pub launcher_template: Option<String>,
+    /// 官网首页地址：下载地址全挂时错误态按钮「前往官网」跳这里；
+    /// 缺省或空串用 [`defaults::DEFAULT_HOMEPAGE`]
+    #[serde(default)]
+    pub homepage: Option<String>,
 }
 
 impl UpdateSettings {
@@ -149,7 +153,8 @@ fn generate_default_template(dir: &std::path::Path) -> bool {
             "current_version": "强制指定当前版本；留空自动从本地 app.json 探测",
             "max_versions": "保留的版本目录数量（含当前版本，旧目录即回滚资产），默认 2",
             "services": "更新前需卸载的 Windows 服务名数组；运行中的先停止后卸载，卸载后不恢复不重启",
-            "launcher_template": "启动器界面模板，可选 A/B/C/D/E（大小写不敏感）：A 信息密度 · B 环形居中 · C 顶部步骤条 · D 极简留白 · E 日志为主；留空或未知值用默认 C"
+            "launcher_template": "启动器界面模板，可选 A/B/C/D/E（大小写不敏感）：A 信息密度 · B 环形居中 · C 顶部步骤条 · D 极简留白 · E 日志为主；留空或未知值用默认 C",
+            "homepage": "官网首页地址；下载地址全部失败时界面上的「前往官网」按钮跳这里，留空用内置默认"
         },
         "manifest_url": defaults::DEFAULT_MANIFEST_URLS,
         "app_name": defaults::DEFAULT_APP_NAME,
@@ -157,7 +162,8 @@ fn generate_default_template(dir: &std::path::Path) -> bool {
         "current_version": "",
         "max_versions": DEFAULT_MAX_VERSIONS,
         "services": ["QsmServer"],
-        "launcher_template": defaults::DEFAULT_LAUNCHER_TEMPLATE
+        "launcher_template": defaults::DEFAULT_LAUNCHER_TEMPLATE,
+        "homepage": defaults::DEFAULT_HOMEPAGE
     });
     let Ok(content) = serde_json::to_string_pretty(&template) else {
         eprintln!("[配置] 默认模板序列化失败");
@@ -342,6 +348,17 @@ mod tests {
             "C",
             "仓库默认配置应落到默认模板 C"
         );
+    }
+
+    #[test]
+    fn homepage_field_parsed_and_defaulted() {
+        // 配了就用配的
+        let s: UpdateSettings =
+            serde_json::from_str(r#"{"homepage": "https://example.com"}"#).expect("解析");
+        assert_eq!(s.homepage.as_deref(), Some("https://example.com"));
+        // 没配就是 None，由 resolve_config 回落到 DEFAULT_HOMEPAGE
+        let s: UpdateSettings = serde_json::from_str("{}").expect("解析");
+        assert!(s.homepage.is_none());
     }
 
     #[test]

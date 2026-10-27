@@ -21,3 +21,4 @@ pub mod install;
 pub mod manifest;
 pub mod phase;
 pub mod services;
+pub mod shell;

@@ -91,6 +91,10 @@ pub struct PhasePayload {
     /// 右上角小徽标文本（分卷进度等，仅下载阶段携带）
     #[serde(skip_serializing_if = "Option::is_none")]
     pub badge: Option<String>,
+    /// 本次失败是否出在下载/合并环节（错误态据此提供「前往官网」入口）。
+    /// 下载地址全挂时再点「重试」也是徒劳，得让用户有条直接拿到安装包的路。
+    #[serde(default)]
+    pub download_failed: bool,
 }
 
 impl PhasePayload {
@@ -107,7 +111,19 @@ impl PhasePayload {
             changelog: changelog_snapshot(),
             template: String::new(),
             badge: None,
+            download_failed: false,
         }
+    }
+
+    /// 构造错误阶段载荷，并标记本次失败是否出在下载环节
+    pub fn failure(
+        message: &str,
+        sub: &str,
+        download_failed: bool,
+    ) -> Self {
+        let mut p = Self::new(Stage::Error, message, sub, None);
+        p.download_failed = download_failed;
+        p
     }
 
     /// 构造下载阶段载荷（携带字节数与速度）
@@ -131,6 +147,7 @@ impl PhasePayload {
             changelog: changelog_snapshot(),
             template: String::new(),
             badge,
+            download_failed: false,
         }
     }
 
@@ -331,6 +348,14 @@ impl<'a> PhaseView<'a> {
             .collect()
     }
 
+    /// 错误是否出在下载环节（错误态显示「前往官网」按钮的依据）
+    ///
+    /// 只认下载环节的失败：本地磁盘写不进、解压失败这类问题换个地址
+    /// 也解决不了，不该把用户往官网引。
+    pub fn download_failed(&self) -> bool {
+        self.stage() == Stage::Error && self.payload.download_failed
+    }
+
     /// 是否显示进度条：下载/安装/合并（checking 带副文本即合并分卷）
     pub fn show_progress(&self) -> bool {
         match self.stage() {
@@ -392,6 +417,26 @@ pub fn resolve_template_key(value: &str) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn failure_marks_download_only_when_asked() {
+        // 下载环节失败：错误态下界面给「前往官网」
+        let p = PhasePayload::failure("更新包下载失败", "下载失败: 连接超时", true);
+        assert_eq!(p.stage(), Stage::Error);
+        assert!(PhaseView::new(&p, true).download_failed());
+
+        // 非下载环节（解压、磁盘写失败）：不该把用户往官网引
+        let q = PhasePayload::failure("更新安装失败", "磁盘空间不足", false);
+        assert!(!PhaseView::new(&q, true).download_failed());
+    }
+
+    #[test]
+    fn download_failed_false_outside_error_stage() {
+        // 阶段不是 error 时即便标记为 true 也不显示（避免正常态冒出按钮）
+        let mut p = PhasePayload::new(Stage::Done, "更新完成", "", None);
+        p.download_failed = true;
+        assert!(!PhaseView::new(&p, true).download_failed());
+    }
 
     #[test]
     fn stage_roundtrip() {
