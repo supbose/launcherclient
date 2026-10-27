@@ -66,6 +66,8 @@ pub struct UpdaterApp {
     startup_show: bool,
     /// 窗口创建时刻（懒加载 300ms 阈值计时）
     start_time: Instant,
+    /// 「前往官网」打开失败提示（成功则保持 None）
+    homepage_error: Option<String>,
 }
 
 impl UpdaterApp {
@@ -100,6 +102,7 @@ impl UpdaterApp {
             startup_consumed: false,
             startup_show: false,
             start_time: Instant::now(),
+            homepage_error: None,
             app_name,
         }
     }
@@ -126,6 +129,11 @@ impl UpdaterApp {
         // 收到任何非 error 阶段即视为重试已被受理，复位按钮禁用态
         if stage != Stage::Error {
             self.retrying = false;
+        }
+
+        // 离开错误态即清掉上次的「打开官网失败」提示
+        if stage != Stage::Error {
+            self.homepage_error = None;
         }
 
         self.payload = Some(p);
@@ -318,13 +326,29 @@ impl eframe::App for UpdaterApp {
 
             let view = PhaseView::new(&payload, has_downloaded);
             let mut child = ui.new_child(egui::UiBuilder::new().max_rect(area));
-            templates::draw(&mut child, &view, &template, self.retrying, self.last_step)
+            let action = templates::draw(&mut child, &view, &template, self.retrying, self.last_step);
+            // 错误态底部补一行「打开官网失败」提示（仅打开失败时出现，
+            // 成功打开浏览器后用户视线已经在别处，不需要再占版面）
+            if let Some(err) = self.homepage_error.as_deref() {
+                if view.stage() == Stage::Error {
+                    ui.label(
+                        RichText::new(err)
+                            .size(11.0)
+                            .color(theme::text_alpha(140)),
+                    );
+                }
+            }
+            action
         };
 
         match action {
             Some(widgets::Action::Retry) => {
                 self.retrying = true;
                 flow::retry(self.phase.clone());
+            }
+            Some(widgets::Action::Homepage) => {
+                // 同步拉起浏览器（毫秒级），失败把原因留在错误态下方
+                self.homepage_error = flow::open_homepage().err();
             }
             Some(widgets::Action::Close) => {
                 ui.ctx().send_viewport_cmd(egui::ViewportCommand::Close);

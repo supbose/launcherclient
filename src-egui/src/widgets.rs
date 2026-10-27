@@ -335,11 +335,16 @@ pub fn button(ui: &mut Ui, text: &str, primary: bool, enabled: bool) -> bool {
 }
 
 /// 底部动作行（.tpl-x__actions：gap 10）
+///
+/// - 错误态：重试 + 关闭；若失败出在下载链路（`show_homepage`），
+///   再加一枚「前往官网」——地址全挂时重试是徒劳，得给条能拿到包的路
+/// - 完成态：完成
 pub fn actions_row(
     ui: &mut Ui,
     retrying: bool,
     show_retry: bool,
     show_finish: bool,
+    show_homepage: bool,
 ) -> Option<Action> {
     let mut act = None;
     ui.horizontal(|ui| {
@@ -349,6 +354,12 @@ pub fn actions_row(
                 act = Some(Action::Retry);
             }
             ui.add_space(10.0);
+            if show_homepage && button(ui, "前往官网", false, true) {
+                act = Some(Action::Homepage);
+            }
+            if show_homepage {
+                ui.add_space(10.0);
+            }
             if button(ui, "关闭", false, true) {
                 act = Some(Action::Close);
             }
@@ -363,6 +374,8 @@ pub fn actions_row(
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Action {
     Retry,
+    /// 打开官网首页（下载地址全挂时的兜底出口）
+    Homepage,
     Close,
     Finish,
 }
