@@ -84,7 +84,7 @@ pub fn resolve_config(args: &CliArgs) -> ResolvedConfig {
         non_empty(settings.app_name.clone()).unwrap_or_else(|| DEFAULT_APP_NAME.to_string())
     };
 
-    // 界面模板优先级：命令行 --template > update.json launcher_template > 内置默认（C）。
+    // 界面模板优先级：命令行 --template > update.json launcher_template > 内置默认（F）。
     // 未配置或写了未知值时 resolve 内部回落默认，界面不会因配置笔误白屏。
     let settings_template = settings.launcher_template();
     let template = config::resolve_launcher_template(

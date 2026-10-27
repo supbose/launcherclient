@@ -101,8 +101,8 @@ pub fn resolve_retry_times(specified: Option<u32>) -> u32 {
 /// max_versions 默认值：当前版本 + 1 个旧版本（回滚资产）
 pub const DEFAULT_MAX_VERSIONS: usize = 2;
 
-/// 合法启动器界面模板键（与 `src-egui/src/templates.rs` 下的五套布局一一对应）
-pub const VALID_LAUNCHER_TEMPLATES: &[&str] = &["A", "B", "C", "D", "E"];
+/// 合法启动器界面模板键（与 `src-egui/src/templates.rs` 下的八套布局一一对应）
+pub const VALID_LAUNCHER_TEMPLATES: &[&str] = &["A", "B", "C", "D", "E", "F", "G", "H"];
 
 /// 解析生效的启动器界面模板：命令行 > update.json > 内置默认
 ///
@@ -169,7 +169,7 @@ fn generate_default_template(dir: &std::path::Path) -> bool {
             "current_version": "强制指定当前版本；留空自动从本地 app.json 探测",
             "max_versions": "保留的版本目录数量（含当前版本，旧目录即回滚资产），默认 2",
             "services": "更新前需卸载的 Windows 服务名数组；运行中的先停止后卸载，卸载后不恢复不重启",
-            "launcher_template": "启动器界面模板，可选 A/B/C/D/E（大小写不敏感）：A 信息密度 · B 环形居中 · C 顶部步骤条 · D 极简留白 · E 日志为主；留空或未知值用默认 C",
+            "launcher_template": "启动器界面模板，可选 A~H（大小写不敏感）：A 信息密度 · B 环形居中 · C 顶部步骤条 · D 极简留白 · E 日志为主 · F 环形步骤 · G 品牌沉浸 · H 极简轻量；留空或未知值用默认 F",
             "homepage": "官网首页地址；下载地址全部失败时界面上的「前往官网」按钮跳这里，留空用内置默认",
             "retry_times": "同一环节（下载 / 解压校验）的自动重试次数（含首次尝试），默认 3：失败后自动再试 2 次，仍失败才提示前往官网重新下载"
         },
@@ -298,16 +298,16 @@ mod tests {
 
     #[test]
     fn launcher_template_absent_falls_back_to_default() {
-        // 未配置 → 默认模板 C
+        // 未配置 → 默认模板 F
         let s: UpdateSettings = serde_json::from_str("{}").expect("空配置应可解析");
         assert!(s.launcher_template().is_none());
-        assert_eq!(resolve_launcher_template(s.launcher_template().as_deref()), "C");
+        assert_eq!(resolve_launcher_template(s.launcher_template().as_deref()), "F");
     }
 
     #[test]
     fn launcher_template_explicit_overrides_default() {
-        // 显式指定优先于默认：五套模板都应能被正确选中
-        for key in ["A", "B", "C", "D", "E"] {
+        // 显式指定优先于默认：八套模板都应能被正确选中
+        for key in ["A", "B", "C", "D", "E", "F", "G", "H"] {
             let json = format!(r#"{{"launcher_template": "{key}"}}"#);
             let s: UpdateSettings = serde_json::from_str(&json).expect("配置应可解析");
             assert_eq!(
@@ -332,15 +332,15 @@ mod tests {
         let s: UpdateSettings =
             serde_json::from_str(r#"{"launcher_template": ""}"#).expect("应可解析");
         assert!(s.launcher_template().is_none());
-        assert_eq!(resolve_launcher_template(s.launcher_template().as_deref()), "C");
+        assert_eq!(resolve_launcher_template(s.launcher_template().as_deref()), "F");
     }
 
     #[test]
     fn launcher_template_unknown_value_falls_back_to_default() {
-        // 未知模板不得让界面白屏：回落到默认 C
-        assert_eq!(resolve_launcher_template(Some("Z")), "C");
-        assert_eq!(resolve_launcher_template(Some("")), "C");
-        assert_eq!(resolve_launcher_template(None), "C");
+        // 未知模板不得让界面白屏：回落到默认 F
+        assert_eq!(resolve_launcher_template(Some("Z")), "F");
+        assert_eq!(resolve_launcher_template(Some("")), "F");
+        assert_eq!(resolve_launcher_template(None), "F");
     }
 
     #[test]
@@ -363,8 +363,8 @@ mod tests {
         let s: UpdateSettings = serde_json::from_str(&content).expect("update.json 应可解析");
         assert_eq!(
             resolve_launcher_template(s.launcher_template().as_deref()),
-            "C",
-            "仓库默认配置应落到默认模板 C"
+            "F",
+            "仓库默认配置应落到默认模板 F"
         );
     }
 

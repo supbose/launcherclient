@@ -1,6 +1,7 @@
-//! 五套启动器界面模板（A/B/C/D/E）—— UpdateTemplateA~E.vue 的 egui 复刻
+//! 八套启动器界面模板（A~H）—— A~E 为 UpdateTemplateA~E.vue 的 egui 复刻，
+//! F/G/H 为后续新增的三套设计方向（深色工具风 / 品牌沉浸风 / 极简轻量风）
 //!
-//! 模板键与后端 `launcher_template` 配置（默认 C）一一对应。每套模板
+//! 模板键与后端 `launcher_template` 配置（默认 F）一一对应。每套模板
 //! 自持布局与配色（互不覆盖，与 Vue 版结构一致），展示值统一来自
 //! `PhaseView`（usePhase.js 的 Rust 对应物）。
 
@@ -25,7 +26,10 @@ pub fn draw(
         "C" => template_c(ui, view, retrying, last_step),
         "D" => template_d(ui, view, retrying),
         "E" => template_e(ui, view, retrying),
-        _ => template_c(ui, view, retrying, last_step),
+        "F" => template_f(ui, view, retrying, last_step),
+        "G" => template_g(ui, view, retrying),
+        "H" => template_h(ui, view, retrying),
+        _ => template_f(ui, view, retrying, last_step),
     }
 }
 
@@ -351,12 +355,13 @@ fn template_b(ui: &mut Ui, view: &PhaseView, retrying: bool) -> Option<Action> {
             }
             _ => {
                 ui.with_layout(Layout::top_down(Align::Center), |ui| {
-                    ui.horizontal(|ui| {
-                        let (r, _) = ui.allocate_exact_size(Vec2::new(16.0, 16.0), Sense::hover());
-                        let (color, halo) = end_dot_color(view);
-                        widgets::status_dot(&ui.painter_at(r), r.center(), 8.0, color, halo);
-                    });
-                    ui.add_space(10.0);
+                    // 直接在 top_down(Center) 里分配 28×28（halo 外沿 13 + 余量），
+                    // 居中布局自动水平居中；不可包 horizontal 子容器——子容器
+                    // 会吃掉剩余高度，把圆点顶到左侧、标题挤到底部
+                    let (r, _) = ui.allocate_exact_size(Vec2::new(28.0, 28.0), Sense::hover());
+                    let (color, halo) = end_dot_color(view);
+                    widgets::status_dot(&ui.painter_at(r), r.center(), 8.0, color, halo);
+                    ui.add_space(4.0);
                     ui.label(
                         RichText::new(end_title(view))
                             .size(15.0)
@@ -507,7 +512,7 @@ fn draw_steps(ui: &mut Ui, view: &PhaseView, width: f32, last_step: i32) {
     let step = if view.step() == -2 { last_step } else { view.step() };
     let n = STEP_LABELS.len() as f32; // 4.0
     let dot_r = 8.0;
-    let row_h = 37.0;
+    let row_h = 40.0;
     // 首尾对称内缩：首节点距左 margin、末节点距右 margin，中间等分。
     // 若按旧式 (2*i+1)*seg 公式，第 4 个节点会落在 area.right()（区域右边界），
     // 而 painter_at(area) 会按区域矩形裁剪，圆点与标签超出右边界被裁掉（"完成"只露半截）。
@@ -518,8 +523,9 @@ fn draw_steps(ui: &mut Ui, view: &PhaseView, width: f32, last_step: i32) {
     // 间距改用 area.width()（实际分配到的宽度），避免父容器夹紧导致末节点越过右界被裁。
     let aw = area.width();
     let spacing = (aw - 2.0 * margin) / (n - 1.0);
-    // 圆点中心下移 3px：避免正好压在区域上边界（抗锯齿裁掉顶部一丝）。
-    let dot_y = area.top() + dot_r + 3.0;
+    // 圆点中心下移 12.5px：当前步外环半径 dot_r+3、halo 半径 dot_r+4=12，
+    // 旧值 11 会让环顶部越过区域上边界被 painter 裁掉（圆点看起来没画满）。
+    let dot_y = area.top() + dot_r + 4.5;
 
     // 连接线（位于圆点中心高度，从节点 i 右缘到节点 i+1 左缘，不压圆点）
     for i in 0..(STEP_LABELS.len() - 1) {
@@ -557,7 +563,7 @@ fn draw_steps(ui: &mut Ui, view: &PhaseView, width: f32, last_step: i32) {
             painter.circle_stroke(dot_c, dot_r, Stroke::new(1.25, theme::text_alpha(80)));
         }
         painter.text(
-            Pos2::new(cx, area.top() + 28.0),
+            Pos2::new(cx, area.top() + 32.0),
             egui::Align2::CENTER_CENTER,
             *label,
             egui::FontId::proportional(11.0),
@@ -636,12 +642,11 @@ fn template_d(ui: &mut Ui, view: &PhaseView, retrying: bool) -> Option<Action> {
             }
             _ => {
                 ui.with_layout(Layout::top_down(Align::Center), |ui| {
-                    ui.horizontal(|ui| {
-                        let (r, _) = ui.allocate_exact_size(Vec2::new(14.0, 14.0), Sense::hover());
-                        let (color, halo) = end_dot_color(view);
-                        widgets::status_dot(&ui.painter_at(r), r.center(), 7.0, color, halo);
-                    });
-                    ui.add_space(10.0);
+                    // 同 B：居中布局直接分配 26×26（dot 7 + halo 5 + 余量）
+                    let (r, _) = ui.allocate_exact_size(Vec2::new(26.0, 26.0), Sense::hover());
+                    let (color, halo) = end_dot_color(view);
+                    widgets::status_dot(&ui.painter_at(r), r.center(), 7.0, color, halo);
+                    ui.add_space(6.0);
                     ui.label(
                         RichText::new(end_title(view))
                             .size(15.0)
@@ -932,4 +937,353 @@ fn e_log_list(ui: &mut Ui, items: &[&str]) {
                 });
             }
         });
+}
+
+// ---------------------------------------------------------------------------
+// 模板 F：深色工具风 · 环形进度 + 步骤条 · 间距统一 8 的倍数
+// （JetBrains Toolbox / Discord 参考：B 的视觉重心 + C 的流程感合一）
+// ---------------------------------------------------------------------------
+
+fn template_f(ui: &mut Ui, view: &PhaseView, retrying: bool, last_step: i32) -> Option<Action> {
+    content(ui, (16.0, 28.0, 20.0, 28.0), |ui| {
+        let stage = view.stage();
+        let width = ui.available_width();
+
+        match stage {
+            Stage::Checking => {
+                ui.with_layout(Layout::top_down(Align::Center), |ui| {
+                    let (r, _) = ui.allocate_exact_size(Vec2::new(96.0, 96.0), Sense::hover());
+                    let p = ui.painter_at(r);
+                    let c = r.center();
+                    p.circle_filled(c, 48.0, theme::W10);
+                    p.circle_filled(c, 39.0, theme::RING_INNER);
+                    widgets::spinner(&p, c, 13.0, 3.0, theme::ACCENT);
+                });
+                ui.add_space(16.0);
+                widgets::centered_label(
+                    ui,
+                    if view.message().is_empty() { "正在检查更新..." } else { view.message() },
+                    15.0,
+                    theme::TEXT,
+                );
+                if !view.sub().is_empty() {
+                    ui.add_space(8.0);
+                    widgets::centered_label(ui, view.sub(), 12.0, theme::text_alpha(140));
+                }
+            }
+            Stage::Downloading | Stage::Installing => {
+                let installing = stage == Stage::Installing;
+                let inner_sub = if installing { "解压中".to_string() } else { view.speed_text() };
+                ui.with_layout(Layout::top_down(Align::Center), |ui| {
+                    widgets::progress_ring(ui, 48.0, view.percent() as f32, theme::TEXT, &inner_sub);
+                });
+                ui.add_space(16.0);
+                widgets::centered_label(
+                    ui,
+                    if view.message().is_empty() {
+                        if installing { "正在安装更新..." } else { "正在下载更新包..." }
+                    } else {
+                        view.message()
+                    },
+                    15.0,
+                    theme::TEXT,
+                );
+                if !view.sub().is_empty() {
+                    ui.add_space(8.0);
+                    widgets::centered_label(ui, view.sub(), 12.0, theme::text_alpha(140));
+                }
+            }
+            _ => {
+                ui.with_layout(Layout::top_down(Align::Center), |ui| {
+                    // 同 B：居中布局直接分配 28×28，避免 horizontal 子容器撑爆高度
+                    let (r, _) = ui.allocate_exact_size(Vec2::new(28.0, 28.0), Sense::hover());
+                    let (color, halo) = end_dot_color(view);
+                    widgets::status_dot(&ui.painter_at(r), r.center(), 8.0, color, halo);
+                    ui.add_space(2.0);
+                    ui.label(
+                        RichText::new(end_title(view))
+                            .size(15.0)
+                            .color(if stage == Stage::Error { theme::ERROR_TEXT } else { theme::TEXT }),
+                    );
+                });
+                if !view.sub().is_empty() {
+                    ui.add_space(8.0);
+                    widgets::centered_label(
+                        ui,
+                        view.sub(),
+                        12.0,
+                        if stage == Stage::Error { theme::tint(theme::ERROR_TEXT, 191) } else { theme::text_alpha(140) },
+                    );
+                }
+                error_hint_centered(ui, view, 8.0);
+            }
+        }
+
+        // 步骤条：环形给「当下进度」，步骤条给「流程位置」（错误态保留最后步骤）
+        ui.add_space(16.0);
+        draw_steps(ui, view, width, last_step);
+
+        let log = view.changelog();
+        if !log.is_empty() {
+            ui.add_space(16.0);
+            widgets::log_card(ui, &log, Some(96.0));
+        }
+
+        let mut act = None;
+        if stage == Stage::Error || stage == Stage::Done {
+            ui.add_space(16.0);
+            ui.with_layout(Layout::top_down(Align::Center), |ui| {
+                ui.horizontal(|ui| {
+                    act = widgets::actions_row(
+                        ui,
+                        retrying,
+                        stage == Stage::Error,
+                        stage == Stage::Done,
+                        view.needs_homepage(),
+                    );
+                })
+            });
+        }
+        act
+    })
+}
+
+// ---------------------------------------------------------------------------
+// 模板 G：品牌沉浸风 · 上部品牌面板 + 底部细进度条
+// （Steam / Epic 参考：更新器兼作品牌展示位，进度压缩为一条线）
+// ---------------------------------------------------------------------------
+
+fn template_g(ui: &mut Ui, view: &PhaseView, retrying: bool) -> Option<Action> {
+    content(ui, (16.0, 20.0, 16.0, 20.0), |ui| {
+        let stage = view.stage();
+        let width = ui.available_width();
+        let show_actions = stage == Stage::Error || stage == Stage::Done;
+
+        // 底部区：进度线 + 明细行（+ 动作行）；hero 吃掉其余高度
+        let bottom_h = 40.0 + if show_actions { 44.0 } else { 0.0 };
+        let hero_h = (ui.available_height() - bottom_h - 16.0).max(180.0);
+
+        // 品牌面板：圆角卡片 + 居中状态主视觉（painter 直绘，避免嵌套布局）
+        let (hero, _) = ui.allocate_exact_size(Vec2::new(width, hero_h), Sense::hover());
+        let hp = ui.painter_at(hero);
+        hp.rect_filled(hero, 10.0, theme::W04);
+        hp.rect_stroke(hero, 10.0, Stroke::new(1.0, theme::W08), egui::StrokeKind::Inside);
+        let c = hero.center();
+        match stage {
+            Stage::Checking => {
+                widgets::spinner(&hp, Pos2::new(c.x, c.y - 26.0), 14.0, 3.0, theme::ACCENT);
+                hp.text(
+                    Pos2::new(c.x, c.y + 14.0),
+                    egui::Align2::CENTER_CENTER,
+                    if view.message().is_empty() { "正在检查更新..." } else { view.message() },
+                    egui::FontId::proportional(15.0),
+                    theme::TEXT,
+                );
+            }
+            Stage::Downloading | Stage::Installing => {
+                let installing = stage == Stage::Installing;
+                hp.text(
+                    Pos2::new(c.x, c.y - 12.0),
+                    egui::Align2::CENTER_CENTER,
+                    format!("{:.0}%", view.percent()),
+                    egui::FontId::proportional(34.0),
+                    theme::ACCENT,
+                );
+                hp.text(
+                    Pos2::new(c.x, c.y + 22.0),
+                    egui::Align2::CENTER_CENTER,
+                    if view.message().is_empty() {
+                        if installing { "正在安装更新..." } else { "正在下载更新包..." }
+                    } else {
+                        view.message()
+                    },
+                    egui::FontId::proportional(13.0),
+                    theme::text_alpha(166),
+                );
+            }
+            _ => {
+                let (color, halo) = end_dot_color(view);
+                widgets::status_dot(&hp, Pos2::new(c.x, c.y - 34.0), 6.0, color, halo.max(3.0));
+                hp.text(
+                    Pos2::new(c.x, c.y - 4.0),
+                    egui::Align2::CENTER_CENTER,
+                    end_title(view),
+                    egui::FontId::proportional(18.0),
+                    if stage == Stage::Error { theme::ERROR_TEXT } else { theme::TEXT },
+                );
+                if !view.sub().is_empty() {
+                    hp.text(
+                        Pos2::new(c.x, c.y + 22.0),
+                        egui::Align2::CENTER_CENTER,
+                        view.sub(),
+                        egui::FontId::proportional(12.0),
+                        if stage == Stage::Error { theme::tint(theme::ERROR_TEXT, 191) } else { theme::text_alpha(140) },
+                    );
+                }
+            }
+        }
+
+        ui.add_space(16.0);
+        thin_track(ui, width, view.percent() as f32);
+        ui.add_space(8.0);
+        ui.horizontal(|ui| {
+            let left = if !view.size_text().is_empty() {
+                view.size_text()
+            } else if let Some(b) = view.badge() {
+                b.to_string()
+            } else {
+                String::new()
+            };
+            if !left.is_empty() {
+                ui.label(RichText::new(left).size(11.5).color(theme::text_alpha(128)));
+            }
+            let right = if !view.speed_text().is_empty() {
+                view.speed_text()
+            } else {
+                view.eta_text()
+            };
+            if !right.is_empty() {
+                let w = ui.available_width() - 150.0;
+                if w > 0.0 {
+                    ui.add_space(w.min(ui.available_width()));
+                }
+                ui.label(RichText::new(right).size(11.5).color(theme::text_alpha(128)));
+            }
+        });
+
+        if show_actions {
+            error_hint_row(ui, view, 8.0);
+            ui.add_space(12.0);
+            widgets::actions_row(
+                ui,
+                retrying,
+                stage == Stage::Error,
+                stage == Stage::Done,
+                view.needs_homepage(),
+            )
+        } else {
+            None
+        }
+    })
+}
+
+// ---------------------------------------------------------------------------
+// 模板 H：极简轻量风 · 单行状态 + 3px 进度 + 折叠日志
+// （VS Code / macOS 软件更新参考：进度即界面，信息压到最少）
+// ---------------------------------------------------------------------------
+
+fn template_h(ui: &mut Ui, view: &PhaseView, retrying: bool) -> Option<Action> {
+    content(ui, (14.0, 24.0, 14.0, 24.0), |ui| {
+        let stage = view.stage();
+        let width = ui.available_width();
+
+        // 单行状态：前置指示（进行中 spinner / 结束态状态点）+ 文案 + 尾部百分比
+        ui.horizontal(|ui| {
+            let (r, _) = ui.allocate_exact_size(Vec2::new(14.0, 14.0), Sense::hover());
+            match stage {
+                Stage::Checking | Stage::Downloading | Stage::Installing => {
+                    widgets::spinner(
+                        &ui.painter_at(r),
+                        r.center(),
+                        6.0,
+                        2.0,
+                        if stage == Stage::Installing { theme::SUCCESS } else { theme::ACCENT },
+                    );
+                }
+                _ => {
+                    let (color, halo) = end_dot_color(view);
+                    widgets::status_dot(&ui.painter_at(r), r.center(), 5.0, color, halo);
+                }
+            }
+            ui.add_space(8.0);
+            ui.label(
+                RichText::new(if view.message().is_empty() { status_fallback(view) } else { view.message() })
+                    .size(13.5)
+                    .color(if stage == Stage::Error { theme::ERROR_TEXT } else { theme::TEXT }),
+            );
+            if show_percent(view) {
+                let pct = format!("{:.0}%", view.percent());
+                let w = ui.available_width() - 56.0;
+                if w > 0.0 {
+                    ui.add_space(w.min(ui.available_width()));
+                }
+                ui.label(RichText::new(pct).size(13.0).color(theme::ACCENT));
+            }
+        });
+
+        ui.add_space(10.0);
+        if view.show_progress() {
+            thin_track(ui, width, view.percent() as f32);
+        }
+
+        // 单行明细：size · speed · eta，空项过滤；安装中补「请勿关闭窗口」
+        let info = [view.size_text(), view.speed_text(), view.eta_text()]
+            .into_iter()
+            .filter(|s| !s.is_empty())
+            .collect::<Vec<_>>()
+            .join(" · ");
+        if !info.is_empty() {
+            ui.add_space(8.0);
+            ui.label(RichText::new(info).size(11.5).color(theme::text_alpha(128)));
+        }
+        if stage == Stage::Installing {
+            ui.add_space(8.0);
+            ui.label(RichText::new("请勿关闭窗口").size(11.5).color(theme::text_alpha(128)));
+        }
+        error_hint_row(ui, view, 8.0);
+
+        // 日志：无卡片，标题行带条数，列表限高 64px 内滚动
+        let log = view.changelog();
+        if !log.is_empty() {
+            ui.add_space(12.0);
+            ui.label(
+                RichText::new(format!("更新日志 · 共 {} 项", log.len()))
+                    .size(11.0)
+                    .color(theme::text_alpha(102)),
+            );
+            ui.add_space(4.0);
+            egui::ScrollArea::vertical()
+                .max_height(64.0)
+                .auto_shrink(false)
+                .show(ui, |ui| {
+                    for line in &log {
+                        ui.horizontal(|ui| {
+                            let line_h = 12.0 * 1.7;
+                            let (dot_rect, _) =
+                                ui.allocate_exact_size(Vec2::new(12.0, line_h), Sense::hover());
+                            ui.painter_at(dot_rect).circle_filled(
+                                Pos2::new(dot_rect.left() + 3.0, dot_rect.top() + 9.0),
+                                2.0,
+                                theme::text_alpha(128),
+                            );
+                            ui.label(RichText::new(*line).size(12.0).color(theme::text_alpha(204)));
+                        });
+                    }
+                });
+        }
+
+        if stage == Stage::Error || stage == Stage::Done {
+            ui.add_space(12.0);
+            widgets::actions_row(
+                ui,
+                retrying,
+                stage == Stage::Error,
+                stage == Stage::Done,
+                view.needs_homepage(),
+            )
+        } else {
+            None
+        }
+    })
+}
+
+/// 3px 细进度条（G/H 共用：纯蓝填充，无渐变，比 D 的 4px 更收敛）
+fn thin_track(ui: &mut Ui, width: f32, percent: f32) {
+    let height = 3.0;
+    let (rect, _) = ui.allocate_exact_size(Vec2::new(width, height), Sense::hover());
+    let painter = ui.painter_at(rect);
+    painter.rect_filled(rect, 1.5, theme::W10);
+    let fill_w = (rect.width() * percent.clamp(0.0, 100.0) / 100.0).max(2.0);
+    let fill = egui::Rect::from_min_size(rect.left_top(), Vec2::new(fill_w, height));
+    painter.rect_filled(fill, 1.5, theme::ACCENT);
 }

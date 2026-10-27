@@ -22,11 +22,11 @@ pub const DEFAULT_APP_NAME: &str = "qsm";
 
 /// 默认启动器界面模板（launcher template）
 ///
-/// 可选值 A/B/C/D/E，对应 `src-egui/src/templates.rs` 下五套独立布局
-/// （A 信息密度 · B 环形居中 · C 顶部步骤条 · D 极简留白 · E 日志为主）。
+/// 可选值 A~H，对应 `src-egui/src/templates.rs` 下八套独立布局
+/// （A 信息密度 · B 环形居中 · C 顶部步骤条 · D 极简留白 · E 日志为主 · F 环形步骤 · G 品牌沉浸 · H 极简轻量）。
 /// 与 DEFAULT_MANIFEST_URLS 等一样：配置模板生成与两套实现的最终回退
 /// 都引用此处，改一处即全局生效。
-pub const DEFAULT_LAUNCHER_TEMPLATE: &str = "C";
+pub const DEFAULT_LAUNCHER_TEMPLATE: &str = "F";
 
 /// 同一环节（下载 / 解压校验）自动重试次数
 ///

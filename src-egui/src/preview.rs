@@ -1,6 +1,6 @@
 //! 模板预览模式（--preview）：复刻 preview.html / Preview.vue
 //!
-//! 五套模板共用同一份阶段数据，样式各自独立；切换模板与阶段对比渲染。
+//! 八套模板共用同一份阶段数据，样式各自独立；切换模板与阶段对比渲染。
 //! 仅本地验证用，不属于核心 CLI 参数。
 
 use egui::{Align, Color32, Layout, RichText, Sense, Ui};
@@ -30,19 +30,22 @@ const STAGES: [&str; 9] = [
     "重试中",
 ];
 
-/// 模板元信息（index.js TEMPLATE_META）
-const TEMPLATE_META: [(&str, &str, &str); 5] = [
+/// 模板元信息（index.js TEMPLATE_META；F/G/H 为新增设计方向）
+const TEMPLATE_META: [(&str, &str, &str); 8] = [
     ("A", "信息密度", "顶对齐 · 大百分比 · 日志卡片吸底"),
     ("B", "环形居中", "环形进度 · 视觉重心居中 · 日志贴底"),
     ("C", "顶部步骤条", "四步流程条 · 顶对齐 · 日志卡片吸底"),
     ("D", "极简留白", "细进度条 · 大留白 · 日志内联无卡片"),
     ("E", "日志为主", "进度压成状态条 · 日志占主体"),
+    ("F", "环形步骤", "环形进度 + 步骤条 · 间距 8 倍数（深色工具风）"),
+    ("G", "品牌沉浸", "品牌面板 · 大百分比 · 底部细进度条"),
+    ("H", "极简轻量", "单行状态 · 3px 进度 · 折叠日志"),
 ];
 
 /// 预览面板状态
 #[derive(Debug, Clone)]
 pub struct PreviewState {
-    /// 界面模板键（A/B/C/D/E）
+    /// 界面模板键（A~H）
     pub template: String,
     /// 阶段预设下标（STAGES 顺序）
     pub stage: usize,
@@ -51,7 +54,7 @@ pub struct PreviewState {
 impl Default for PreviewState {
     fn default() -> Self {
         Self {
-            template: "C".to_string(),
+            template: "F".to_string(),
             stage: 1, // 下载中（分卷），与 Preview.vue 初始值一致
         }
     }

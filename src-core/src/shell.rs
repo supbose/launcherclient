@@ -5,6 +5,9 @@
 
 use std::process::Command;
 
+#[cfg(target_os = "windows")]
+use std::os::windows::process::CommandExt;
+
 /// 用系统默认浏览器打开 `url`
 ///
 /// Windows 走 `cmd /C start`（空 title 参数占位，避免 start 把带引号的

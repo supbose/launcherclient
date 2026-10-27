@@ -479,7 +479,7 @@ pub fn fmt_mb(bytes: u64) -> String {
 
 /// 归一化模板键：去空白 + 大写，非法值回落默认模板（与前端 resolveTemplateKey 一致）
 pub fn resolve_template_key(value: &str) -> String {
-    const KEYS: [&str; 5] = ["A", "B", "C", "D", "E"];
+    const KEYS: [&str; 8] = ["A", "B", "C", "D", "E", "F", "G", "H"];
     let normalized = value.trim().to_uppercase();
     if KEYS.contains(&normalized.as_str()) {
         normalized
@@ -606,8 +606,8 @@ mod tests {
         assert_eq!(resolve_template_key(" b "), "B");
         assert_eq!(resolve_template_key("e"), "E");
         // 非法值回落默认模板（与后端 DEFAULT_LAUNCHER_TEMPLATE 一致）
-        assert_eq!(resolve_template_key("x"), "C");
-        assert_eq!(resolve_template_key(""), "C");
+        assert_eq!(resolve_template_key("x"), "F");
+        assert_eq!(resolve_template_key(""), "F");
     }
 
     #[test]

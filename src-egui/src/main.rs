@@ -8,7 +8,7 @@
 //! （`qsltd_updater_core::phase::PhaseHandle`）驱动视图刷新。
 //!
 //! 界面复刻 Tauri + Vue 版（`src/App.vue` + `src/components/templates/`）：
-//! 五套模板 A/B/C/D/E 与后端 `launcher_template` 配置一一对应，默认 C。
+//! 八套模板 A~H 与后端 `launcher_template` 配置一一对应，默认 F。
 //! 后端模块与 UI 编排层已抽离至共享 crate `qsltd-updater-core`
 //! （src-core 的 phase/flow 模块），本 crate 只保留视图层。
 
@@ -125,7 +125,7 @@ fn run_ui(
     preview: bool,
     preview_stage: usize,
 ) {
-    // 生效模板：命令行 --template > 默认（C）；预览模式可在面板里切换
+    // 生效模板：命令行 --template > 默认（F）；预览模式可在面板里切换
     let template = qsltd_updater_core::phase::resolve_template_key(
         args.template.as_deref().unwrap_or(""),
     );

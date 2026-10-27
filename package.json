@@ -8,7 +8,8 @@
     "egui:build": "python scripts/build_egui.py",
     "egui:dev": "cd src-egui && cargo run",
     "pkgtool": "cd src-pkgtool && cargo build --release",
-    "pkgtool:dev": "cd src-pkgtool && cargo run"
-  },
+    "pkgtool:dev": "cd src-pkgtool && cargo run",
+    "preview": "cd src-egui/target/release && .\\launcherclient.exe --preview --template F --stage error"
+    },
   "version": "0.1.23"
 }
