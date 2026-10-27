@@ -268,7 +268,7 @@ fn template_a(ui: &mut Ui, view: &PhaseView, retrying: bool) -> Option<Action> {
             } else {
                 (ui.available_height() - 42.0).max(60.0)
             };
-            widgets::log_card(ui, &log, Some(log_h));
+            widgets::log_card(ui, &log, log_h);
         }
 
         if show_actions {
@@ -385,7 +385,7 @@ fn template_b(ui: &mut Ui, view: &PhaseView, retrying: bool) -> Option<Action> {
         let log = view.changelog();
         if !log.is_empty() {
             ui.add_space(14.0);
-            widgets::log_card(ui, &log, Some(96.0));
+            widgets::log_card(ui, &log, 96.0);
         }
 
         let mut act = None;
@@ -485,7 +485,7 @@ fn template_c(ui: &mut Ui, view: &PhaseView, retrying: bool, last_step: i32) -> 
             } else {
                 (ui.available_height() - 42.0).max(60.0)
             };
-            widgets::log_card(ui, &log, Some(log_h));
+            widgets::log_card(ui, &log, log_h);
         }
 
         if show_actions {
@@ -1026,7 +1026,7 @@ fn template_f(ui: &mut Ui, view: &PhaseView, retrying: bool, last_step: i32) -> 
         let log = view.changelog();
         if !log.is_empty() {
             ui.add_space(16.0);
-            widgets::log_card(ui, &log, Some(96.0));
+            widgets::log_card(ui, &log, 96.0);
         }
 
         let mut act = None;

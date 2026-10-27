@@ -193,19 +193,13 @@ pub fn pill(ui: &mut Ui, text: &str) -> Rect {
 
 /// 更新日志卡片（.tpl-x__log + .tpl-x__log-list）
 ///
-/// - `max_height`: Some(h) 限制列表最大高度并出滚动条（B 模板 96px）；
-///   None 时卡片撑满剩余空间（A/C 模板）
-/// - D 模板走 [`inline_log`]（无卡片容器）
-pub fn log_card(ui: &mut Ui, items: &[&str], max_height: Option<f32>) {
+/// - `body_h`: 正文区固定高度（卡片总高 = body_h + 42）。条目超出时在
+///   卡片内部出竖向滚动条，卡片自身高度恒定，不会撑动整体布局
+/// - D 模板走 [`inline_log`]（无卡片容器，同样固定高度内部滚动）
+pub fn log_card(ui: &mut Ui, items: &[&str], body_h: f32) {
     let full_width = ui.available_width();
-    let card_rect_hint = max_height.map(|h| h + 42.0); // 标题+内边距约 42px
-    let (rect, _) = match card_rect_hint {
-        Some(h) => ui.allocate_exact_size(Vec2::new(full_width, h), Sense::hover()),
-        None => ui.allocate_exact_size(
-            Vec2::new(full_width, ui.available_height()),
-            Sense::hover(),
-        ),
-    };
+    // 固定高度：标题+内边距约 42px，正文区恒为 body_h，多行内部滚动
+    let (rect, _) = ui.allocate_exact_size(Vec2::new(full_width, body_h + 42.0), Sense::hover());
     let painter = ui.painter_at(rect);
     painter.rect_filled(rect, 8.0, theme::W04);
     painter.rect_stroke(rect, 8.0, Stroke::new(1.0, theme::W08), egui::StrokeKind::Inside);
@@ -226,11 +220,11 @@ pub fn log_card(ui: &mut Ui, items: &[&str], max_height: Option<f32>) {
             .color(theme::text_alpha(128)), // 0.5
     );
     child.add_space(8.0);
-    log_list(&mut child, items, max_height);
+    log_list(&mut child, items, body_h);
 }
 
-/// 日志条目列表（蓝点 + 12.5px 文本，行高 1.9）
-fn log_list(ui: &mut Ui, items: &[&str], max_height: Option<f32>) {
+/// 日志条目列表（蓝点 + 12.5px 文本，行高 1.9，固定高度内部滚动）
+fn log_list(ui: &mut Ui, items: &[&str], body_h: f32) {
     let line_h = 12.5 * 1.9;
     let body = |ui: &mut Ui| {
         for line in items {
@@ -250,37 +244,39 @@ fn log_list(ui: &mut Ui, items: &[&str], max_height: Option<f32>) {
             });
         }
     };
-    match max_height {
-        Some(h) => {
-            egui::ScrollArea::vertical()
-                .max_height(h)
-                .auto_shrink(false)
-                .show(ui, body);
-        }
-        None => body(ui),
-    }
+    egui::ScrollArea::vertical()
+        .max_height(body_h)
+        .auto_shrink(false)
+        .show(ui, body);
 }
 
 /// D 模板内联日志（.tpl-d__log：无卡片，细分割线分隔）
+///
+/// 正文固定高度 96px，多行时内部滚动，避免撑破窗口布局。
 pub fn inline_log(ui: &mut Ui, items: &[&str]) {
     ui.label(
         RichText::new("更新日志")
             .size(12.0)
             .color(theme::text_alpha(115)), // 0.45
     );
-    for (i, line) in items.iter().enumerate() {
-        if i > 0 {
-            let w = ui.available_width();
-            let (r, _) = ui.allocate_exact_size(Vec2::new(w, 1.0), Sense::hover());
-            ui.painter_at(r)
-                .rect_filled(r, 0.0, theme::W08);
-        }
-        ui.label(
-            RichText::new(*line)
-                .size(13.0)
-                .color(theme::text_alpha(204)), // 0.8
-        );
-    }
+    egui::ScrollArea::vertical()
+        .max_height(96.0)
+        .auto_shrink(false)
+        .show(ui, |ui| {
+            for (i, line) in items.iter().enumerate() {
+                if i > 0 {
+                    let w = ui.available_width();
+                    let (r, _) = ui.allocate_exact_size(Vec2::new(w, 1.0), Sense::hover());
+                    ui.painter_at(r)
+                        .rect_filled(r, 0.0, theme::W08);
+                }
+                ui.label(
+                    RichText::new(*line)
+                        .size(13.0)
+                        .color(theme::text_alpha(204)), // 0.8
+                );
+            }
+        });
 }
 
 /// 按钮（.tpl-x__btn：padding 7/26 圆角 6；primary 蓝底白字）
