@@ -2,6 +2,16 @@
 
 
 
+
+## v0.1.27-beta.1 (2026-10-28)
+### 🚀 新增功能
+
+- [2c36790](/-/commit/2c367906e341e99336627305d56e02ef26d63bc4) 新增(src-core): force_update 改为本地开关并默认 false，普通更新可跳过进应用 (src-core/src/flow.rs, update.json)
+
+### ♻️ 代码重构
+
+- [550e560](/-/commit/550e560190fb898ea41f3f7f99712b91af0bbc59) 重构(src-core): 将 force_update 逻辑统一移至服务端 manifest，移除本地开关 (.workbuddy/memory/2026-10-28.md, src-core/src/config.rs, src-core/src/elevation.rs, src-core/src/flow.rs, src-core/src/manifest.rs, update.json, version.json.example)
+
 ## v0.1.27-beta.0 (2026-10-28)
 ### 🚀 新增功能
 
