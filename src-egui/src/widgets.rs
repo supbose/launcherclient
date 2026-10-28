@@ -400,6 +400,12 @@ pub enum Action {
     Homepage,
     Close,
     Finish,
+    /// 打开应用商店（强制更新界面）
+    Store,
+    /// 下载升级包（强制更新界面：走更新流程下载并安装最新版）
+    ForceDownload,
+    /// 稍后升级（非阻断强制更新：启动当前已安装应用并退出更新器）
+    ForceLater,
 }
 
 /// 居中文本标签（模板标题等；带 wrap，超宽自动换行）
@@ -407,6 +413,38 @@ pub fn centered_label(ui: &mut Ui, text: &str, size: f32, color: Color32) {
     ui.with_layout(egui::Layout::top_down(egui::Align::Center), |ui| {
         ui.label(RichText::new(text).size(size).color(color));
     });
+}
+
+/// 强制更新界面底部动作行
+///
+/// - 有商店地址（`has_store`）：展示「前往应用商店」
+/// - 始终展示「下载升级包」（primary，走更新流程）
+/// - 非阻断（`blocking=false`）：额外展示「稍后升级」，允许应用照常启动
+pub fn force_update_actions_row(
+    ui: &mut Ui,
+    blocking: bool,
+    has_store: bool,
+) -> Option<Action> {
+    let mut act = None;
+    ui.horizontal(|ui| {
+        ui.add_space(0.0);
+        if has_store {
+            if button(ui, "前往应用商店", false, true) {
+                act = Some(Action::Store);
+            }
+            ui.add_space(10.0);
+        }
+        if button(ui, "下载升级包", true, true) {
+            act = Some(Action::ForceDownload);
+        }
+        if !blocking {
+            ui.add_space(10.0);
+            if button(ui, "稍后升级", false, true) {
+                act = Some(Action::ForceLater);
+            }
+        }
+    });
+    act
 }
 
 /// 环形进度（B 模板 .tpl-b__ring：外环进度弧 + 深色内盘 + 居中百分比）

@@ -12,6 +12,7 @@ use std::time::Instant;
 
 use egui::{Color32, FontId, RichText, Sense, Ui, Vec2};
 use qsltd_updater_core::flow;
+use qsltd_updater_core::manifest::FlatManifest;
 use qsltd_updater_core::phase::{resolve_template_key, PhaseHandle, PhasePayload, PhaseView, Stage};
 
 use crate::preview;
@@ -66,6 +67,11 @@ pub struct UpdaterApp {
     start_time: Instant,
     /// 「前往官网」打开失败提示（成功则保持 None）
     homepage_error: Option<String>,
+    /// 强制更新界面「前往应用商店」打开失败提示（成功则保持 None）
+    store_error: Option<String>,
+    /// 强制更新保存的 manifest（供「下载升级包」重新拉起更新流程；
+    /// 非阻断强制更新不在 Show 阶段自动 spawn，由界面按钮驱动）
+    force_manifest: Option<FlatManifest>,
 }
 
 impl UpdaterApp {
@@ -100,6 +106,8 @@ impl UpdaterApp {
             startup_show: false,
             start_time: Instant::now(),
             homepage_error: None,
+            store_error: None,
+            force_manifest: None,
         }
     }
 
@@ -130,6 +138,11 @@ impl UpdaterApp {
         // 离开错误态即清掉上次的「打开官网失败」提示
         if stage != Stage::Error {
             self.homepage_error = None;
+        }
+
+        // 离开强制更新界面即清掉上次的「打开商店失败」提示
+        if stage != Stage::ForceUpdate {
+            self.store_error = None;
         }
 
         self.payload = Some(p);
@@ -174,7 +187,7 @@ impl eframe::App for UpdaterApp {
             // - SilentExit：无更新，隐藏窗口并静默退出（用户无感）
             // - Show：写入首帧阶段快照并启动后台下载流程，标记窗口需显示
             if !self.startup_consumed {
-                if let Some(decision) = self.startup.lock().unwrap().take() {
+                if let Some(decision) = self.startup.lock().unwrap_or_else(|e| e.into_inner()).take() {
                     self.startup_consumed = true;
                     match decision {
                         flow::StartupDecision::SilentExit(code) => {
@@ -183,9 +196,16 @@ impl eframe::App for UpdaterApp {
                         }
                         flow::StartupDecision::Show(ctx) => {
                             let flow::StartupContext { manifest, initial, .. } = *ctx;
+                            let is_force = initial.stage() == Stage::ForceUpdate;
                             self.phase.set(initial);
                             self.startup_show = true;
-                            if let Some(m) = manifest {
+                            if is_force {
+                                // 强制更新：保存 manifest，由界面按钮（下载升级包 /
+                                // 前往应用商店 / 稍后升级）驱动后续，不在 Show 阶段
+                                // 自动拉起下载流程，确保用户先看到强制更新提示与升级入口。
+                                // 阻断模式下无「稍后升级」，窗口将停留直到用户选择升级。
+                                self.force_manifest = manifest;
+                            } else if let Some(m) = manifest {
                                 let flow_phase = self.phase.clone();
                                 let _ = std::thread::Builder::new()
                                     .name("update-flow-spawn".into())
@@ -322,7 +342,14 @@ impl eframe::App for UpdaterApp {
 
             let view = PhaseView::new(&payload, has_downloaded);
             let mut child = ui.new_child(egui::UiBuilder::new().max_rect(area));
-            let action = templates::draw(&mut child, &view, &template, self.retrying, self.last_step);
+            let action = templates::draw(
+                &mut child,
+                &view,
+                &template,
+                self.retrying,
+                self.last_step,
+                self.store_error.as_deref(),
+            );
             // 错误态底部补一行「打开官网失败」提示（仅打开失败时出现，
             // 成功打开浏览器后用户视线已经在别处，不需要再占版面）
             if let Some(err) = self.homepage_error.as_deref() {
@@ -350,6 +377,23 @@ impl eframe::App for UpdaterApp {
                 ui.ctx().send_viewport_cmd(egui::ViewportCommand::Close);
             }
             Some(widgets::Action::Finish) => self.finish_update(),
+            Some(widgets::Action::Store) => {
+                // 同步拉起应用商店（store_url，缺省回落 homepage）；失败把原因
+                // 留在强制更新界面下方，成功打开浏览器后用户视线已转移
+                self.store_error = flow::open_store_url().err();
+            }
+            Some(widgets::Action::ForceDownload) => {
+                // 用保存的 manifest 拉起完整更新流程（下载 → 校验 → 安装 → 启动）
+                if let Some(m) = self.force_manifest.take() {
+                    let flow_phase = self.phase.clone();
+                    let _ = std::thread::Builder::new()
+                        .name("force-update-flow".into())
+                        .spawn(move || {
+                            flow::spawn_flow_with(qsltd_updater_core::cli::parse(), flow_phase, m)
+                        });
+                }
+            }
+            Some(widgets::Action::ForceLater) => self.finish_update(),
             None => {}
         }
 

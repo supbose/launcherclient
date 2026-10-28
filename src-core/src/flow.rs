@@ -50,6 +50,12 @@ pub struct ResolvedConfig {
     pub homepage: String,
     /// 同一环节自动重试次数（含首次尝试）：下载、解压校验各自独立计数
     pub retry_times: u32,
+    /// 强制更新开关（update.json `force_update`，默认 false）。
+    /// 启用后，若检测到当前版本低于服务端最低版本（或版本被标记强制更新），
+    /// 阻断应用启动并要求升级；关闭时仅非阻断提示可稍后升级。
+    pub force_update: bool,
+    /// 应用商店地址（update.json `store_url`，缺省回落 homepage）
+    pub store_url: Option<String>,
 }
 
 /// 启动决策：窗口创建前确定是否需要 UI
@@ -110,6 +116,8 @@ pub fn resolve_config(args: &CliArgs) -> ResolvedConfig {
         // 配置写了空串当没写：回落到内置默认，按钮点了才有地方去
         homepage: non_empty(settings.homepage).unwrap_or_else(|| DEFAULT_HOMEPAGE.to_string()),
         retry_times: config::resolve_retry_times(settings.retry_times),
+        force_update: config::resolve_force_update(settings.force_update),
+        store_url: config::resolve_store_url(settings.store_url.clone()),
         max_versions: settings
             .max_versions
             .filter(|v| *v > 0)
@@ -177,7 +185,9 @@ async fn cleanup_download_cache(app_name: &str, version: &str) {
 
 /// --check-only 入口：合并配置 → 纯检测 → 返回退出码
 ///
-/// 退出码：0 = 无更新，1 = 检测失败，2 = 有更新。
+/// 退出码：0 = 无更新，1 = 检测失败，2 = 有更新，3 = 触发强制更新要求
+/// （当前版本低于服务端最低版本或被标记强制更新；是否阻断由 update.json
+/// 的 `force_update` 开关决定，此处只回报「要求」供调用方决策）。
 pub fn check_only_exit(args: &CliArgs) -> i32 {
     let cfg = resolve_config(args);
     match tokio::runtime::Builder::new_multi_thread().enable_all().build() {
@@ -206,6 +216,15 @@ pub async fn run_check_only(args: &CliArgs, cfg: &ResolvedConfig) -> i32 {
             return 1;
         }
     };
+
+    if manifest::requires_force_update(&current_version, &m) {
+        eprintln!(
+            "[更新器] 检测到强制更新要求：当前 {}，要求 {}",
+            current_version,
+            manifest::required_version(&m)
+        );
+        return 3;
+    }
 
     if manifest::need_update(&current_version, &m) {
         eprintln!("[更新器] 发现新版本: {} → {}", current_version, m.version);
@@ -246,6 +265,29 @@ pub async fn run_startup(args: &CliArgs, cfg: &ResolvedConfig) -> StartupDecisio
     // 登记更新日志：此后所有阶段载荷都携带它，界面在发现新版本起到
     // 更新完成全程可见（下载/安装期间用户正好有空看更新了什么）
     phase::set_changelog(m.changelog.clone());
+
+    // ---- 强制更新前置判定（优先于普通更新流程）----
+    // 触发条件：版本被标记强制更新，或当前版本低于服务端最低版本要求。
+    // - 开关启用（cfg.force_update=true）：阻断启动，仅展示强制升级界面
+    //   （不自动拉起应用，用户必须升级）。
+    // - 开关关闭：非阻断提示，界面提供「稍后升级」让应用照常启动。
+    if manifest::requires_force_update(&current_version, &m) {
+        let required = manifest::required_version(&m);
+        let has_store = cfg.store_url.as_ref().is_some_and(|s| !s.trim().is_empty());
+        let blocking = cfg.force_update;
+        eprintln!(
+            "[更新器] 触发强制更新（{}）：当前 {}，要求 {}",
+            if blocking { "阻断启动" } else { "非阻断提示" },
+            current_version,
+            required
+        );
+        return StartupDecision::Show(Box::new(StartupContext {
+            cfg: cfg.clone(),
+            // 保存 manifest：强制更新界面「下载升级包」按钮据此走更新流程
+            manifest: Some(m),
+            initial: PhasePayload::force_update(&current_version, &required, blocking, has_store),
+        }));
+    }
 
     if !manifest::need_update(&current_version, &m) {
         eprintln!("[更新器] 已是最新版本: {}", current_version);
@@ -1136,6 +1178,20 @@ pub fn open_homepage() -> Result<(), String> {
     let args = crate::cli::parse();
     let cfg = resolve_config(&args);
     crate::shell::open_url(&cfg.homepage)
+}
+
+/// 打开应用商店（强制更新界面「前往应用商店」按钮）
+///
+/// 地址取生效配置 `store_url`（update.json）；缺省或空串回落到 `homepage`
+/// （前往官网）。store_url 与 homepage 均为信任来源（配置/内置默认）。
+pub fn open_store_url() -> Result<(), String> {
+    let args = crate::cli::parse();
+    let cfg = resolve_config(&args);
+    let url = cfg
+        .store_url
+        .filter(|s| !s.trim().is_empty())
+        .unwrap_or(cfg.homepage);
+    crate::shell::open_url(&url)
 }
 
 /// 更新流程运行中标志：首次运行与「重试」共用，防并发双跑

@@ -38,6 +38,8 @@ pub const SUCCESS: Color32 = Color32::from_rgb(0x35, 0xc2, 0x6e);
 pub const DANGER: Color32 = Color32::from_rgb(0xe8, 0x11, 0x23);
 /// 错误标题色（#ff5b66）
 pub const ERROR_TEXT: Color32 = Color32::from_rgb(0xff, 0x5b, 0x66);
+/// 警告/强制更新色（#f0a020 琥珀橙，阻断提示用）
+pub const WARNING: Color32 = Color32::from_rgb(0xf0, 0xa0, 0x20);
 
 // ---- 透明度层级（白色/主文字色叠加，rgba(255,255,255,x) 与 rgba(232,234,240,x)）----
 

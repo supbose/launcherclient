@@ -32,6 +32,8 @@ pub enum Stage {
     Done,
     /// 更新失败
     Error,
+    /// 强制更新（阻断或非阻断提示，由载荷字段区分）
+    ForceUpdate,
 }
 
 impl Stage {
@@ -45,6 +47,7 @@ impl Stage {
             Stage::Available => "available",
             Stage::Done => "done",
             Stage::Error => "error",
+            Stage::ForceUpdate => "force-update",
         }
     }
 
@@ -57,6 +60,7 @@ impl Stage {
             "available" => Stage::Available,
             "done" => Stage::Done,
             "error" => Stage::Error,
+            "force-update" => Stage::ForceUpdate,
             _ => Stage::Checking,
         }
     }
@@ -105,6 +109,19 @@ pub struct PhasePayload {
     /// 该环节的尝试上限（含首次）；0 表示该错误不自动重试
     #[serde(default)]
     pub max_attempts: u32,
+    /// 强制更新界面：是否阻断模式（true=必须升级，无「稍后升级」出口；
+    /// false=非阻断，提供「稍后升级」让应用照常启动）
+    #[serde(default)]
+    pub force_update_blocking: bool,
+    /// 强制更新界面展示的当前版本号
+    #[serde(default)]
+    pub force_current_version: String,
+    /// 强制更新界面展示的要求版本号
+    #[serde(default)]
+    pub force_required_version: String,
+    /// 强制更新界面是否提供「前往应用商店」入口（store_url 非空）
+    #[serde(default)]
+    pub force_has_store: bool,
 }
 
 impl PhasePayload {
@@ -125,6 +142,10 @@ impl PhasePayload {
             failed_stage: String::new(),
             attempt: 0,
             max_attempts: 0,
+            force_update_blocking: false,
+            force_current_version: String::new(),
+            force_required_version: String::new(),
+            force_has_store: false,
         }
     }
 
@@ -172,12 +193,44 @@ impl PhasePayload {
             failed_stage: String::new(),
             attempt: 0,
             max_attempts: 0,
+            force_update_blocking: false,
+            force_current_version: String::new(),
+            force_required_version: String::new(),
+            force_has_store: false,
         }
     }
 
     /// 阶段枚举（未知值回落 Checking）
     pub fn stage(&self) -> Stage {
         Stage::from_stage_str(&self.stage)
+    }
+
+    /// 构造强制更新阶段载荷
+    ///
+    /// - `blocking`：是否阻断启动（true=必须升级，无「稍后升级」出口；
+    ///   false=非阻断，提供「稍后升级」让应用照常启动）
+    /// - `has_store`：是否提供「前往应用商店」入口（store_url 非空）
+    pub fn force_update(
+        current: &str,
+        required: &str,
+        blocking: bool,
+        has_store: bool,
+    ) -> Self {
+        let mut p = Self::new(
+            Stage::ForceUpdate,
+            if blocking {
+                "必须升级后才能继续使用"
+            } else {
+                "建议升级到新版本"
+            },
+            "",
+            None,
+        );
+        p.force_update_blocking = blocking;
+        p.force_current_version = current.to_string();
+        p.force_required_version = required.to_string();
+        p.force_has_store = has_store;
+        p
     }
 
     /// 失败环节的自动重试次数说明（未走重试时为空串）
@@ -412,6 +465,31 @@ impl<'a> PhaseView<'a> {
         self.payload.failed_stage_name()
     }
 
+    /// 是否处于强制更新阶段
+    pub fn is_force_update(&self) -> bool {
+        self.payload.stage() == Stage::ForceUpdate
+    }
+
+    /// 强制更新是否阻断模式（无「稍后升级」出口）
+    pub fn is_blocking(&self) -> bool {
+        self.payload.force_update_blocking
+    }
+
+    /// 强制更新界面是否提供「前往应用商店」入口
+    pub fn has_store(&self) -> bool {
+        self.payload.force_has_store
+    }
+
+    /// 强制更新界面展示的当前版本号
+    pub fn force_current(&self) -> &str {
+        &self.payload.force_current_version
+    }
+
+    /// 强制更新界面展示的要求版本号
+    pub fn force_required(&self) -> &str {
+        &self.payload.force_required_version
+    }
+
     /// 错误态是否该亮「前往官网」而不是继续劝「重试」
     ///
     /// 判据：失败出在下载链路，且该环节的自动重试已经用尽。自动重试还没
@@ -455,7 +533,8 @@ impl<'a> PhaseView<'a> {
             }
             Stage::Installing => 2,
             Stage::Done | Stage::UpToDate => 3,
-            Stage::Error => -2, // -2 = 保持不变（由 UI 端用上次步骤覆盖）
+            Stage::Error => -2,
+            Stage::ForceUpdate => -2, // -2 = 保持不变（由 UI 端用上次步骤覆盖）
         }
     }
 }
@@ -522,6 +601,7 @@ mod tests {
             Stage::Available,
             Stage::Done,
             Stage::Error,
+            Stage::ForceUpdate,
         ] {
             assert_eq!(Stage::from_stage_str(s.as_str()), s);
         }
@@ -608,6 +688,24 @@ mod tests {
         // 非法值回落默认模板（与后端 DEFAULT_LAUNCHER_TEMPLATE 一致）
         assert_eq!(resolve_template_key("x"), "F");
         assert_eq!(resolve_template_key(""), "F");
+    }
+
+    #[test]
+    fn force_update_stage_payload_and_view() {
+        let p = PhasePayload::force_update("2.0.0", "2.1.3", true, true);
+        assert_eq!(p.stage(), Stage::ForceUpdate);
+        let v = PhaseView::new(&p, false);
+        assert!(v.is_force_update());
+        assert!(v.is_blocking());
+        assert!(v.has_store());
+        assert_eq!(v.force_current(), "2.0.0");
+        assert_eq!(v.force_required(), "2.1.3");
+
+        // 非阻断 + 无商店：默认态
+        let q = PhasePayload::force_update("1.0.0", "2.0.0", false, false);
+        let vq = PhaseView::new(&q, false);
+        assert!(!vq.is_blocking());
+        assert!(!vq.has_store());
     }
 
     #[test]

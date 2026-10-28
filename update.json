@@ -1,5 +1,5 @@
 {
-  "_说明": "QsLtdUpdater 本地配置文件，与 QsLtdUpdater.exe 同目录部署。所有字段可省略，省略或留空时使用默认值。优先级：命令行参数 > 本文件 > 内置默认值。manifest_url 支持单个字符串或地址数组（数组时按序故障转移，第一个失败自动切换下一个）。launcher_template 为启动器界面模板，可选 A/B/C/D/E（大小写不敏感），留空或未知值使用默认模板 C。homepage 为官网首页地址，下载地址全部失败时错误态的「前往官网重新下载」按钮跳这里。retry_times 为同一环节（下载 / 解压校验）的自动重试次数（含首次尝试，默认 3），重试用尽仍失败才提示前往官网。",
+  "_说明": "QsLtdUpdater 本地配置文件，与 QsLtdUpdater.exe 同目录部署。所有字段可省略，省略或留空时使用默认值。优先级：命令行参数 > 本文件 > 内置默认值。manifest_url 支持单个字符串或地址数组（数组时按序故障转移，第一个失败自动切换下一个）。launcher_template 为启动器界面模板，可选 A/B/C/D/E（大小写不敏感），留空或未知值使用默认模板 C。homepage 为官网首页地址，下载地址全部失败时错误态的「前往官网重新下载」按钮跳这里。retry_times 为同一环节（下载 / 解压校验）的自动重试次数（含首次尝试，默认 3），重试用尽仍失败才提示前往官网。force_update 为强制更新开关（默认 false）：启用后，若检测到当前版本低于服务端最低版本（或该版本被标记强制更新），则阻断应用启动并提示必须升级（界面清晰展示当前版本与要求版本，并提供「前往应用商店 / 下载升级包」入口）；关闭时仅以非阻断方式提示，并提供「稍后升级」让应用照常启动。store_url 为应用商店地址，强制更新界面据此显示「前往应用商店」入口；省略或留空时回落 homepage（前往官网）。",
   "manifest_url": [
     "https://qsw.us.ci/update/qsm/version.json",
     "https://down.cdn.qcsm.ltd/manifest.json",
@@ -11,5 +11,7 @@
   "max_versions": 2,
   "launcher_template": "F",
   "homepage": "https://www.qcsm.ltd",
-  "retry_times": 3
+  "retry_times": 3,
+  "force_update": false,
+  "store_url": ""
 }

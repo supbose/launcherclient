@@ -106,7 +106,7 @@ fn main() {
                     }
                 };
                 let decision = rt.block_on(flow::run_startup(&args_bg, &cfg_bg));
-                *startup_bg.lock().unwrap() = Some(decision);
+                *startup_bg.lock().unwrap_or_else(|e| e.into_inner()) = Some(decision);
             })
             .ok();
     }

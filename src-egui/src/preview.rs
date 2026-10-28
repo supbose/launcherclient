@@ -18,7 +18,7 @@ const CHANGELOG: [&str; 4] = [
 ];
 
 /// 阶段预设名（与 Preview.vue STAGE_PRESETS 顺序一致）
-const STAGES: [&str; 9] = [
+const STAGES: [&str; 11] = [
     "检测中",
     "下载中（分卷）",
     "校验中",
@@ -28,6 +28,8 @@ const STAGES: [&str; 9] = [
     "更新完成",
     "错误",
     "重试中",
+    "强制更新（阻断）",
+    "强制更新（可稍后升级）",
 ];
 
 /// 模板元信息（index.js TEMPLATE_META；F/G/H 为新增设计方向）
@@ -162,6 +164,17 @@ pub fn payload(state: &PreviewState) -> PhasePayload {
         )
         .with_attempt("download", 3, 3),
         // 「重试中」：流程仍活着，标题带第几次，界面不该亮 error
+        8 => PhasePayload::new(
+            qsltd_updater_core::phase::Stage::Downloading,
+            "正在下载更新包...（第 2/3 次）",
+            "第 1/3 次尝试失败，正在自动重试（下载失败: 连接超时）",
+            Some(0.0),
+        ),
+        // 强制更新（阻断）：无「稍后升级」出口，仅展示升级入口（前往应用商店 + 下载升级包）
+        9 => PhasePayload::force_update("2.0.0", "2.1.3", true, true),
+        // 强制更新（非阻断）：额外提供「稍后升级」，应用可照常启动
+        10 => PhasePayload::force_update("2.0.0", "2.1.3", false, true),
+        // 兜底（未知下标）：视作「重试中」
         _ => PhasePayload::new(
             qsltd_updater_core::phase::Stage::Downloading,
             "正在下载更新包...（第 2/3 次）",

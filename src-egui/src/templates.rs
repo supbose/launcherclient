@@ -5,7 +5,7 @@
 //! 自持布局与配色（互不覆盖，与 Vue 版结构一致），展示值统一来自
 //! `PhaseView`（usePhase.js 的 Rust 对应物）。
 
-use egui::{emath::Pos2, Align, Color32, Layout, RichText, Sense, Stroke, Ui, UiBuilder, Vec2};
+use egui::{emath::Pos2, Align, Align2, Color32, FontId, Layout, RichText, Sense, Stroke, Ui, UiBuilder, Vec2};
 
 use qsltd_updater_core::phase::{PhaseView, Stage, STEP_LABELS};
 
@@ -19,18 +19,123 @@ pub fn draw(
     template: &str,
     retrying: bool,
     last_step: i32,
+    store_error: Option<&str>,
 ) -> Option<Action> {
     match template {
-        "A" => template_a(ui, view, retrying),
-        "B" => template_b(ui, view, retrying),
-        "C" => template_c(ui, view, retrying, last_step),
-        "D" => template_d(ui, view, retrying),
-        "E" => template_e(ui, view, retrying),
-        "F" => template_f(ui, view, retrying, last_step),
-        "G" => template_g(ui, view, retrying),
-        "H" => template_h(ui, view, retrying),
-        _ => template_f(ui, view, retrying, last_step),
+        "A" => template_a(ui, view, retrying, store_error),
+        "B" => template_b(ui, view, retrying, store_error),
+        "C" => template_c(ui, view, retrying, last_step, store_error),
+        "D" => template_d(ui, view, retrying, store_error),
+        "E" => template_e(ui, view, retrying, store_error),
+        "F" => template_f(ui, view, retrying, last_step, store_error),
+        "G" => template_g(ui, view, retrying, store_error),
+        "H" => template_h(ui, view, retrying, store_error),
+        _ => template_f(ui, view, retrying, last_step, store_error),
     }
+}
+
+/// 强制更新界面（阻断 / 非阻断共用布局）
+///
+/// 展示层与业务判定解耦：`blocking` / `has_store` 已编码进 `view`（来自
+/// `PhasePayload::force_update`），界面只负责呈现：
+/// - 警示图标 + 标题：`view.message()`（阻断="必须升级后才能继续使用" /
+///   非阻断="建议升级到新版本"）
+/// - 版本对比卡：当前版本 → 要求版本，清晰展示两者
+/// - 商店打开失败提示（`store_error` 非空时，红字一行）
+/// - 底部动作行：前往应用商店（有 store_url）/ 下载升级包（primary）/ 稍后升级（非阻断）
+///
+/// 约定：调用方已处于 `content()` 内容区内（已带模板内边距），本函数不再
+/// 二次包裹；各模板在 `match` 中以 `return draw_force_update(...)` 提前返回，
+/// 避免后续日志卡片/动作行误渲染到强制更新界面。
+pub fn draw_force_update(
+    ui: &mut Ui,
+    view: &PhaseView,
+    store_error: Option<&str>,
+) -> Option<Action> {
+    let blocking = view.is_blocking();
+    let accent = if blocking { theme::WARNING } else { theme::ACCENT };
+    let mut act: Option<Action> = None;
+
+    // 警示图标 + 标题（居中）
+    ui.with_layout(Layout::top_down(Align::Center), |ui| {
+        let (ir, _) = ui.allocate_exact_size(Vec2::new(52.0, 52.0), Sense::hover());
+        let ip = ui.painter_at(ir);
+        let c = ir.center();
+        ip.circle_filled(c, 26.0, theme::tint(theme::WARNING, 38));
+        ip.text(
+            c,
+            Align2::CENTER_CENTER,
+            "!",
+            FontId::proportional(30.0),
+            theme::WARNING,
+        );
+        ui.add_space(14.0);
+        widgets::centered_label(ui, view.message(), 17.0, accent);
+    });
+
+    // 商店打开失败提示（仅失败时显示；成功打开后用户视线已转移）
+    if let Some(err) = store_error {
+        ui.add_space(12.0);
+        ui.with_layout(Layout::top_down(Align::Center), |ui| {
+            ui.label(
+                RichText::new(err)
+                    .size(11.5)
+                    .color(theme::text_alpha(140)),
+            );
+        });
+    }
+
+    // 版本对比卡：当前版本 → 要求版本
+    ui.add_space(18.0);
+    let width = ui.available_width();
+    let (card, _) = ui.allocate_exact_size(Vec2::new(width, 60.0), Sense::hover());
+    let painter = ui.painter_at(card);
+    painter.rect_filled(card, 8.0, theme::W04);
+    painter.rect_stroke(card, 8.0, Stroke::new(1.0, theme::W08), egui::StrokeKind::Inside);
+    let col_w = card.width() / 2.0;
+    painter.text(
+        Pos2::new(card.left() + 14.0, card.top() + 12.0),
+        Align2::LEFT_TOP,
+        "当前版本",
+        FontId::proportional(11.0),
+        theme::text_alpha(140),
+    );
+    painter.text(
+        Pos2::new(card.left() + 14.0, card.top() + 30.0),
+        Align2::LEFT_TOP,
+        view.force_current(),
+        FontId::proportional(16.0),
+        theme::TEXT,
+    );
+    painter.text(
+        Pos2::new(card.left() + col_w + 14.0, card.top() + 12.0),
+        Align2::LEFT_TOP,
+        "要求版本",
+        FontId::proportional(11.0),
+        theme::text_alpha(140),
+    );
+    painter.text(
+        Pos2::new(card.left() + col_w + 14.0, card.top() + 30.0),
+        Align2::LEFT_TOP,
+        view.force_required(),
+        FontId::proportional(16.0),
+        accent,
+    );
+    painter.text(
+        Pos2::new(card.left() + col_w - 6.0, card.center().y),
+        Align2::CENTER_CENTER,
+        "→",
+        FontId::proportional(18.0),
+        theme::text_alpha(153),
+    );
+
+    // 动作行（推到内容区底部居中）
+    ui.with_layout(Layout::top_down(Align::Center), |ui| {
+        ui.add_space(18.0);
+        act = widgets::force_update_actions_row(ui, blocking, view.has_store());
+    });
+
+    act
 }
 
 /// 结束态（已是最新 / 发现新版本 / 完成 / 错误）的主文本兜底
@@ -192,7 +297,12 @@ fn dot_title_row(ui: &mut Ui, view: &PhaseView, dot_r: f32) {
 // 模板 A：信息密度 · 顶对齐 · 大百分比 · 日志卡片吸底
 // ---------------------------------------------------------------------------
 
-fn template_a(ui: &mut Ui, view: &PhaseView, retrying: bool) -> Option<Action> {
+fn template_a(
+    ui: &mut Ui,
+    view: &PhaseView,
+    retrying: bool,
+    store_error: Option<&str>,
+) -> Option<Action> {
     content(ui, (16.0, 28.0, 22.0, 28.0), |ui| {
         let stage = view.stage();
         let width = ui.available_width();
@@ -244,6 +354,9 @@ fn template_a(ui: &mut Ui, view: &PhaseView, retrying: bool) -> Option<Action> {
                 ui.add_space(10.0);
                 meta_row(ui, format!("{:.1}%", view.percent()), "请勿关闭窗口".to_string());
             }
+            Stage::ForceUpdate => {
+                return draw_force_update(ui, view, store_error);
+            }
             _ => {
                 dot_title_row(ui, view, 7.0);
                 if !view.sub().is_empty() {
@@ -290,7 +403,12 @@ fn template_a(ui: &mut Ui, view: &PhaseView, retrying: bool) -> Option<Action> {
 // 模板 B：环形居中 · 视觉重心居中 · 日志贴底
 // ---------------------------------------------------------------------------
 
-fn template_b(ui: &mut Ui, view: &PhaseView, retrying: bool) -> Option<Action> {
+fn template_b(
+    ui: &mut Ui,
+    view: &PhaseView,
+    retrying: bool,
+    store_error: Option<&str>,
+) -> Option<Action> {
     content(ui, (14.0, 28.0, 20.0, 28.0), |ui| {
         let stage = view.stage();
 
@@ -353,6 +471,9 @@ fn template_b(ui: &mut Ui, view: &PhaseView, retrying: bool) -> Option<Action> {
                     widgets::centered_label(ui, view.sub(), 12.0, theme::text_alpha(140));
                 }
             }
+            Stage::ForceUpdate => {
+                return draw_force_update(ui, view, store_error);
+            }
             _ => {
                 ui.with_layout(Layout::top_down(Align::Center), |ui| {
                     // 直接在 top_down(Center) 里分配 28×28（halo 外沿 13 + 余量），
@@ -411,7 +532,13 @@ fn template_b(ui: &mut Ui, view: &PhaseView, retrying: bool) -> Option<Action> {
 // 模板 C：顶部步骤条 · 顶对齐 · 日志卡片吸底（默认模板）
 // ---------------------------------------------------------------------------
 
-fn template_c(ui: &mut Ui, view: &PhaseView, retrying: bool, last_step: i32) -> Option<Action> {
+fn template_c(
+    ui: &mut Ui,
+    view: &PhaseView,
+    retrying: bool,
+    last_step: i32,
+    store_error: Option<&str>,
+) -> Option<Action> {
     content(ui, (16.0, 28.0, 22.0, 28.0), |ui| {
         let stage = view.stage();
         let width = ui.available_width();
@@ -459,6 +586,9 @@ fn template_c(ui: &mut Ui, view: &PhaseView, retrying: bool, last_step: i32) -> 
                 widgets::progress_track(ui, width, view.percent() as f32);
                 ui.add_space(10.0);
                 meta_row(ui, format!("{:.1}%", view.percent()), "请勿关闭窗口".to_string());
+            }
+            Stage::ForceUpdate => {
+                return draw_force_update(ui, view, store_error);
             }
             _ => {
                 ui.add_space(14.0);
@@ -576,7 +706,12 @@ fn draw_steps(ui: &mut Ui, view: &PhaseView, width: f32, last_step: i32) {
 // 模板 D：极简留白 · 居中 · 细进度条 · 日志内联无卡片
 // ---------------------------------------------------------------------------
 
-fn template_d(ui: &mut Ui, view: &PhaseView, retrying: bool) -> Option<Action> {
+fn template_d(
+    ui: &mut Ui,
+    view: &PhaseView,
+    retrying: bool,
+    store_error: Option<&str>,
+) -> Option<Action> {
     content(ui, (34.0, 32.0, 30.0, 32.0), |ui| {
         let stage = view.stage();
         let width = ui.available_width();
@@ -639,6 +774,9 @@ fn template_d(ui: &mut Ui, view: &PhaseView, retrying: bool) -> Option<Action> {
                 widgets::centered_label(ui, &format!("{:.1}%", view.percent()), 20.0, theme::TEXT);
                 ui.add_space(10.0);
                 d_track(ui, width, view.percent() as f32);
+            }
+            Stage::ForceUpdate => {
+                return draw_force_update(ui, view, store_error);
             }
             _ => {
                 ui.with_layout(Layout::top_down(Align::Center), |ui| {
@@ -720,10 +858,20 @@ fn d_spinner_row(ui: &mut Ui, sub: &str, color: Color32) {
 // 模板 E：日志为主 · 进度压成顶部状态条 · 日志占主体
 // ---------------------------------------------------------------------------
 
-fn template_e(ui: &mut Ui, view: &PhaseView, retrying: bool) -> Option<Action> {
+fn template_e(
+    ui: &mut Ui,
+    view: &PhaseView,
+    retrying: bool,
+    store_error: Option<&str>,
+) -> Option<Action> {
     content(ui, (20.0, 26.0, 18.0, 26.0), |ui| {
         let stage = view.stage();
         let width = ui.available_width();
+
+        // 强制更新：提前返回专属界面，避免走下面通用状态条/日志布局
+        if stage == Stage::ForceUpdate {
+            return draw_force_update(ui, view, store_error);
+        }
 
         // 顶部紧凑状态条：指示灯 + 文案 + 百分比
         ui.horizontal(|ui| {
@@ -944,7 +1092,13 @@ fn e_log_list(ui: &mut Ui, items: &[&str]) {
 // （JetBrains Toolbox / Discord 参考：B 的视觉重心 + C 的流程感合一）
 // ---------------------------------------------------------------------------
 
-fn template_f(ui: &mut Ui, view: &PhaseView, retrying: bool, last_step: i32) -> Option<Action> {
+fn template_f(
+    ui: &mut Ui,
+    view: &PhaseView,
+    retrying: bool,
+    last_step: i32,
+    store_error: Option<&str>,
+) -> Option<Action> {
     content(ui, (16.0, 28.0, 20.0, 28.0), |ui| {
         let stage = view.stage();
         let width = ui.available_width();
@@ -992,6 +1146,9 @@ fn template_f(ui: &mut Ui, view: &PhaseView, retrying: bool, last_step: i32) -> 
                     ui.add_space(8.0);
                     widgets::centered_label(ui, view.sub(), 12.0, theme::text_alpha(140));
                 }
+            }
+            Stage::ForceUpdate => {
+                return draw_force_update(ui, view, store_error);
             }
             _ => {
                 ui.with_layout(Layout::top_down(Align::Center), |ui| {
@@ -1053,7 +1210,12 @@ fn template_f(ui: &mut Ui, view: &PhaseView, retrying: bool, last_step: i32) -> 
 // （Steam / Epic 参考：更新器兼作品牌展示位，进度压缩为一条线）
 // ---------------------------------------------------------------------------
 
-fn template_g(ui: &mut Ui, view: &PhaseView, retrying: bool) -> Option<Action> {
+fn template_g(
+    ui: &mut Ui,
+    view: &PhaseView,
+    retrying: bool,
+    store_error: Option<&str>,
+) -> Option<Action> {
     content(ui, (16.0, 20.0, 16.0, 20.0), |ui| {
         let stage = view.stage();
         let width = ui.available_width();
@@ -1100,6 +1262,9 @@ fn template_g(ui: &mut Ui, view: &PhaseView, retrying: bool) -> Option<Action> {
                     egui::FontId::proportional(13.0),
                     theme::text_alpha(166),
                 );
+            }
+            Stage::ForceUpdate => {
+                return draw_force_update(ui, view, store_error);
             }
             _ => {
                 let (color, halo) = end_dot_color(view);
@@ -1172,10 +1337,20 @@ fn template_g(ui: &mut Ui, view: &PhaseView, retrying: bool) -> Option<Action> {
 // （VS Code / macOS 软件更新参考：进度即界面，信息压到最少）
 // ---------------------------------------------------------------------------
 
-fn template_h(ui: &mut Ui, view: &PhaseView, retrying: bool) -> Option<Action> {
+fn template_h(
+    ui: &mut Ui,
+    view: &PhaseView,
+    retrying: bool,
+    store_error: Option<&str>,
+) -> Option<Action> {
     content(ui, (14.0, 24.0, 14.0, 24.0), |ui| {
         let stage = view.stage();
         let width = ui.available_width();
+
+        // 强制更新：提前返回专属界面，避免走下面单行状态/进度条布局
+        if stage == Stage::ForceUpdate {
+            return draw_force_update(ui, view, store_error);
+        }
 
         // 单行状态：前置指示（进行中 spinner / 结束态状态点）+ 文案 + 尾部百分比
         ui.horizontal(|ui| {

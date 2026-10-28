@@ -47,6 +47,14 @@ pub struct FlatManifest {
     /// 更新日志
     #[serde(default)]
     pub changelog: Vec<String>,
+    /// 服务端要求的最低运行版本（可选）。当前版本低于它即视为不满足最低版本
+    /// 要求，配合 update.json 的 `force_update` 开关决定是否阻断启动。
+    #[serde(default)]
+    pub min_version: Option<String>,
+    /// 当前 version.json 对应的版本是否被标记为「强制更新」（默认 false）。
+    /// 为 true 时，即便当前版本已等于/高于最新版，也强制要求用户升级到本版本。
+    #[serde(default)]
+    pub force_update: Option<bool>,
 }
 
 fn default_true() -> bool {
@@ -119,6 +127,49 @@ pub fn need_update(current_version: &str, manifest: &FlatManifest) -> bool {    
         (Ok(cur), Ok(latest)) => cur < latest,
         _ => current_version.trim() != manifest.version.trim(),
     }
+}
+
+/// 当前版本是否低于服务端要求的最低版本
+///
+/// - `min_version` 缺失或为空视为「无最低版本约束」→ 返回 false
+/// - 双方均可按 semver 解析时按 semver 比较；否则以版本号字符串不等兜底
+pub fn is_below_min_version(current_version: &str, manifest: &FlatManifest) -> bool {
+    let Some(min) = manifest
+        .min_version
+        .as_ref()
+        .map(|s| s.trim())
+        .filter(|s| !s.is_empty())
+    else {
+        return false;
+    };
+    match (
+        semver::Version::parse(current_version.trim()),
+        semver::Version::parse(min),
+    ) {
+        (Ok(cur), Ok(mv)) => cur < mv,
+        _ => current_version.trim() != min,
+    }
+}
+
+/// 版本是否被服务端标记为强制更新（缺省/显式 false 视为否）
+pub fn is_forced_update(manifest: &FlatManifest) -> bool {
+    manifest.force_update.unwrap_or(false)
+}
+
+/// 是否触发「强制更新」条件：版本被标记强制更新，或当前版本低于最低版本要求
+pub fn requires_force_update(current_version: &str, manifest: &FlatManifest) -> bool {
+    is_forced_update(manifest) || is_below_min_version(current_version, manifest)
+}
+
+/// 计算「要求版本号」用于界面展示：优先 `min_version`，
+/// 否则用 `manifest.version`（强制更新标记指向的版本）
+pub fn required_version(manifest: &FlatManifest) -> String {
+    manifest
+        .min_version
+        .clone()
+        .map(|s| s.trim().to_string())
+        .filter(|s| !s.is_empty())
+        .unwrap_or_else(|| manifest.version.clone())
 }
 
 // ---------- manifest TTL 缓存 ----------
@@ -224,6 +275,8 @@ mod tests {
             part_sha256: None,
             release_date: None,
             changelog: Vec::new(),
+            min_version: None,
+            force_update: None,
         }
     }
 
@@ -416,5 +469,72 @@ mod tests {
         std::fs::write(&path, b"not a json").expect("写损坏缓存");
         assert!(load_fresh_cache(&path).is_none(), "损坏缓存必须静默视为未命中");
         let _ = std::fs::remove_file(&path);
+    }
+
+    // ---------- 强制更新判定 ----------
+
+    /// 构造带 min_version / force_update 的 manifest（其余字段用默认值）
+    fn fm_with(version: &str, min: Option<&str>, forced: bool) -> FlatManifest {
+        FlatManifest {
+            version: version.to_string(),
+            update: true,
+            size_bytes: None,
+            sha256: None,
+            url: String::new(),
+            parts: None,
+            part_sha256: None,
+            release_date: None,
+            changelog: Vec::new(),
+            min_version: min.map(|s| s.to_string()),
+            force_update: Some(forced),
+        }
+    }
+
+    #[test]
+    fn below_min_version_semver() {
+        assert!(!is_below_min_version("2.1.3", &fm_with("2.1.3", Some("2.1.0"), false)));
+        assert!(is_below_min_version("2.0.0", &fm_with("2.1.3", Some("2.1.0"), false)));
+    }
+
+    #[test]
+    fn below_min_version_none_means_no_constraint() {
+        // min_version 缺失：任何当前版本都不算「低于最低版本」
+        assert!(!is_below_min_version("0.0.1", &fm_with("1.0.0", None, false)));
+    }
+
+    #[test]
+    fn forced_update_flag_triggers_regardless_of_version() {
+        // 标记强制更新：即便当前版本等于最新版也要升级
+        assert!(requires_force_update("2.1.3", &fm_with("2.1.3", None, true)));
+    }
+
+    #[test]
+    fn requires_force_update_combines_min_and_flag() {
+        let m = fm_with("3.0.0", Some("2.0.0"), false);
+        assert!(!requires_force_update("3.0.0", &m));
+        assert!(requires_force_update("1.9.0", &m));
+        let f = fm_with("3.0.0", Some("2.0.0"), true);
+        assert!(requires_force_update("3.0.0", &f), "标记强制更新时高于 min 仍触发");
+    }
+
+    #[test]
+    fn required_version_prefers_min_then_manifest_version() {
+        assert_eq!(required_version(&fm_with("2.1.3", Some("2.0.0"), false)), "2.0.0");
+        assert_eq!(required_version(&fm_with("2.1.3", None, true)), "2.1.3");
+    }
+
+    #[test]
+    fn manifest_min_and_force_fields_parse_optional() {
+        // 缺字段时反序列化应成功并回落默认（None / false）
+        let m: FlatManifest = serde_json::from_str(r#"{"version": "1.0.0"}"#).expect("应可解析");
+        assert!(m.min_version.is_none());
+        assert!(!is_forced_update(&m));
+        // 显式字段应被正确读取
+        let m: FlatManifest = serde_json::from_str(
+            r#"{"version": "2.0.0", "min_version": "1.5.0", "force_update": true}"#,
+        )
+        .expect("应可解析");
+        assert_eq!(m.min_version.as_deref(), Some("1.5.0"));
+        assert!(is_forced_update(&m));
     }
 }
