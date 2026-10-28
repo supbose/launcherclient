@@ -16,6 +16,7 @@ pub mod client;
 pub mod config;
 pub mod defaults;
 pub mod download;
+pub mod elevation;
 pub mod flow;
 pub mod install;
 pub mod manifest;

@@ -27,6 +27,7 @@ use crate::defaults::{
     DEFAULT_APP_NAME, DEFAULT_HOMEPAGE, DEFAULT_MANIFEST_URLS, PROGRESS_INTERVAL_MS,
 };
 use crate::download;
+use crate::elevation;
 use crate::install;
 use crate::manifest;
 use crate::phase::{self, fmt_mb, PhaseHandle, PhasePayload, Stage};
@@ -416,6 +417,33 @@ pub async fn run_update_flow(
     m: &manifest::FlatManifest,
     handle: &PhaseHandle,
 ) -> Result<(), String> {
+    // ---- 提权前置检查（删除服务 / 安装前）----
+    //
+    // 删除 Windows 服务（`sc delete`）需要管理员权限；当前进程未提权时会拿到
+    // 退出码 5。这里把检查前移：真正执行下载/安装/删服务之前，若配置了需删除的
+    // 服务且当前进程未提权，就以 `runas` 重新拉起一个管理员副本（触发 UAC），
+    // 随后退出当前（未提权）进程，由提权副本接管——从源头避免那次失败的 sc 调用。
+    // 提权失败（用户取消 UAC）则给出明确错误并终止；已有 services.rs 的退出码 5
+    // 文案作为防御性兜底。
+    match elevation::ensure_admin_for_update(cfg) {
+        Ok(false) => {}
+        Ok(true) => {
+            // 已成功拉起提权副本：退出当前进程，避免两个更新器窗口并存
+            eprintln!("[更新器] 提权副本已拉起，退出当前（未提权）进程");
+            std::process::exit(0);
+        }
+        Err(e) => {
+            eprintln!("[更新器] 提权前置检查失败，终止更新: {}", e);
+            handle.set(PhasePayload::new(
+                Stage::Error,
+                "需要管理员权限",
+                &e,
+                None,
+            ));
+            return Err(e);
+        }
+    }
+
     let is_parts = m.parts.as_ref().is_some_and(|p| !p.is_empty());
     let zip_path = download_dir(&cfg.app_name).join(format!("update_{}.zip", m.version));
 

@@ -69,6 +69,8 @@ pub fn parse_from(argv: &[String]) -> CliArgs {
                 None => eprintln!("[参数] --current-version 缺少值，忽略该参数"),
             },
             "--check-only" => check_only = true,
+            // 内部提权标记（runas 重新拉起的副本携带），非用户参数，静默忽略
+            "--__elevated-retry" => {}
             "--template" => match value {
                 Some(v) => {
                     template = Some(v.to_string());
