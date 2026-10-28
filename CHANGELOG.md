@@ -1,5 +1,11 @@
 
 
+
+## v0.1.26 (2026-10-28)
+### 🚀 新增功能
+
+- [f8cbcaf](/-/commit/f8cbcafb5bf593b7a47ff4456b9d2500a3f22840) 新增(src-core): 新增Windows提权机制，更新服务时主动触发UAC提权 (.workbuddy/memory/2026-10-28.md, src-core/src/cli.rs, src-core/src/elevation.rs, src-core/src/flow.rs, src-core/src/lib.rs)
+
 ## v0.1.25 (2026-10-27)
 ### 📝 文档更新
 
