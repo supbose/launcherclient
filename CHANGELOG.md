@@ -1,6 +1,12 @@
 
 
 
+
+## v0.1.27-beta.0 (2026-10-28)
+### 🚀 新增功能
+
+- [48f34a5](/-/commit/48f34a5a347e3b8a74f755d59097ecb3a470a0b1) 新增(src-egui): 全链路落地强制更新功能 (.workbuddy/memory/2026-10-28.md, src-core/src/config.rs, src-core/src/elevation.rs, src-core/src/flow.rs, src-core/src/manifest.rs, src-core/src/phase.rs, src-egui/src/app.rs, src-egui/src/main.rs, src-egui/src/preview.rs, src-egui/src/templates.rs, src-egui/src/theme.rs, src-egui/src/widgets.rs, update.json, version.json.example)
+
 ## v0.1.26 (2026-10-28)
 ### 🚀 新增功能
 
