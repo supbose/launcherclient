@@ -119,7 +119,7 @@ pub struct PhasePayload {
     /// 强制更新界面展示的要求版本号
     #[serde(default)]
     pub force_required_version: String,
-    /// 强制更新界面是否提供「前往应用商店」入口（store_url 非空）
+    /// 强制更新界面是否提供「前往应用商店」入口（服务端 manifest store_url 非空）
     #[serde(default)]
     pub force_has_store: bool,
 }
@@ -209,7 +209,7 @@ impl PhasePayload {
     ///
     /// - `blocking`：是否阻断启动（true=必须升级，无「稍后升级」出口；
     ///   false=非阻断，提供「稍后升级」让应用照常启动）
-    /// - `has_store`：是否提供「前往应用商店」入口（store_url 非空）
+    /// - `has_store`：是否提供「前往应用商店」入口（服务端 manifest store_url 非空）
     pub fn force_update(
         current: &str,
         required: &str,

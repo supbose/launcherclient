@@ -50,8 +50,6 @@ pub struct ResolvedConfig {
     pub homepage: String,
     /// 同一环节自动重试次数（含首次尝试）：下载、解压校验各自独立计数
     pub retry_times: u32,
-    /// 应用商店地址（update.json `store_url`，缺省回落 homepage）
-    pub store_url: Option<String>,
 }
 
 /// 启动决策：窗口创建前确定是否需要 UI
@@ -112,7 +110,6 @@ pub fn resolve_config(args: &CliArgs) -> ResolvedConfig {
         // 配置写了空串当没写：回落到内置默认，按钮点了才有地方去
         homepage: non_empty(settings.homepage).unwrap_or_else(|| DEFAULT_HOMEPAGE.to_string()),
         retry_times: config::resolve_retry_times(settings.retry_times),
-        store_url: config::resolve_store_url(settings.store_url.clone()),
         max_versions: settings
             .max_versions
             .filter(|v| *v > 0)
@@ -272,7 +269,7 @@ pub async fn run_startup(args: &CliArgs, cfg: &ResolvedConfig) -> StartupDecisio
     // - 否则（有更新但服务端未强制）：展示「发现新版本，可稍后升级」界面，
     //   用户可选择稍后升级直接进应用。
     let server_forces = manifest::requires_force_update(&current_version, &m);
-    let has_store = cfg.store_url.as_ref().is_some_and(|s| !s.trim().is_empty());
+    let has_store = m.store_url.as_ref().is_some_and(|s| !s.trim().is_empty());
 
     if !manifest::need_update(&current_version, &m) {
         eprintln!("[更新器] 已是最新版本: {}", current_version);
@@ -1175,16 +1172,15 @@ pub fn open_homepage() -> Result<(), String> {
 
 /// 打开应用商店（强制更新界面「前往应用商店」按钮）
 ///
-/// 地址取生效配置 `store_url`（update.json）；缺省或空串回落到 `homepage`
-/// （前往官网）。store_url 与 homepage 均为信任来源（配置/内置默认）。
-pub fn open_store_url() -> Result<(), String> {
+/// 地址取服务端 manifest 的 `store_url`；缺省或空串回落到本地配置 `homepage`
+/// （前往官网）。两者均为信任来源（manifest / 配置 + 内置默认）。
+pub fn open_store_url(store_url: Option<&str>) -> Result<(), String> {
     let args = crate::cli::parse();
     let cfg = resolve_config(&args);
-    let url = cfg
-        .store_url
+    let url = store_url
         .filter(|s| !s.trim().is_empty())
-        .unwrap_or(cfg.homepage);
-    crate::shell::open_url(&url)
+        .unwrap_or(&cfg.homepage);
+    crate::shell::open_url(url)
 }
 
 /// 更新流程运行中标志：首次运行与「重试」共用，防并发双跑

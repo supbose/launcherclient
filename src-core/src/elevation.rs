@@ -256,7 +256,6 @@ mod tests {
             template: "F".to_string(),
             homepage: String::new(),
             retry_times: 3,
-            store_url: None,
         }
     }
 

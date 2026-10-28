@@ -101,11 +101,6 @@ pub fn resolve_retry_times(specified: Option<u32>) -> u32 {
 /// max_versions 默认值：当前版本 + 1 个旧版本（回滚资产）
 pub const DEFAULT_MAX_VERSIONS: usize = 2;
 
-/// 解析生效的 app 商店地址（空串视为未配置 → 由上层回落 homepage）
-pub fn resolve_store_url(specified: Option<String>) -> Option<String> {
-    specified.filter(|v| !v.trim().is_empty())
-}
-
 /// 合法启动器界面模板键（与 `src-egui/src/templates.rs` 下的八套布局一一对应）
 pub const VALID_LAUNCHER_TEMPLATES: &[&str] = &["A", "B", "C", "D", "E", "F", "G", "H"];
 
@@ -176,8 +171,7 @@ fn generate_default_template(dir: &std::path::Path) -> bool {
             "services": "更新前需卸载的 Windows 服务名数组；运行中的先停止后卸载，卸载后不恢复不重启",
             "launcher_template": "启动器界面模板，可选 A~H（大小写不敏感）：A 信息密度 · B 环形居中 · C 顶部步骤条 · D 极简留白 · E 日志为主 · F 环形步骤 · G 品牌沉浸 · H 极简轻量；留空或未知值用默认 F",
             "homepage": "官网首页地址；下载地址全部失败时界面上的「前往官网」按钮跳这里，留空用内置默认",
-            "retry_times": "同一环节（下载 / 解压校验）的自动重试次数（含首次尝试），默认 3：失败后自动再试 2 次，仍失败才提示前往官网重新下载",
-            "store_url": "应用商店地址；强制更新提示界面「前往应用商店」按钮的跳转目标，留空回落到 homepage（前往官网）"
+            "retry_times": "同一环节（下载 / 解压校验）的自动重试次数（含首次尝试），默认 3：失败后自动再试 2 次，仍失败才提示前往官网重新下载"
         },
         "manifest_url": defaults::DEFAULT_MANIFEST_URLS,
         "app_name": defaults::DEFAULT_APP_NAME,
@@ -187,8 +181,7 @@ fn generate_default_template(dir: &std::path::Path) -> bool {
         "services": ["QsmServer"],
         "launcher_template": defaults::DEFAULT_LAUNCHER_TEMPLATE,
         "homepage": defaults::DEFAULT_HOMEPAGE,
-        "retry_times": defaults::DEFAULT_RETRY_TIMES,
-        "store_url": ""
+        "retry_times": defaults::DEFAULT_RETRY_TIMES
     });
     let Ok(content) = serde_json::to_string_pretty(&template) else {
         eprintln!("[配置] 默认模板序列化失败");
@@ -403,18 +396,16 @@ mod tests {
     }
 
     #[test]
-    fn store_url_parsed_and_filtered() {
-        let s: UpdateSettings = serde_json::from_str(
-            r#"{"store_url": "https://apps.apple.com/app/id123"}"#,
-        )
-        .expect("解析");
-        assert_eq!(
-            resolve_store_url(s.store_url),
-            Some("https://apps.apple.com/app/id123".to_string())
-        );
-        // 空串回落 None（由 resolve_config 落到 homepage）
-        let s: UpdateSettings =
-            serde_json::from_str(r#"{"store_url": ""}"#).expect("解析");
-        assert!(resolve_store_url(s.store_url).is_none());
+    fn repo_update_json_has_no_removed_fields() {
+        // store_url / force_update 已迁到服务端 manifest，本地配置不应再出现
+        let path = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+            .join("../update.json")
+            .canonicalize()
+            .expect("仓库根 update.json 应存在");
+        let content = std::fs::read_to_string(&path).expect("读取 update.json");
+        let s: UpdateSettings = serde_json::from_str(&content).expect("update.json 应可解析");
+        assert!(s.manifest_url.is_some(), "仓库示例应带 manifest_url");
+        assert!(!content.contains("store_url"), "update.json 不应再含 store_url");
+        assert!(!content.contains("force_update"), "update.json 不应再含 force_update");
     }
 }

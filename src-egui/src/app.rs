@@ -378,9 +378,14 @@ impl eframe::App for UpdaterApp {
             }
             Some(widgets::Action::Finish) => self.finish_update(),
             Some(widgets::Action::Store) => {
-                // 同步拉起应用商店（store_url，缺省回落 homepage）；失败把原因
-                // 留在强制更新界面下方，成功打开浏览器后用户视线已转移
-                self.store_error = flow::open_store_url().err();
+                // 同步拉起应用商店：地址取服务端 manifest 的 store_url，
+                // 缺省回落本地 homepage；失败把原因留在强制更新界面下方，
+                // 成功打开浏览器后用户视线已转移
+                let store_url = self
+                    .force_manifest
+                    .as_ref()
+                    .and_then(|m| m.store_url.as_deref());
+                self.store_error = flow::open_store_url(store_url).err();
             }
             Some(widgets::Action::ForceDownload) => {
                 // 用保存的 manifest 拉起完整更新流程（下载 → 校验 → 安装 → 启动）
