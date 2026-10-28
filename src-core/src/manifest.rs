@@ -48,13 +48,17 @@ pub struct FlatManifest {
     #[serde(default)]
     pub changelog: Vec<String>,
     /// 服务端要求的最低运行版本（可选）。当前版本低于它即视为不满足最低版本
-    /// 要求，配合 update.json 的 `force_update` 开关决定是否阻断启动。
+    /// 要求，触发阻断式强制更新（与 `force_update` 标记并列，由服务端下发）。
     #[serde(default)]
     pub min_version: Option<String>,
     /// 当前 version.json 对应的版本是否被标记为「强制更新」（默认 false）。
     /// 为 true 时，即便当前版本已等于/高于最新版，也强制要求用户升级到本版本。
     #[serde(default)]
     pub force_update: Option<bool>,
+    /// 应用商店地址（可选，由服务端下发）：强制更新提示界面「前往应用商店」
+    /// 按钮的跳转目标；缺省或空串回落到本地配置 `homepage`（前往官网）。
+    #[serde(default)]
+    pub store_url: Option<String>,
 }
 
 fn default_true() -> bool {
@@ -277,6 +281,7 @@ mod tests {
             changelog: Vec::new(),
             min_version: None,
             force_update: None,
+            store_url: None,
         }
     }
 
@@ -487,6 +492,7 @@ mod tests {
             changelog: Vec::new(),
             min_version: min.map(|s| s.to_string()),
             force_update: Some(forced),
+            store_url: None,
         }
     }
 
@@ -536,5 +542,18 @@ mod tests {
         .expect("应可解析");
         assert_eq!(m.min_version.as_deref(), Some("1.5.0"));
         assert!(is_forced_update(&m));
+    }
+
+    #[test]
+    fn manifest_store_url_parses_optional() {
+        // 缺字段时反序列化应成功并回落默认（None）
+        let m: FlatManifest = serde_json::from_str(r#"{"version": "1.0.0"}"#).expect("应可解析");
+        assert!(m.store_url.is_none());
+        // 显式字段应被正确读取
+        let m: FlatManifest = serde_json::from_str(
+            r#"{"version": "2.0.0", "store_url": "https://apps.apple.com/app/id123"}"#,
+        )
+        .expect("应可解析");
+        assert_eq!(m.store_url.as_deref(), Some("https://apps.apple.com/app/id123"));
     }
 }

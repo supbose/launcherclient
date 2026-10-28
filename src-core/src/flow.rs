@@ -50,17 +50,6 @@ pub struct ResolvedConfig {
     pub homepage: String,
     /// 同一环节自动重试次数（含首次尝试）：下载、解压校验各自独立计数
     pub retry_times: u32,
-    /// 本地强制更新开关（update.json `force_update`，默认 false = 可跳过）。
-    ///
-    /// 控制「普通更新（服务端未设最低版本门槛 / 未标记强制）」是否可被跳过：
-    /// - `false`（默认）：有更新但允许跳过，展示「发现新版本，可稍后升级」界面，
-    ///   用户可选择稍后升级直接进应用。
-    /// - `true`：普通更新也强制，发现新版本即自动下载安装（等同改动前
-    ///   「有更新必须更新」的行为）。
-    ///
-    /// 注：服务端硬性门槛（`manifest.min_version` 低于当前版本，或服务端
-    /// `force_update` 标记置真）始终触发**阻断式**强制更新，不受本开关影响。
-    pub force_update: bool,
     /// 应用商店地址（update.json `store_url`，缺省回落 homepage）
     pub store_url: Option<String>,
 }
@@ -123,7 +112,6 @@ pub fn resolve_config(args: &CliArgs) -> ResolvedConfig {
         // 配置写了空串当没写：回落到内置默认，按钮点了才有地方去
         homepage: non_empty(settings.homepage).unwrap_or_else(|| DEFAULT_HOMEPAGE.to_string()),
         retry_times: config::resolve_retry_times(settings.retry_times),
-        force_update: config::resolve_force_update(settings.force_update),
         store_url: config::resolve_store_url(settings.store_url.clone()),
         max_versions: settings
             .max_versions
@@ -193,8 +181,7 @@ async fn cleanup_download_cache(app_name: &str, version: &str) {
 /// --check-only 入口：合并配置 → 纯检测 → 返回退出码
 ///
 /// 退出码：0 = 无更新，1 = 检测失败，2 = 有更新（可跳过），
-/// 3 = 必须更新（服务端设了最低版本门槛 / 服务端标记强制，或本地
-/// `force_update` 开关为 true）。
+/// 3 = 必须更新（服务端 manifest 设了 `min_version` 门槛 / `force_update` 标记置真）。
 pub fn check_only_exit(args: &CliArgs) -> i32 {
     let cfg = resolve_config(args);
     match tokio::runtime::Builder::new_multi_thread().enable_all().build() {
@@ -234,15 +221,6 @@ pub async fn run_check_only(args: &CliArgs, cfg: &ResolvedConfig) -> i32 {
     }
 
     if manifest::need_update(&current_version, &m) {
-        // 本地开关为强制时同样视为「必须更新」（退出码 3），否则
-        // 退出码 2 表示有更新但允许跳过（默认 force_update=false）
-        if cfg.force_update {
-            eprintln!(
-                "[更新器] 发现新版本（本地强制，必须更新）: {} → {}",
-                current_version, m.version
-            );
-            return 3;
-        }
         eprintln!(
             "[更新器] 发现新版本（可跳过）: {} → {}",
             current_version, m.version
@@ -285,16 +263,14 @@ pub async fn run_startup(args: &CliArgs, cfg: &ResolvedConfig) -> StartupDecisio
     // 更新完成全程可见（下载/安装期间用户正好有空看更新了什么）
     phase::set_changelog(m.changelog.clone());
 
-    // ---- 更新决策：两类强制来源叠加 ----
+    // ---- 更新决策：是否强制完全由服务端 manifest 决定 ----
     //
-    // 1) 服务端硬性门槛（`manifest.min_version` 高于当前版本，或服务端
-    //    `force_update` 标记置真）：属服务端强制要求，始终**阻断**启动
-    //    （不给「稍后升级」），用户必须升级到要求版本。
-    // 2) 本地开关 `force_update`（update.json，默认 false = 可跳过）：
-    //    - false（默认）：普通更新（服务端未设门槛）可跳过，展示「发现新版本，
-    //      可稍后升级」界面，用户可选择稍后升级直接进应用。
-    //    - true：普通更新也强制，发现新版本即自动下载安装（等同改动前
-    //      「有更新必须更新」的行为）。
+    // 服务端 manifest 通过 `force_update`（版本级强制标记）与 `min_version`
+    // （最低允许版本）下发强制更新策略：
+    // - 任一成立（`requires_force_update`）：**阻断**启动，用户必须升级到要求版本，
+    //   不给「稍后升级」出口。
+    // - 否则（有更新但服务端未强制）：展示「发现新版本，可稍后升级」界面，
+    //   用户可选择稍后升级直接进应用。
     let server_forces = manifest::requires_force_update(&current_version, &m);
     let has_store = cfg.store_url.as_ref().is_some_and(|s| !s.trim().is_empty());
 
@@ -313,7 +289,7 @@ pub async fn run_startup(args: &CliArgs, cfg: &ResolvedConfig) -> StartupDecisio
             })),
         }
     } else if server_forces {
-        // 服务端硬性门槛：阻断式强制更新（必须升级，无跳过出口）
+        // 服务端 manifest 要求强制更新：阻断式（必须升级，无跳过出口）
         let required = manifest::required_version(&m);
         eprintln!(
             "[更新器] 触发服务端强制更新（阻断）：当前 {}，要求 {}",
@@ -325,20 +301,8 @@ pub async fn run_startup(args: &CliArgs, cfg: &ResolvedConfig) -> StartupDecisio
             manifest: Some(m),
             initial: PhasePayload::force_update(&current_version, &required, true, has_store),
         }))
-    } else if cfg.force_update {
-        // 本地开关要求强制：普通更新自动下载安装（有更新必须更新）
-        eprintln!(
-            "[更新器] 本地强制更新开启：发现新版本 {} → {}，将自动更新",
-            current_version, m.version
-        );
-        let sub = format!("{} → {}", current_version, m.version);
-        StartupDecision::Show(Box::new(StartupContext {
-            cfg: cfg.clone(),
-            manifest: Some(m),
-            initial: PhasePayload::new(Stage::Available, "发现新版本", &sub, None),
-        }))
     } else {
-        // 默认（force_update=false）：有更新但可跳过，展示「可稍后升级」界面
+        // 有更新但服务端未强制：可跳过，展示「可稍后升级」界面
         eprintln!(
             "[更新器] 发现新版本（可跳过）：当前 {}，最新 {}",
             current_version, m.version

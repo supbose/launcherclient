@@ -69,15 +69,6 @@ pub struct UpdateSettings {
     /// 缺省用 [`defaults::DEFAULT_RETRY_TIMES`]，0 或 1 视为只试一次
     #[serde(default)]
     pub retry_times: Option<u32>,
-    /// 强制更新开关（默认 false）。启用后，若检测到当前版本低于服务端要求的
-    /// 最低版本（或版本被标记为强制更新），阻断应用启动并要求升级；
-    /// 关闭时仅以非阻断方式提示用户可稍后升级，不影响应用正常启动。
-    #[serde(default)]
-    pub force_update: Option<bool>,
-    /// 应用商店地址：强制更新提示界面「前往应用商店」按钮的跳转目标；
-    /// 缺省或空串回落到 [`homepage`]（前往官网）。
-    #[serde(default)]
-    pub store_url: Option<String>,
 }
 
 impl UpdateSettings {
@@ -109,11 +100,6 @@ pub fn resolve_retry_times(specified: Option<u32>) -> u32 {
 
 /// max_versions 默认值：当前版本 + 1 个旧版本（回滚资产）
 pub const DEFAULT_MAX_VERSIONS: usize = 2;
-
-/// 解析生效的强制更新开关（缺省 false）
-pub fn resolve_force_update(specified: Option<bool>) -> bool {
-    specified.unwrap_or(false)
-}
 
 /// 解析生效的 app 商店地址（空串视为未配置 → 由上层回落 homepage）
 pub fn resolve_store_url(specified: Option<String>) -> Option<String> {
@@ -191,7 +177,6 @@ fn generate_default_template(dir: &std::path::Path) -> bool {
             "launcher_template": "启动器界面模板，可选 A~H（大小写不敏感）：A 信息密度 · B 环形居中 · C 顶部步骤条 · D 极简留白 · E 日志为主 · F 环形步骤 · G 品牌沉浸 · H 极简轻量；留空或未知值用默认 F",
             "homepage": "官网首页地址；下载地址全部失败时界面上的「前往官网」按钮跳这里，留空用内置默认",
             "retry_times": "同一环节（下载 / 解压校验）的自动重试次数（含首次尝试），默认 3：失败后自动再试 2 次，仍失败才提示前往官网重新下载",
-            "force_update": "强制更新开关，默认 false。true 时若当前版本低于服务端最低版本（或版本被标记强制更新），阻断应用启动并要求升级；false 时仅非阻断提示可稍后升级",
             "store_url": "应用商店地址；强制更新提示界面「前往应用商店」按钮的跳转目标，留空回落到 homepage（前往官网）"
         },
         "manifest_url": defaults::DEFAULT_MANIFEST_URLS,
@@ -203,7 +188,6 @@ fn generate_default_template(dir: &std::path::Path) -> bool {
         "launcher_template": defaults::DEFAULT_LAUNCHER_TEMPLATE,
         "homepage": defaults::DEFAULT_HOMEPAGE,
         "retry_times": defaults::DEFAULT_RETRY_TIMES,
-        "force_update": false,
         "store_url": ""
     });
     let Ok(content) = serde_json::to_string_pretty(&template) else {
@@ -416,19 +400,6 @@ mod tests {
     #[test]
     fn default_max_versions_constant() {
         assert_eq!(DEFAULT_MAX_VERSIONS, 2, "当前版本 + 1 个回滚资产");
-    }
-
-    #[test]
-    fn force_update_switch_parsed_and_defaulted() {
-        // 显式 true 被解析
-        let s: UpdateSettings =
-            serde_json::from_str(r#"{"force_update": true}"#).expect("解析");
-        assert_eq!(s.force_update, Some(true));
-        assert!(resolve_force_update(s.force_update));
-        // 缺省 → None，resolve 回落 false
-        let s: UpdateSettings = serde_json::from_str("{}").expect("解析");
-        assert!(s.force_update.is_none());
-        assert!(!resolve_force_update(s.force_update));
     }
 
     #[test]
