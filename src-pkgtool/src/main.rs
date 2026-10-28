@@ -42,6 +42,18 @@ struct Config {
     volume_size_mb: u64,
     /// 打包输出目录（version.json / 包体落于此）
     output_dir: String,
+    /// 最低允许版本（写入 manifest 的 `min_version`，由服务端下发）：
+    /// 低于它的客户端触发阻断式强制更新；留空表示不约束
+    #[serde(default)]
+    min_version: String,
+    /// 是否强制更新（写入 manifest 的 `force_update`）：true 时所有客户端
+    /// 必须升级到本版本，不给「稍后升级」出口
+    #[serde(default)]
+    force_update: bool,
+    /// 应用商店地址（写入 manifest 的 `store_url`）：强制更新界面
+    /// 「前往应用商店」入口；留空则不显示该入口
+    #[serde(default)]
+    store_url: String,
 }
 
 impl Config {
@@ -61,6 +73,9 @@ impl Config {
             ],
             volume_size_mb: 5,
             output_dir: r"D:\WorkspaceProject\github\supbose\api\update\qsm".into(),
+            min_version: String::new(),
+            force_update: false,
+            store_url: String::new(),
         }
     }
 
@@ -445,6 +460,16 @@ fn pack_core(
             map.insert("part_sha256".into(), serde_json::json!(part_hashes));
         }
         map.insert("sha256".into(), serde_json::json!(digest));
+        // 强制更新策略（服务端下发，客户端不可本地覆盖）：
+        // - force_update 恒写入（bool，明确表达本次是否为强制发布）
+        // - min_version / store_url 仅在非空时写入，留空即表示「不约束 / 不显示入口」
+        map.insert("force_update".into(), serde_json::json!(cfg.force_update));
+        if !cfg.min_version.trim().is_empty() {
+            map.insert("min_version".into(), serde_json::json!(cfg.min_version.trim()));
+        }
+        if !cfg.store_url.trim().is_empty() {
+            map.insert("store_url".into(), serde_json::json!(cfg.store_url.trim()));
+        }
         map.insert("release_date".into(), serde_json::json!(release_date));
         map.insert("changelog".into(), serde_json::json!(changelog));
 
@@ -1144,6 +1169,43 @@ impl PackToolApp {
                                     },
                                 );
                             });
+                            section(ui, "强制更新策略（写入 version.json）", |ui| {
+                                field(
+                                    ui,
+                                    "最低允许版本",
+                                    "min_version：低于此版本的客户端触发阻断式强制更新；留空=不约束",
+                                    |ui| {
+                                        ui.add_sized(
+                                            egui::vec2(200.0, 26.0),
+                                            egui::TextEdit::singleline(&mut self.config.min_version)
+                                                .font(egui::FontId::monospace(13.0)),
+                                        );
+                                    },
+                                );
+                                field(
+                                    ui,
+                                    "强制更新",
+                                    "force_update：勾选后所有客户端必须升级到本版本，不可跳过",
+                                    |ui| {
+                                        ui.checkbox(
+                                            &mut self.config.force_update,
+                                            "本次发布为强制更新",
+                                        );
+                                    },
+                                );
+                                field(
+                                    ui,
+                                    "应用商店地址",
+                                    "store_url：强制更新界面「前往应用商店」入口；留空则仅显示「下载升级包」",
+                                    |ui| {
+                                        ui.add_sized(
+                                            egui::vec2(ui.available_width(), 26.0),
+                                            egui::TextEdit::singleline(&mut self.config.store_url)
+                                                .font(egui::FontId::monospace(13.0)),
+                                        );
+                                    },
+                                );
+                            });
                         });
                 },
             );
@@ -1812,6 +1874,9 @@ mod tests {
             download_prefixes: vec!["https://example.com/update/testapp/".into()],
             volume_size_mb: 1,
             output_dir: out.to_string_lossy().into(),
+            min_version: String::new(),
+            force_update: false,
+            store_url: String::new(),
         };
 
         let mut log = Vec::new();
@@ -1874,6 +1939,56 @@ mod tests {
         let _ = std::fs::remove_dir_all(&base);
     }
 
+    /// 构造最小可打包工程并跑一次 pack_core，返回解析后的 version.json
+    fn pack_once(base_tag: &str, min_version: &str, force: bool, store_url: &str) -> serde_json::Value {
+        let base = tmpdir(base_tag);
+        let src = base.join("src");
+        std::fs::create_dir_all(&src).unwrap();
+        std::fs::write(src.join("a.txt"), b"hello").unwrap();
+        let out = base.join("out");
+        let cfg = Config {
+            app_name: "forceapp".into(),
+            files: vec![src.join("a.txt").to_string_lossy().into()],
+            download_prefixes: vec!["https://example.com/u/".into()],
+            volume_size_mb: 64,
+            output_dir: out.to_string_lossy().into(),
+            min_version: min_version.into(),
+            force_update: force,
+            store_url: store_url.into(),
+        };
+        let res = pack_core(
+            &cfg,
+            "2.0.0",
+            "t",
+            |_s: &str| {},
+            |_p: Progress| {},
+            &AtomicBool::new(false),
+        );
+        assert!(res.is_ok(), "pack_core 失败: {:?}", res.err());
+        let text = std::fs::read_to_string(out.join("version.json")).unwrap();
+        let j: serde_json::Value = serde_json::from_str(&text).unwrap();
+        let _ = std::fs::remove_dir_all(&base);
+        j
+    }
+
+    #[test]
+    fn pack_core_writes_force_update_fields() {
+        // 三个服务端字段都应写入生成的 manifest
+        let j = pack_once("force", "1.0.0", true, "https://example.com/store");
+        assert_eq!(j["force_update"].as_bool(), Some(true));
+        assert_eq!(j["min_version"].as_str(), Some("1.0.0"));
+        assert_eq!(j["store_url"].as_str(), Some("https://example.com/store"));
+    }
+
+    #[test]
+    fn pack_core_omits_blank_force_fields() {
+        // force_update 恒写入（未勾选为 false）；min_version / store_url 留空则省略
+        let j = pack_once("blank", "", false, "");
+        assert_eq!(j["force_update"].as_bool(), Some(false));
+        assert!(j.get("min_version").is_none(), "min_version 留空不应写入");
+        assert!(j.get("store_url").is_none(), "store_url 留空不应写入");
+    }
+
     #[test]
     fn bump_and_suggest() {
         assert_eq!(bump_version("1.2.3"), Some("1.2.4".into()));
@@ -1911,6 +2026,9 @@ mod tests {
             download_prefixes: vec!["https://example.com/u/".into()],
             volume_size_mb: 64,
             output_dir: out.to_string_lossy().into(),
+            min_version: String::new(),
+            force_update: false,
+            store_url: String::new(),
         };
 
         let log = Arc::new(Mutex::new(Vec::new()));
@@ -1959,6 +2077,9 @@ mod tests {
             download_prefixes: vec!["https://example.com/u/".into()],
             volume_size_mb: 64,
             output_dir: out.to_string_lossy().into(),
+            min_version: String::new(),
+            force_update: false,
+            store_url: String::new(),
         };
         // 取消标志一开始就为 true：第一个检查点即中止
         let res = pack_core(
