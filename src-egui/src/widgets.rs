@@ -56,14 +56,18 @@ pub fn draw_titlebar(ui: &mut Ui, title: &str) -> TitleBarAction {
     }
 
     // 标题文字（左侧内边距、垂直居中；裁在拖拽区内，不遮按钮）
+    //
+    // CJK 字形墨迹在行框内偏下约 1px：锚点上移补偿，让标题墨迹与右侧按钮图标
+    // 落在同一条视觉中线上，避免标题看上去"比按钮低一点"。
     const TITLE_INSET: f32 = 12.0;
+    const TITLE_V_NUDGE: f32 = 1.0;
     let text_rect = Rect::from_min_max(
         Pos2::new(rect.left() + TITLE_INSET, rect.top()),
         Pos2::new(drag_rect.right() - TITLE_INSET, rect.bottom()),
     );
     if !title.is_empty() && text_rect.width() > 0.0 {
         ui.painter_at(text_rect).text(
-            Pos2::new(text_rect.left(), rect.center().y),
+            Pos2::new(text_rect.left(), rect.center().y - TITLE_V_NUDGE),
             Align2::LEFT_CENTER,
             title,
             FontId::proportional(13.0),
