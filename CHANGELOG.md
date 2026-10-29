@@ -14,6 +14,25 @@
 
 
 
+
+## v0.1.39 (2026-10-30)
+### 🚀 新增功能
+
+- [e040465](/-/commit/e040465ec53ac819aaa99f60d7f07b9da6d59485) 新增(src-core): 扩展界面模板至A~H并新增强制更新阶段 (README.md, docs/egui界面复刻说明.md, launcherclient-guide/launcherclient-guide.html, package.json, scripts/pybuild.py, src-core/src/cli.rs, src-core/src/config.rs, src-core/src/flow.rs, src-core/src/lib.rs, src-core/src/phase.rs, src-egui/src/main.rs, src-egui/src/templates.rs, update.json)
+- [d10c637](/-/commit/d10c63721780bd759504b22b06f5ce3adabf31ec) 新增(src-core): 支持通过命令行/配置文件设置启动器标题 (README.md, docs/egui界面复刻说明.md, launcherclient-guide/launcherclient-guide.html, src-core/src/cli.rs, src-core/src/config.rs, src-core/src/elevation.rs, src-core/src/flow.rs, src-egui/src/app.rs, src-egui/src/main.rs, src-egui/src/theme.rs, src-egui/src/widgets.rs, update.json)
+
+### 🩹 修复 Bug
+
+- [87d3438](/-/commit/87d343896a4b25979349f4a214b16e6cbb058f35) 修复(src-core): 更新默认的清单 URL 和主页地址 (src-core/src/defaults.rs)
+
+### 🔥 性能优化
+
+- [e2108c9](/-/commit/e2108c913ccfd09aa5133e1ffb0b49fb4dc092bc) 优化(widgets): 补偿 CJK 标题垂直偏移，对齐按钮视觉中线 (.dumate/inbox/image.png, .dumate/inbox/paste-image(1).png, src-egui/src/widgets.rs, src-egui/version.rc)
+
+### 📦 构建系统
+
+- [f5e2e22](/-/commit/f5e2e228aa3cc3b0dc604cbab1ce88d4eb7b73b9) 构建(package.json): 为egui构建脚本添加中文应用名称 (package.json)
+
 ## v0.1.38 (2026-10-29)
 ### 🚀 新增功能
 
