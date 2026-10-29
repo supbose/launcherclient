@@ -89,6 +89,20 @@ body::before {
 }
 .chip b { color: var(--accent-ink); font-weight: 700; }
 
+/* ---------- Download button ---------- */
+.hero .download { margin-top: 30px; }
+.btn-download {
+  display: inline-flex; align-items: center; gap: 10px;
+  background: var(--grad); color: #fff; text-decoration: none;
+  font-weight: 700; font-size: 1rem; padding: 12px 34px; border-radius: 999px;
+  box-shadow: 0 8px 24px rgba(59,108,240,0.28);
+  transition: transform 0.15s ease, box-shadow 0.15s ease;
+}
+.btn-download:hover { transform: translateY(-2px); box-shadow: 0 12px 28px rgba(59,108,240,0.36); }
+.btn-download .arrow { font-size: 1.1rem; line-height: 1; }
+.download .tip { display: block; margin-top: 10px; font-size: 0.82rem; color: var(--muted); }
+.download .tip code { font-size: 0.8rem; }
+
 /* ---------- Sections ---------- */
 section { margin: 56px 0; }
 h2 {
@@ -254,7 +268,7 @@ footer { border-top: 1px solid var(--rule); margin-top: 64px; padding: 28px 0 44
 <header class="hero">
   <div class="wrap">
     <span class="kicker">项目介绍 与 使用说明</span>
-    <h1>QsLtd 通用启动器 / 更新器<br><span class="grad">launcherclient</span></h1>
+    <h1>通用启动器 / 更新器<br><span class="grad">launcherclient</span></h1>
     <p class="sub">启动前先向服务器版本清单询问是否有更新——<strong>无更新直接拉起目标程序并静默退出，有更新才弹出窗口</strong>下载安装。配套提供更新包打包工具 <code>pkgtool</code>，一条链路覆盖「发布打包 → 分发更新 → 用户启动」。</p>
     <div class="chips">
       <span class="chip">当前版本 <b>v0.1.31</b></span>
@@ -262,6 +276,10 @@ footer { border-top: 1px solid var(--rule); margin-top: 64px; padding: 28px 0 44
       <span class="chip">产物 <b>单个 exe</b>，无 WebView / 无 Node</span>
       <span class="chip">平台 <b>Windows</b></span>
       <span class="chip">许可 <b>MIT</b></span>
+    </div>
+    <div class="download">
+      <a class="btn-download" href="https://1827033908.share.123pan.cn/123pan/tVd8jv-TqEFh?pwd=iePb#" target="_blank" rel="noopener">下载 launcherclient<span class="arrow">↓</span></a>
+      <span class="tip">123 盘分享，提取码 <code>iePb</code></span>
     </div>
   </div>
 </header>
@@ -577,7 +595,7 @@ launcherclient.exe --preview --template F --stage error</code></pre>
 
 <footer>
   <div class="wrap">
-    launcherclient（QsLtd 通用启动器 / 更新器）v0.1.31 · 项目介绍与使用说明 · 2026-10-29
+    launcherclient（ 通用启动器 / 更新器）v0.1.31 · 项目介绍与使用说明 · 2026-10-29
   </div>
 </footer>
 
