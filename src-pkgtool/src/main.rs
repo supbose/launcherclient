@@ -1654,6 +1654,10 @@ impl eframe::App for PackToolApp {
         // 打包结束（true→false 下降沿）：结算仪表盘「最近耗时」指标
         if self.prev_running && !running {
             self.last_secs = self.pack_started.map(|t| t.elapsed().as_secs_f64());
+            // 版本号跟随输出目录实时同步：pack_core 已先写入新 version.json（成功时），
+            // 重算建议版本 = 刚打的版本末位 +1；失败/取消时 version.json 未变，
+            // 同步回本次尝试的版本号，便于直接重试。
+            self.version = suggest_version(&self.config.output_dir, &self.config.app_name);
         }
         self.prev_running = running;
 
