@@ -16,6 +16,7 @@
   "repository": "https://github.com/qsltdupdater/qsltdupdater",
   "scripts": {
     "build": "cd src-egui && cargo build --release",
+    "build:egui:qsm": "python scripts/pybuild.py qsm",
     "dev": "cd src-egui && cargo run",
     "dist": "python scripts/build.py",
     "egui": "cd src-egui && cargo build --release",
@@ -23,8 +24,7 @@
     "egui:dev": "cd src-egui && cargo run",
     "pkgtool": "python scripts/pybuild.py pkgtool",
     "pkgtool:dev": "cd src-pkgtool && cargo run",
-    "preview": "cd src-egui/target/release && .\\launcherclient.exe --preview --template F --stage error",
-    "build:egui:qsm": "python scripts/pybuild.py qsm"
+    "preview": "cd src-egui/target/release && .\\launcherclient.exe --preview --template F --stage error"
   },
-  "version": "0.1.33"
+  "version": "0.1.34"
 }
