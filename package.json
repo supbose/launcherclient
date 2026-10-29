@@ -1,6 +1,19 @@
 {
+  "author": {
+    "email": "supbose@qingshu.work",
+    "name": "supbose"
+  },
+  "description": "qsltdupdater is a tool to update qsltdupdater.",
+  "homepage": "https://github.com/qsltdupdater/qsltdupdater",
+  "keywords": [
+    "qsltdupdater",
+    "update",
+    "tool"
+  ],
+  "license": "MIT",
   "name": "qsltdupdater",
   "private": true,
+  "repository": "https://github.com/qsltdupdater/qsltdupdater",
   "scripts": {
     "build": "cd src-egui && cargo build --release",
     "dev": "cd src-egui && cargo run",
@@ -11,18 +24,5 @@
     "pkgtool:dev": "cd src-pkgtool && cargo run",
     "preview": "cd src-egui/target/release && .\\launcherclient.exe --preview --template F --stage error"
   },
-  "author": {
-    "name": "supbose",
-    "email": "supbose@qingshu.work"
-  },
-  "license": "MIT",
-  "description": "qsltdupdater is a tool to update qsltdupdater.",
-  "keywords": [
-    "qsltdupdater",
-    "update",
-    "tool"
-  ],
-  "homepage": "https://github.com/qsltdupdater/qsltdupdater",
-  "repository": "https://github.com/qsltdupdater/qsltdupdater",
-  "version": "0.1.30"
+  "version": "0.1.31"
 }

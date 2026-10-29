@@ -6,6 +6,12 @@
 
 
 
+
+## v0.1.31 (2026-10-29)
+### 🚀 新增功能
+
+- [68073fe](/-/commit/68073fe33bcbe61df9667d3971749ef2d8ace805) 新增(src-pkgtool): 新增关于页面并统一版本号来源 (THIRD-PARTY-LICENSES.md, package.json, src-pkgtool/Cargo.toml, src-pkgtool/build.rs, src-pkgtool/src/main.rs)
+
 ## v0.1.30 (2026-10-29)
 ### 🚀 新增功能
 
