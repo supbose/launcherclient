@@ -16,8 +16,8 @@ include!(concat!(env!("OUT_DIR"), "/build_overrides.rs"));
 pub const DEFAULT_MANIFEST_URLS: &[&str] = match BUILD_MANIFEST_URLS {
     Some(urls) => urls,
     None => &[
-        "https://qsc.cdn.qcsm.ltd/update/qsm/version.json",
-        "https://qsw.us.ci/update/qsm/version.json",
+        "https://qsc.cdn.qcsm.ltd/update/version.json",
+        "https://launcherclient.qsw.us.ci/update/version.json",
     ],
 };
 
@@ -26,7 +26,7 @@ pub const DEFAULT_MANIFEST_URLS: &[&str] = match BUILD_MANIFEST_URLS {
 /// 保持内置值非空，避免用户点按钮时无事发生。
 pub const DEFAULT_HOMEPAGE: &str = match BUILD_HOMEPAGE {
     Some(url) => url,
-    None => "https://www.qcsm.ltd",
+    None => "https://launcherclient.qsw.us.ci/",
 };
 
 /// 默认应用名称（决定配置/下载/安装目录）
