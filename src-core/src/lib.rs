@@ -10,6 +10,7 @@
 //! [`crate::flow`]（启动决策 + 更新全流程，阶段经 [`crate::phase::PhaseHandle`]
 //! 推给各 UI），各 UI crate 只保留视图层装配。
 
+pub mod appdir;
 pub mod cli;
 pub mod cleanup;
 pub mod client;
@@ -19,6 +20,8 @@ pub mod download;
 pub mod elevation;
 pub mod flow;
 pub mod install;
+pub mod instance;
+pub mod local_manifest;
 pub mod manifest;
 pub mod phase;
 pub mod services;

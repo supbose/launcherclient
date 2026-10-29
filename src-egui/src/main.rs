@@ -89,6 +89,22 @@ fn main() {
         cfg.manifest_urls.join(" → ")
     );
 
+    // 单实例互斥：两个更新器同时写同一批版本目录会互相踩（最坏形态是把对方
+    // 刚解压好的临时目录当残留删掉，装出半套版本）。`--check-only` 与
+    // `--preview` 在上面就已经返回，不受这条影响——纯检测是只读的，预览是开发用的。
+    // 最多等 5 秒是给提权交接留的：父进程 spawn 完管理员副本就退出，
+    // 副本稍后必然能拿到锁；真正并存的另一个实例则会等满后安静退场。
+    let _instance = match qsltd_updater_core::instance::acquire(
+        &flow::app_dir(&cfg.app_name),
+        std::time::Duration::from_secs(5),
+    ) {
+        Ok(guard) => guard,
+        Err(e) => {
+            eprintln!("[更新器] {e}，本次启动退出");
+            return;
+        }
+    };
+
     // 启动决策在后台线程异步执行（窗口创建前不再同步 await）：
     // 无更新 + launch 模式静默退出；有更新才建窗。窗口以隐藏方式启动，
     // 首检在后台跑，弱网/慢 manifest（>300ms）时再显示「正在检查更新」窗口

@@ -257,6 +257,7 @@ mod tests {
             template: "F".to_string(),
             homepage: String::new(),
             retry_times: 3,
+            require_sha256: true,
         }
     }
 

@@ -1,10 +1,15 @@
 //! 命令行参数解析
 //!
 //! 用法：
-//! `QsLtdUpdater.exe --app-name <名称> [--name <标题>] [--launch <目标程序路径>] [--manifest <manifest地址>] [--template <A~H>] [--check-only]`
+//! `QsLtdUpdater.exe --app-name <名称> [--name <标题>] [--launch <目标程序路径>] [--manifest <manifest地址>] [--template <A~H>] [--check-only] [--allow-missing-sha256]`
 //!
 //! `--app-name` 与 `--name` 是两件事：前者决定配置/下载/安装目录，
 //! 后者只是界面标题栏（含系统窗口标题）显示的文字。
+//!
+//! `--allow-missing-sha256` 关掉「清单必须给校验值」这条保护：默认情况下，
+//! 服务端 manifest 既没给整包 `sha256`、分卷也没给齐 `part_sha256` 时，更新器
+//! 拒绝自动安装（包完整性没有任何证据）。只有确认服务器与链路都可信的
+//! 内网/自建环境才需要它；等价配置项是 update.json 的 `require_sha256: false`。
 
 /// 解析后的命令行参数
 pub struct CliArgs {
@@ -23,6 +28,9 @@ pub struct CliArgs {
     /// 纯检测模式：只检查是否有更新，不建窗、不下载、不拉回目标程序。
     /// 退出码：0=无更新 1=检测失败 2=有更新（可跳过） 3=必须更新（供客户端快速分支）
     pub check_only: bool,
+    /// 显式允许「清单没给 SHA256」的包继续自动安装（默认 false = 拒绝）。
+    /// 见模块头的用法说明；与 update.json 的 `require_sha256` 是同一条开关的两面。
+    pub allow_missing_sha256: bool,
 }
 
 /// 解析命令行参数，未知参数仅打印警告不中断
@@ -40,6 +48,7 @@ pub fn parse_from(argv: &[String]) -> CliArgs {
     let mut current_version: Option<String> = None;
     let mut template: Option<String> = None;
     let mut check_only = false;
+    let mut allow_missing_sha256 = false;
 
     let mut i = 0;
     while i < argv.len() {
@@ -82,6 +91,7 @@ pub fn parse_from(argv: &[String]) -> CliArgs {
                 None => eprintln!("[参数] --current-version 缺少值，忽略该参数"),
             },
             "--check-only" => check_only = true,
+            "--allow-missing-sha256" => allow_missing_sha256 = true,
             // 内部提权标记（runas 重新拉起的副本携带），非用户参数，静默忽略
             "--__elevated-retry" => {}
             "--template" => match value {
@@ -104,6 +114,7 @@ pub fn parse_from(argv: &[String]) -> CliArgs {
         current_version,
         template,
         check_only,
+        allow_missing_sha256,
     }
 }
 
@@ -125,6 +136,7 @@ mod tests {
         assert!(c.current_version.is_none());
         assert!(c.template.is_none());
         assert!(!c.check_only);
+        assert!(!c.allow_missing_sha256);
     }
 
     #[test]
@@ -212,6 +224,17 @@ mod tests {
     fn parse_check_only_stands_alone() {
         assert!(parse_from(&args(&["--check-only"])).check_only);
         assert!(!parse_from(&args(&["--app-name", "qsm"])).check_only);
+    }
+
+    #[test]
+    fn parse_allow_missing_sha256_defaults_off() {
+        // 默认必须关着：安全闸门的开关不靠用户记得传参
+        assert!(!parse_from(&args(&["--app-name", "qsm"])).allow_missing_sha256);
+        assert!(parse_from(&args(&["--allow-missing-sha256"])).allow_missing_sha256);
+        // 独立开关，不吃后面的值
+        let c = parse_from(&args(&["--allow-missing-sha256", "--app-name", "qsm"]));
+        assert!(c.allow_missing_sha256);
+        assert_eq!(c.app_name, "qsm");
     }
 
     #[test]

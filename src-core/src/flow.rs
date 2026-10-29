@@ -29,6 +29,7 @@ use crate::defaults::{
 use crate::download;
 use crate::elevation;
 use crate::install;
+use crate::local_manifest::LocalManifest;
 use crate::manifest;
 use crate::phase::{self, fmt_mb, PhaseHandle, PhasePayload, Stage};
 use crate::services;
@@ -52,6 +53,11 @@ pub struct ResolvedConfig {
     pub homepage: String,
     /// 同一环节自动重试次数（含首次尝试）：下载、解压校验各自独立计数
     pub retry_times: u32,
+    /// 是否要求清单提供包完整性校验值（默认 true）。
+    /// 为真且清单既没给整包 `sha256`、分卷也没给齐 `part_sha256` 时，
+    /// [`run_update_flow`] 在下载前直接拒绝自动安装；关它的两条路见
+    /// [`crate::config::resolve_require_sha256`]。
+    pub require_sha256: bool,
 }
 
 /// 启动决策：窗口创建前确定是否需要 UI
@@ -119,6 +125,8 @@ pub fn resolve_config(args: &CliArgs) -> ResolvedConfig {
         // 配置写了空串当没写：回落到内置默认，按钮点了才有地方去
         homepage: non_empty(settings.homepage).unwrap_or_else(|| DEFAULT_HOMEPAGE.to_string()),
         retry_times: config::resolve_retry_times(settings.retry_times),
+        // 命令行 --allow-missing-sha256 > update.json require_sha256 > 默认要求
+        require_sha256: config::resolve_require_sha256(args.allow_missing_sha256, settings.require_sha256),
         max_versions: settings
             .max_versions
             .filter(|v| *v > 0)
@@ -132,14 +140,23 @@ pub fn resolve_config(args: &CliArgs) -> ResolvedConfig {
     }
 }
 
+/// 按 app_name 派生应用数据根目录（`%APPDATA%\<app_name>`）
+///
+/// 所有派生路径（下载缓存、版本目录、app.json、manifest 缓存、单实例锁）
+/// 都从这里长出来，集中一处好改；UI 层要取单实例锁也调它，别自己拼路径。
+/// 解析规则（config.toml 接管、SYSTEM 账户降级）见 [`crate::appdir`]。
+pub fn app_dir(app_name: &str) -> PathBuf {
+    crate::appdir::app_dir(Some(app_name))
+}
+
 /// 按 app_name 派生下载目录
 pub fn download_dir(app_name: &str) -> PathBuf {
-    qingshu::update::get_myapp_dir(Some(app_name)).join("downloads")
+    app_dir(app_name).join("downloads")
 }
 
 /// 按 app_name 派生版本根目录（各版本目录的父目录）
 fn install_root(app_name: &str) -> PathBuf {
-    qingshu::update::get_myapp_dir(Some(app_name)).join("app")
+    app_dir(app_name).join("app")
 }
 
 /// 按 app_name 派生版本安装目录（app_{version}）
@@ -149,7 +166,7 @@ fn install_dir(app_name: &str, version: &str) -> PathBuf {
 
 /// 本地版本记录 app.json 路径
 fn local_manifest_path(app_name: &str) -> PathBuf {
-    qingshu::update::get_myapp_dir(Some(app_name)).join("app.json")
+    app_dir(app_name).join("app.json")
 }
 
 /// 清理本次更新的下载缓存：完整 zip + 分卷目录（安装成功后调用）
@@ -459,6 +476,45 @@ pub async fn run_update_flow(
     m: &manifest::FlatManifest,
     handle: &PhaseHandle,
 ) -> Result<(), String> {
+    // ---- 清单体检（在下载、提权之前）----
+    //
+    // 「没有下载地址」和「没有任何完整性校验值」都属于服务端配置问题：
+    // 重下、重试、管理员权限一个都解决不了。把它们放在最前面 fail fast，
+    // 免得先弹一次 UAC、用户点了「是」，才告之「这包装不了」——那是最差的顺序。
+    let is_parts = m.parts.as_ref().is_some_and(|p| !p.is_empty());
+
+    if !is_parts && m.url.is_empty() {
+        // 单包模式却没有地址：等于没有下载这条路，同属「拿不到安装包」
+        let e = "manifest 缺少 url 字段（单包模式必填）".to_string();
+        eprintln!("[更新器] 下载失败: {}", e);
+        handle.set(PhasePayload::failure("更新包下载失败", &e, true));
+        return Err(e);
+    }
+
+    // 包完整性闸门：默认要求清单给出校验值（整包 sha256，或分卷模式给齐 part_sha256）。
+    // 二者皆无时，下载回来的字节没有任何完整性证据，而清单与包通常同源同域——
+    // 服务器被改写或 CDN 被劫持时，校验值缺失正是攻击者最希望的状态，故宁可拒装。
+    // 放行出口（自建/内网等可信环境）：update.json `"require_sha256": false`
+    // 或命令行 `--allow-missing-sha256`。
+    if cfg.require_sha256 && !manifest::can_verify_package(m) {
+        let e = if is_parts {
+            "manifest 缺少包完整性校验值：整包 sha256 未提供，part_sha256 也未与 parts 一一对齐"
+        } else {
+            "manifest 缺少包完整性校验值：未提供整包 sha256"
+        }
+        .to_string();
+        eprintln!("[更新器] 拒绝安装: {}", e);
+        handle.set(PhasePayload::failure(
+            "更新包缺少校验值，已拒绝安装",
+            &format!(
+                "{}。请由服务端补上校验值后重试；确需在无校验值时继续安装，可在 update.json 设 \"require_sha256\": false 或以 --allow-missing-sha256 启动",
+                e
+            ),
+            true,
+        ));
+        return Err(e);
+    }
+
     // ---- 提权前置检查（删除服务 / 安装前）----
     //
     // 删除 Windows 服务（`sc delete`）需要管理员权限；当前进程未提权时会拿到
@@ -486,26 +542,23 @@ pub async fn run_update_flow(
         }
     }
 
-    let is_parts = m.parts.as_ref().is_some_and(|p| !p.is_empty());
     let zip_path = download_dir(&cfg.app_name).join(format!("update_{}.zip", m.version));
 
     // ---- 下载 + 包完整性校验：同一环节自动重试（默认 3 次，含首次） ----
     //
-    // 单包模式缺地址属于 manifest 配置问题，重试无意义，直接报错。
     // 其余失败（网络抖动、CDN 5xx、下载后 SHA256 对不上、分卷合并失败）
     // 都视为「可能是这次运气不好」，重下一遍比拼人品靠谱 —— 每轮重试
     // 前会删掉残留包，避免把半包当完整包复用。
     // 重试次数耗尽才把「可跳官网」标记写进快照：地址确实全挂了，
     // 界面此时给「前往官网」才是负责任的出口。
-    if !is_parts && m.url.is_empty() {
-        // 单包模式却没有地址：等于没有下载这条路，同属「拿不到安装包」
-        let e = "manifest 缺少 url 字段（单包模式必填）".to_string();
-        eprintln!("[更新器] 下载失败: {}", e);
-        handle.set(PhasePayload::failure("更新包下载失败", &e, true));
-        return Err(e);
+    let residual_free = residual_is_free(&zip_path);
+    if !residual_free {
+        eprintln!(
+            "[更新器] 残留更新包被其他进程占用，本次不自动重试: {}",
+            zip_path.display()
+        );
     }
-
-    let download_max = retry_limit(cfg.retry_times, file_can_be_removed(&zip_path));
+    let download_max = retry_limit(cfg.retry_times, residual_free);
     let mut attempt: u32 = 0;
     loop {
         attempt += 1;
@@ -758,14 +811,11 @@ async fn run_download(
     attempt: u32,
     max_attempts: u32,
 ) -> Result<(), String> {
-    // 复用前提：manifest 提供了非空 SHA256。无校验值时 verify_sha256 直接
+    // 复用前提：manifest 提供了非空整包 SHA256。无校验值时 verify_sha256 直接
     // 放行，等于把上次下载中断的半包当完整包复用（后面安装的就是损坏包），
-    // 故强制重新下载。
-    let has_hash = m
-        .sha256
-        .as_deref()
-        .map(str::trim)
-        .is_some_and(|s| !s.is_empty());
+    // 故强制重新下载。（缺校验值的包能否走到这一步，由上面的 require_sha256
+    // 闸门决定；这里保留同一判断是为了闸门被显式关掉时仍然不拿半包去装。）
+    let has_hash = manifest::has_whole_hash(m);
     if zip_path.exists() && has_hash {
         let cached = zip_path.to_path_buf();
         let sha256 = m.sha256.clone();
@@ -905,7 +955,7 @@ pub async fn resolve_current_version(args: &CliArgs, app_name: &str) -> String {
     }
     let path = local_manifest_path(app_name);
     if path.exists() {
-        match qingshu::update::LocalManifest::load(&path).await {
+        match LocalManifest::load(&path).await {
             Ok(Some(m)) if !m.version.is_empty() => {
                 // 校验安装目录是否存在，缺失则自恢复重装
                 if !m.installed_path.is_empty() && !Path::new(&m.installed_path).exists() {
@@ -1060,7 +1110,7 @@ pub async fn read_installed_path(app_name: &str) -> Option<String> {
     if !path.exists() {
         return None;
     }
-    match qingshu::update::LocalManifest::load(&path).await {
+    match LocalManifest::load(&path).await {
         Ok(Some(m)) if !m.installed_path.is_empty() => Some(m.installed_path),
         _ => None,
     }
@@ -1092,20 +1142,18 @@ fn retry_limit(configured: u32, retryable: bool) -> u32 {
     }
 }
 
-/// 重试前先确认失败产物删得掉
+/// 重试前先确认上一次的残留包**没有被别的进程占着**
 ///
-/// 删不掉说明文件被占用或目录只读，重下只会再写一遍半包，白等一轮。
-fn file_can_be_removed(path: &Path) -> bool {
-    if !path.exists() {
-        return true;
-    }
-    match std::fs::remove_file(path) {
-        Ok(()) => true,
-        Err(e) => {
-            eprintln!("[更新器] 无法清理失败产物 {}: {}", path.display(), e);
-            false
-        }
-    }
+/// 占着（杀软正在扫、资源管理器打开了它、目录只读）就只试一次：重下只会
+/// 再写一遍半包，白等一轮。
+///
+/// **只探测，不删除**。曾经的实现是「真删一次看删不删得掉」，副作用直接
+/// 把上次下好的完整包抹掉，使 [`run_download`] 的「复用已下载的更新包」
+/// 分支永远进不去（1.4 GB 的包每次重来），与 README 承诺的行为相反。
+/// 现在改用 [`crate::instance::is_unlocked`] 的独占打开探测；清理动作仍由
+/// 下载循环按轮次显式做。
+fn residual_is_free(path: &Path) -> bool {
+    crate::instance::is_unlocked(path)
 }
 
 /// 校验完整包 SHA256（期望值为空时跳过）
@@ -1183,14 +1231,23 @@ pub fn open_homepage() -> Result<(), String> {
 /// 打开应用商店（强制更新界面「前往应用商店」按钮）
 ///
 /// 地址取服务端 manifest 的 `store_url`；缺省或空串回落到本地配置 `homepage`
-/// （前往官网）。两者均为信任来源（manifest / 配置 + 内置默认）。
+/// （前往官网）。注意两者**可信度不同**：`homepage` 来自本地 update.json / 编译期
+/// 烘焙，`store_url` 是服务端下发的远程字符串，所以 [`crate::shell::open_url`]
+/// 会按不可信输入校验它。校验不过时不硬弹错误：告警后改开本地配置的官网首页，
+/// 用户仍有一个能用的出口，而危险的字符串一次也不会进 shell。
 pub fn open_store_url(store_url: Option<&str>) -> Result<(), String> {
     let args = crate::cli::parse();
     let cfg = resolve_config(&args);
-    let url = store_url
-        .filter(|s| !s.trim().is_empty())
-        .unwrap_or(&cfg.homepage);
-    crate::shell::open_url(url)
+    let Some(requested) = store_url.map(str::trim).filter(|s| !s.is_empty()) else {
+        return crate::shell::open_url(&cfg.homepage);
+    };
+    match crate::shell::sanitize_url(requested) {
+        Ok(validated) => crate::shell::open_url(&validated),
+        Err(e) => {
+            eprintln!("[更新器] 服务端 store_url 未通过校验（{e}），改开本地配置的官网首页");
+            crate::shell::open_url(&cfg.homepage)
+        }
+    }
 }
 
 /// 更新流程运行中标志：首次运行与「重试」共用，防并发双跑
@@ -1260,6 +1317,95 @@ mod tests {
         d
     }
 
+    /// 构造一份最小可用配置（测试用：不依赖 update.json 与命令行）
+    fn cfg_for_test() -> ResolvedConfig {
+        ResolvedConfig {
+            app_name: "qsltd_flow_test".to_string(),
+            launcher_name: "启动器".to_string(),
+            manifest_urls: vec![],
+            launch: None,
+            max_versions: 2,
+            services: vec![],
+            template: "F".to_string(),
+            homepage: "https://example.test".to_string(),
+            retry_times: 3,
+            require_sha256: true,
+        }
+    }
+
+    /// 构造一份最小清单（单包模式，校验值按参数给）
+    fn manifest_with_hash(sha256: Option<&str>) -> manifest::FlatManifest {
+        manifest::FlatManifest {
+            version: "9.9.9".to_string(),
+            update: true,
+            size_bytes: None,
+            sha256: sha256.map(str::to_string),
+            url: "https://example.test/pkg.zip".to_string(),
+            parts: None,
+            part_sha256: None,
+            release_date: None,
+            changelog: Vec::new(),
+            min_version: None,
+            force_update: None,
+            store_url: None,
+        }
+    }
+
+    #[tokio::test]
+    async fn run_update_flow_refuses_package_without_any_hash() {
+        // 包完整性闸门的端到端回归：清单没给校验值 → 拒绝自动安装，
+        // 且必须在任何下载/提权动作之前返回（此用例连不上网也不该报错成网络问题）
+        let cfg = cfg_for_test();
+        let m = manifest_with_hash(None);
+        let handle = PhaseHandle::new();
+
+        let err = run_update_flow(&cfg, &m, &handle)
+            .await
+            .err()
+            .expect("缺校验值应拒绝安装");
+        assert!(err.contains("校验值"), "错误应说明缺校验值: {err}");
+
+        let snap = handle.snapshot().expect("应写入错误阶段快照");
+        assert_eq!(snap.stage(), Stage::Error);
+        // 界面文案也是契约：主提示要短、副提示要给出逃生口，否则用户只能干等
+        assert_eq!(snap.message, "更新包缺少校验值，已拒绝安装");
+        assert!(
+            snap.sub.contains("require_sha256") && snap.sub.contains("--allow-missing-sha256"),
+            "副提示应写明两条放行途径: {}",
+            snap.sub
+        );
+        assert!(
+            snap.download_failed,
+            "拒装应给出「前往官网」出口（服务端配置问题，本地重试无解）"
+        );
+    }
+
+    #[tokio::test]
+    async fn run_update_flow_allows_package_when_gate_disabled() {
+        // 关掉闸门后不得再因缺校验值报错：这里的失败必须来自网络（不可达域名），
+        // 而不是配置检查 —— 用错误前缀区分两者
+        let mut cfg = cfg_for_test();
+        cfg.require_sha256 = false;
+        // 只试一次：retry_times=1 时不会进入退避等待，用例保持秒级
+        cfg.retry_times = 1;
+        let mut m = manifest_with_hash(None);
+        m.url = "http://127.0.0.1:9/unreachable.zip".to_string();
+        let handle = PhaseHandle::new();
+
+        let err = run_update_flow(&cfg, &m, &handle)
+            .await
+            .err()
+            .expect("地址不可达应下载失败");
+        assert!(
+            err.starts_with(download::DOWNLOAD_FAIL_PREFIX),
+            "应落到下载环节而非校验值闸门: {err}"
+        );
+
+        // 下载目录是按 app_name 派生的真实目录，用例自己收干净
+        let root = app_dir(&cfg.app_name);
+        let _ = std::fs::remove_dir_all(&root);
+    }
+
     #[test]
     fn retry_limit_never_below_one_and_capped() {
         // 配置 0 也必须试一次（「不试」不是合法语义）；上限 10 兜底
@@ -1287,14 +1433,98 @@ mod tests {
     }
 
     #[test]
-    fn file_can_be_removed_reports_state() {
-        // 不存在 → 视为可重试；存在且删得掉 → 可重试且文件已删
-        let dir = temp_dir("retry_cleanup");
+    fn residual_probe_reports_state_without_deleting() {
+        // 不存在 → 可重试；存在且没被占用 → 可重试，**且文件必须原地留着**
+        // （留着才有 run_download 的「复用已下载包」；旧实现顺手删掉，那条分支成了死路）
+        let dir = temp_dir("retry_probe");
         let f = dir.join("update_1.0.0.zip");
-        assert!(file_can_be_removed(&f));
+        assert!(residual_is_free(&f));
+
         std::fs::write(&f, b"partial").expect("写残包");
-        assert!(file_can_be_removed(&f));
-        assert!(!f.exists(), "重试前必须把残包清掉");
+        assert!(residual_is_free(&f));
+        assert!(f.exists(), "探测不得删除残留包");
+        assert_eq!(
+            std::fs::read(&f).expect("读回"),
+            b"partial",
+            "探测不得改动残留包内容"
+        );
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    /// 占用探测的判定能力只在 Windows 有强制文件锁语义可验
+    #[test]
+    #[cfg(windows)]
+    fn residual_probe_detects_file_held_by_another_handle() {
+        let dir = temp_dir("retry_locked");
+        let f = dir.join("update_1.0.0.zip");
+        std::fs::write(&f, b"partial").expect("写残包");
+
+        let held = std::fs::File::open(&f).expect("持有句柄");
+        assert!(
+            !residual_is_free(&f),
+            "文件被其他句柄打开时应判定为不可重试（重下也是白下）"
+        );
+        assert!(f.exists(), "判定为被占用同样不得删除文件");
+        drop(held);
+
+        assert!(residual_is_free(&f), "句柄释放后应恢复可重试");
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[tokio::test]
+    async fn run_download_reuses_verified_local_package() {
+        // 复用分支的端到端回归：本地已有校验合格的包 → 直接复用，不发起任何网络请求。
+        // 用不可达地址做断言依据：走到下载就一定失败，返回 Ok 只可能是复用。
+        use sha2::{Digest, Sha256};
+
+        let dir = temp_dir("reuse");
+        let zip = dir.join("update_9.9.9.zip");
+        std::fs::write(&zip, b"already-downloaded").expect("写本地包");
+        let expected = hex::encode(Sha256::digest(b"already-downloaded"));
+
+        let mut m = manifest_with_hash(Some(&expected));
+        m.url = "http://127.0.0.1:9/unreachable.zip".to_string();
+        let handle = PhaseHandle::new();
+
+        run_download(&handle, &m, &zip, 1, 3)
+            .await
+            .expect("校验合格的本地包应被复用");
+        assert!(zip.exists(), "复用不得删掉本地包");
+        assert_eq!(
+            std::fs::read(&zip).expect("读回"),
+            b"already-downloaded",
+            "复用的是同一个文件，不该被重写"
+        );
+        let snap = handle.snapshot().expect("应推送阶段快照");
+        assert_eq!(snap.message, "使用已下载的更新包");
+
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[tokio::test]
+    async fn run_download_redownloads_when_local_package_is_corrupted() {
+        // 反例：本地包与清单校验值不符 → 丢弃并重下（这里重下必然失败，
+        // 失败信息必须来自下载环节而非复用分支）
+        use sha2::{Digest, Sha256};
+
+        let dir = temp_dir("reuse_bad");
+        let zip = dir.join("update_9.9.9.zip");
+        std::fs::write(&zip, b"half-written").expect("写本地包");
+        let expected = hex::encode(Sha256::digest(b"the-real-package"));
+
+        let mut m = manifest_with_hash(Some(&expected));
+        m.url = "http://127.0.0.1:9/unreachable.zip".to_string();
+        let handle = PhaseHandle::new();
+
+        let err = run_download(&handle, &m, &zip, 1, 3)
+            .await
+            .err()
+            .expect("校验不合格的本地包不得复用");
+        assert!(
+            err.starts_with(download::DOWNLOAD_FAIL_PREFIX),
+            "应落到下载环节: {err}"
+        );
+
         let _ = std::fs::remove_dir_all(&dir);
     }
 

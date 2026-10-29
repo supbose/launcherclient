@@ -332,7 +332,7 @@ footer { border-top: 1px solid var(--rule); margin-top: 64px; padding: 28px 0 44
     <h3><span class="no">4.1</span>命令行参数</h3>
     <pre><code>launcherclient.exe [--app-name &lt;名称&gt;] [--name &lt;标题&gt;] [--launch &lt;目标程序路径&gt;]
                    [--manifest &lt;manifest地址&gt;] [--current-version &lt;版本&gt;]
-                   [--template &lt;A~H&gt;] [--check-only]
+                   [--template &lt;A~H&gt;] [--check-only] [--allow-missing-sha256]
                    [--preview [--stage &lt;0-10|名称&gt;]]</code></pre>
     <div class="table-wrap">
       <table>
@@ -345,6 +345,7 @@ footer { border-top: 1px solid var(--rule); margin-top: 64px; padding: 28px 0 44
           <tr><td class="nowrap"><code>--current-version</code></td><td>强制指定当前版本，覆盖本地 app.json 的探测结果</td><td>自动探测</td></tr>
           <tr><td class="nowrap"><code>--template</code></td><td>界面模板 A~H（大小写不敏感），覆盖 update.json</td><td><code>F</code></td></tr>
           <tr><td class="nowrap"><code>--check-only</code></td><td>纯检测模式：不建窗、不下载、不拉起目标程序，按退出码结束（0 无更新 / 1 检测失败 / 2 有更新可跳过 / 3 必须更新）</td><td>关闭</td></tr>
+          <tr><td class="nowrap"><code>--allow-missing-sha256</code></td><td>放行「清单没给 SHA256」的更新包，关闭 <code>require_sha256</code> 校验闸（见 4.2）。仅在服务端确实无法提供校验值时临时使用；<mark class="key">只能关不能开</mark></td><td>关闭（即校验闸开启）</td></tr>
           <tr><td class="nowrap"><code>--preview</code> / <code>--stage</code></td><td>本地预览各套布局与阶段画面，不联网。<code>--stage</code> 取 0~10（也可传中文名称，未知值回落 1）：0 检测中、1 下载中（分卷）、2 校验中、3 解压/安装中、4 发现新版本、5 已是最新、6 更新完成、7 错误、8 重试中、9 强制更新（阻断）、10 强制更新（可稍后升级）</td><td>关闭</td></tr>
         </tbody>
       </table>
@@ -367,6 +368,7 @@ footer { border-top: 1px solid var(--rule); margin-top: 64px; padding: 28px 0 44
           <tr><td><code>launcher_template</code></td><td>字符串</td><td>界面模板 A~H（大小写不敏感）；留空或未知值回落默认 <code>F</code>（未知值在 stderr 告警，不会白屏）</td></tr>
           <tr><td><code>homepage</code></td><td>字符串</td><td>官网首页地址；下载/合并环节自动重试用尽后，错误态出现「前往官网重新下载」按钮，点击用系统浏览器打开这里。留空用内置默认 <code>https://www.qcsm.ltd</code></td></tr>
           <tr><td><code>retry_times</code></td><td>数字</td><td>同一环节的自动重试次数（<mark class="key">含首次尝试</mark>），默认 <code>3</code> = 首次 + 重试 2 次；下载与解压校验各自独立计数；写 <code>0</code> 视为 <code>1</code>，上限 <code>10</code></td></tr>
+          <tr><td><code>require_sha256</code></td><td>布尔</td><td><mark class="key">包完整性校验闸，默认开启</mark>。开启时若清单既没有整包 <code>sha256</code>、分卷模式的 <code>part_sha256</code> 也没与 <code>parts</code> 一一对齐，则在<mark class="key">弹 UAC 之前</mark>直接拒绝安装，错误态引导去官网下载。写 <code>false</code>（或加 <code>--allow-missing-sha256</code>）可放行无校验值的包——只建议用于内网 / 自建源这类链路可信的环境；缺省即 <code>true</code>，无需显式写</td></tr>
         </tbody>
       </table>
     </div>
@@ -383,7 +385,8 @@ footer { border-top: 1px solid var(--rule); margin-top: 64px; padding: 28px 0 44
   "services": ["QsmServer"],
   "launcher_template": "F",
   "homepage": "https://www.qcsm.ltd",
-  "retry_times": 3
+  "retry_times": 3,
+  "require_sha256": true
 }</code></pre>
 
     <h3><span class="no">4.3</span>version.json — 服务器版本清单</h3>
@@ -396,17 +399,19 @@ footer { border-top: 1px solid var(--rule); margin-top: 64px; padding: 28px 0 44
           <tr><td><code>update</code></td><td>更新总闸，<code>false</code> 时一律视为无更新（<mark class="key">force_update / min_version 同时失效</mark>），缺省 <code>true</code></td></tr>
           <tr><td><code>url</code></td><td>单包下载地址（分卷模式下被忽略）。单包模式留空会直接报错「manifest 缺少 url 字段」，不做自动重试</td></tr>
           <tr><td><code>parts</code></td><td>分卷地址数组（<code>.zip.001/.002/…</code>，按序拼接为完整 zip），非空即走分卷</td></tr>
-          <tr><td><code>part_sha256</code></td><td>各分卷 SHA256，与 parts <mark class="key">等长</mark>时逐卷校验（长度不符则不逐卷校验），已下载合格的卷自动复用</td></tr>
-          <tr><td><code>sha256</code></td><td>完整 zip 的 SHA256（大小写不敏感），下载结束后整体复核（<mark class="key">强烈建议填写</mark>）。留空 = 跳过整体校验，且禁用「复用已下载包」以免把中断的半包当完整包安装</td></tr>
+          <tr><td><code>part_sha256</code></td><td>各分卷 SHA256，与 parts <mark class="key">等长且每项非空</mark>时逐卷校验（长度不符或留空项则不逐卷校验），已下载合格的卷自动复用。分卷模式下这份齐备的数组即可满足 <code>require_sha256</code> 闸，无需再给整包 <code>sha256</code></td></tr>
+          <tr><td><code>sha256</code></td><td>完整 zip 的 SHA256（大小写不敏感），下载结束后整体复核（<mark class="key">默认必填</mark>，校验按 256 KB 分块流式计算，GB 级包也不会把哈希读进内存）。留空 = 跳过整体校验，且禁用「复用已下载包」以免把中断的半包当完整包安装；在 <code>require_sha256</code> 开启时（默认），<code>sha256</code> 与齐备的 <code>part_sha256</code> <mark class="key">两者都没有 → 直接拒绝安装</mark>，需要放行得显式关掉闸门</td></tr>
           <tr><td><code>size_bytes</code></td><td>更新包字节数（等于各分卷之和）。分卷模式下作为整体进度分母（单包模式用 HTTP <code>Content-Length</code>）；留空则分卷界面没有百分比与剩余时间</td></tr>
           <tr><td><code>release_date</code></td><td>发布时间（ISO 8601，pkgtool 写入打包时刻 UTC）。客户端只解析留存，界面不展示</td></tr>
           <tr><td><code>changelog</code></td><td>更新日志数组，逐条展示；自拉到清单起贯穿「发现新版本 → 下载 → 安装 → 完成」全程，空数组则不显示日志区</td></tr>
           <tr><td><code>min_version</code></td><td>（可选）最低允许版本：当前版本低于它即触发<mark class="key">阻断式强制更新</mark>，与 <code>force_update</code> 任一成立即生效；缺省或留空视为无最低版本约束。强制更新界面的「要求版本号」优先取它，否则回落 <code>version</code></td></tr>
           <tr><td><code>force_update</code></td><td>（可选）版本级强制更新标记：<code>true</code> 时进入阻断式强制更新，不给「稍后升级」出口，典型用于安全/合规紧急修复；缺省 <code>false</code>（有更新可跳过进应用）。<mark class="key">前提仍是清单版本比本地新</mark>——本地已是该版本或更高时无包可升，按「已是最新」处理</td></tr>
-          <tr><td><code>store_url</code></td><td>（可选）应用商店地址：<mark class="key">非空时</mark>强制更新界面才显示「前往应用商店」入口，点击用系统浏览器打开它；留空则不显示该入口，只留「下载升级包」</td></tr>
+          <tr><td><code>store_url</code></td><td>（可选）应用商店地址：<mark class="key">非空时</mark>强制更新界面才显示「前往应用商店」入口，点击前会先过一遍链接校验（见下方提示条）；校验不过则改开本地配置的 <code>homepage</code>；留空则不显示该入口，只留「下载升级包」</td></tr>
         </tbody>
       </table>
     </div>
+    <div class="callout"><b>服务端下发链接的校验：</b><code>store_url</code> 这类地址是远端可控、且可能在<mark class="key">提权后</mark>的进程里被打开的，因此不会直接拼进 <code>cmd /C start</code>。打开前依次要求：可被 URL 解析、协议为 <code>http</code>/<code>https</code>、有主机名、重新序列化后不残留裸 <code>%</code> 转义、不含 <code>&quot; | &lt; &gt; ^</code> 与控制字符。引号、空格会被 URL 归一化（<code>&quot;</code> → <code>%22</code>），环境变量写法与换行会被解析器吃掉，都到不了 shell；任一条不过即拒绝打开。</div>
+    <div class="callout warn"><b>校验闸的时机：</b><code>require_sha256</code>（默认开启）的检查放在<mark class="key">弹 UAC 之前</mark>——先让用户点了「是」再告之「这包装不了」是最差的顺序。</div>
     <div class="callout"><b>强制更新三字段均由服务端下发、客户端无法本地覆盖。</b>低于 <code>min_version</code> 或 <code>force_update=true</code> 时进入 <code>force-update</code> 阶段，用户不能跳过更新直接进入应用。判定顺序：<code>update</code> 开关 → 版本比较 → 是否强制更新 → 否则展示可跳过的新版本界面。</div>
     <div class="callout info"><b>联网与缓存：</b>首检与 <code>--check-only</code> 每次直连服务器；只有界面内「重试 / 错误态重跑」走 5 分钟 TTL 缓存（<code>&lt;配置根&gt;/manifest_cache.json</code>，按 <code>app_name</code> 隔离）。刚发布新版本又命中重试路径时，最长 5 分钟内可能仍读到旧判定。</div>
 
@@ -463,9 +468,10 @@ flowchart TD
     <p>配置了 <code>services</code> 且当前进程未提权时，安装前会先通过 <code>runas</code> 重新拉起自身（触发一次 UAC），由提权后的副本接管后续流程；<mark class="key">未配置服务则完全不弹 UAC</mark>，避免每次更新打扰用户。服务逐个卸载（先停止后卸载），单个失败不中断，卸载后不恢复、不重启。</p>
 
     <h3><span class="no">4.5</span>本地目录布局</h3>
-    <p>根目录默认为 <code>%APPDATA%\&lt;app_name&gt;\</code>（如 <code>C:\Users\&lt;user&gt;\AppData\Roaming\qsm</code>）；若 exe 同目录存在 <code>config/config.toml</code> 或 <code>config.toml</code> 且 <code>[appdata] dir=</code> 配置了合法路径，则用该路径；若运行在 SYSTEM 用户目录，降级到 <code>%LOCALAPPDATA%</code> 或 <code>%PROGRAMDATA%\QsLtdService</code> 下的对应目录。</p>
+    <p>根目录由 <code>src-core/src/appdir.rs</code> 解析（原外部 <code>qingshu</code> 能力的等价复刻，历史安装位置不变）：默认为 <code>%APPDATA%\&lt;app_name&gt;\</code>（如 <code>C:\Users\&lt;user&gt;\AppData\Roaming\qsm</code>，<code>app_name</code> 为空时用固定名 <code>qsltd-update</code>）；若 exe 同目录存在 <code>config/config.toml</code> 或 <code>config.toml</code>（或当前工作目录下的 <code>config.toml</code>）且 <code>[appdata] dir=</code> 配置了合法路径，则<mark class="key">整盘使用该路径，不再拼接 <code>app_name</code></mark>；若运行在 SYSTEM 用户目录，降级到 <code>%LOCALAPPDATA%</code> 或 <code>%PROGRAMDATA%\QsLtdService</code> 下的对应目录。</p>
     <pre><code>&lt;root&gt;/
 ├── app.json              # 本地版本记录（当前版本等）
+├── updater.lock          # 单实例互斥锁：存活期间独占，退出（含被杀）由系统释放
 ├── downloads/            # 下载暂存：完整 zip 与分卷
 │                         #   安装成功后清理；失败保留以便复用
 └── app/
@@ -475,6 +481,7 @@ flowchart TD
       <div class="card feature"><h4>回滚</h4><p>旧版本目录按 max_versions 保留（含当前版本），需要回滚时把启动目标指回旧目录即可。</p></div>
       <div class="card feature"><h4>清理</h4><p>安装成功后先清本次下载缓存（失败不清、便于复用），再按版本从旧到新删除超出 max_versions 的目录，当前版本始终保留。</p></div>
       <div class="card feature"><h4>断点复用</h4><p>下载失败时已校验合格的分卷保留在 downloads/，下次运行直接复用，不重复下载。</p></div>
+      <div class="card feature"><h4>单实例</h4><p>启动时抢占 <code>updater.lock</code>，最多等 5 秒；拿不到就退出，避免两个更新器同时写 app.json、同时清理版本目录。提权交接（父进程 spawn 完提权副本立即退出）不会互锁，<code>--check-only</code> 与 <code>--preview</code> 不取锁。</p></div>
     </div>
 
     <h3><span class="no">4.6</span>界面模板</h3>

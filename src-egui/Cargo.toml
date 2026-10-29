@@ -17,9 +17,8 @@ egui = "0.37"
 # PNG 解码：assets/icon.png → egui::IconData（窗口/任务栏图标）
 png = "0.17"
 tokio = { version = "1", features = ["full"] }
-# 统一能力库（自有封装）：update 模块提供 LocalManifest 本地版本记录与 get_myapp_dir
-qingshu = { path = "../../../qingshu.work/rust/qingshu", features = ["update"] }
 # 共享核心：cli/config/manifest/download/install/cleanup/services + phase/flow（无 UI）
+# 应用目录与本地版本记录（原外部 qingshu 能力）已内聚到 src-core 的 appdir / local_manifest
 qsltd-updater-core = { path = "../src-core" }
 
 [build-dependencies]

@@ -13,6 +13,9 @@ use tokio::io::AsyncWriteExt;
 /// 写失败等本地问题不带这个前缀 —— 换个地址重试能解决，跳官网没用。
 pub const DOWNLOAD_FAIL_PREFIX: &str = "下载失败: ";
 
+/// 本地文件读写的分块大小（SHA256 校验与分卷合并共用）
+const CHUNK_BYTES: usize = 256 * 1024;
+
 /// 下载进度信息
 #[derive(Debug, Clone)]
 pub struct DownloadProgress {
@@ -101,14 +104,42 @@ where
     Ok((dest.to_path_buf(), hex::encode(hasher.finalize())))
 }
 
+/// 分块读取文件算 SHA256（阻塞函数，重活请放进 spawn_blocking）
+///
+/// 不用 `std::fs::read` 一次性读进内存：更新包动辄上百 MB 乃至 GB 级
+/// （线上 qsm 包 2.3 GB），整读等于让更新器在校验那一刻多吃一整个文件的
+/// RSS，还可能直接把低配机器打到 swap。这里固定 256 KB 缓冲流式累加。
+pub fn sha256_of_file(file: &Path) -> Result<String, String> {
+    use std::io::Read;
+
+    let handle = std::fs::File::open(file).map_err(|e| format!("打开文件失败 {}: {}", file.display(), e))?;
+    let mut reader = std::io::BufReader::with_capacity(CHUNK_BYTES, handle);
+    let mut hasher = Sha256::new();
+    let mut buf = vec![0u8; CHUNK_BYTES];
+    loop {
+        let n = reader
+            .read(&mut buf)
+            .map_err(|e| format!("读取文件失败 {}: {}", file.display(), e))?;
+        if n == 0 {
+            break;
+        }
+        hasher.update(&buf[..n]);
+    }
+    Ok(hex::encode(hasher.finalize()))
+}
+
 /// 校验文件 SHA256 是否与期望值一致（期望值为空时跳过校验直接通过）
+///
+/// 「留空即跳过」是刻意保留的底层语义：调用方分两类——单包/分卷的逐卷校验
+/// 只在给了校验值时才走到这里，而**是否允许「没给校验值」由编排层的
+/// `require_sha256` 闸门决定**（见 [`crate::flow`]），校验工具本身不持政策。
+/// 需要「无校验值就拒装」的策略时，请在闸门处拦，别在这里放宽。
 pub fn verify_sha256(file: &Path, expected: &Option<String>) -> Result<(), String> {
     let Some(expected) = expected.as_deref().map(str::trim).filter(|s| !s.is_empty()) else {
         return Ok(());
     };
 
-    let data = std::fs::read(file).map_err(|e| format!("读取文件校验失败: {}", e))?;
-    let actual = hex::encode(Sha256::digest(&data));
+    let actual = sha256_of_file(file)?;
     if actual.eq_ignore_ascii_case(expected) {
         Ok(())
     } else {
@@ -301,7 +332,7 @@ where
         let mut file = tokio::fs::File::open(part)
             .await
             .map_err(|e| format!("打开分卷失败 {}: {}", part.display(), e))?;
-        let mut buf = vec![0u8; 256 * 1024];
+        let mut buf = vec![0u8; CHUNK_BYTES];
         loop {
             let n = file
                 .read(&mut buf)
@@ -416,7 +447,8 @@ mod tests {
 
     #[test]
     fn verify_skipped_when_expected_empty_or_blank() {
-        // 期望值为空/空白：跳过校验直接通过（最终校验阶段的既定语义）
+        // 期望值为空/空白：跳过校验直接通过（底层工具语义；「缺校验值要不要
+        // 拒装」是编排层 require_sha256 闸门的事，不在这里定政策）
         let p = write_temp("empty", b"hello").expect("写临时文件");
         assert!(verify_sha256(&p, &None).is_ok());
         assert!(verify_sha256(&p, &Some(String::new())).is_ok());
@@ -436,6 +468,35 @@ mod tests {
     fn verify_fails_on_missing_file() {
         let p = temp_path("missing", "bin");
         assert!(verify_sha256(&p, &Some(sha_of(b"x"))).is_err());
+    }
+
+    #[test]
+    fn verify_matches_across_chunk_boundaries() {
+        // 流式分块（256 KB）的正确性回归：文件大小刻意取「整数倍 + 跨块尾巴」，
+        // 分块边界算错就不会命中期望值。整读实现能过这个用例纯属巧合，
+        // 换成分块后它是唯一的守门人。
+        let n = CHUNK_BYTES * 2 + CHUNK_BYTES / 3;
+        let payload: Vec<u8> = (0..n).map(|i| (i % 251) as u8).collect();
+        let p = write_temp("chunked", &payload).expect("写大临时文件");
+        assert!(verify_sha256(&p, &Some(sha_of(&payload))).is_ok());
+        // 末尾改一个字节必须露头（校验不是只看长度）
+        let mut tail = std::fs::read(&p).expect("读回");
+        let last = tail.len() - 1;
+        tail[last] ^= 0xFF;
+        std::fs::write(&p, &tail).expect("改写末字节");
+        assert!(verify_sha256(&p, &Some(sha_of(&payload))).is_err());
+        let _ = std::fs::remove_file(&p);
+    }
+
+    #[test]
+    fn sha256_of_file_empty_file() {
+        // 空文件的 SHA256 是固定值，顺手验一下分块循环不会 panic
+        let p = write_temp("zero_len", b"").expect("写空文件");
+        assert_eq!(
+            sha256_of_file(&p).expect("空文件应可校验"),
+            sha_of(b"")
+        );
+        let _ = std::fs::remove_file(&p);
     }
 
     // ---------- merge_parts ----------

@@ -176,6 +176,46 @@ pub fn required_version(manifest: &FlatManifest) -> String {
         .unwrap_or_else(|| manifest.version.clone())
 }
 
+/// 清单里的字符串字段：缺省、纯空白都算「没给」
+fn non_blank(v: Option<&str>) -> Option<&str> {
+    v.map(str::trim).filter(|s| !s.is_empty())
+}
+
+/// 是否给了「整包」SHA256（`sha256` 字段）
+pub fn has_whole_hash(manifest: &FlatManifest) -> bool {
+    non_blank(manifest.sha256.as_deref()).is_some()
+}
+
+/// 生效的整包 SHA256（去空白；未提供返回 None）
+pub fn whole_hash(manifest: &FlatManifest) -> Option<&str> {
+    non_blank(manifest.sha256.as_deref())
+}
+
+/// 分卷模式下的「逐卷都有校验值」是否成立
+///
+/// 成立即等价于 [`crate::download::download_parts`] 真会逐卷校验的前提：
+/// `part_sha256` 与 `parts` **等长且每项非空**。长度对不上时下载层直接
+/// 放弃逐卷校验（见 `part_sha256` 的约定），此时只剩整包校验这一道闸，
+/// 不能算「可验证」。
+pub fn has_full_part_hashes(manifest: &FlatManifest) -> bool {
+    let (Some(parts), Some(hashes)) = (&manifest.parts, &manifest.part_sha256) else {
+        return false;
+    };
+    !parts.is_empty()
+        && hashes.len() == parts.len()
+        && hashes.iter().all(|h| non_blank(Some(h.as_str())).is_some())
+}
+
+/// 这份清单能否验证下载包的完整性
+///
+/// 满足任一即可：整包 `sha256` 非空（单包与分卷合并后的最终校验），或
+/// 分卷模式下每卷都有非空 `part_sha256`（拼接顺序固定，逐卷验过就等于整体验过）。
+/// 两者都拿不到时，更新器对这个包**没有任何完整性证据**——编排层据此在
+/// `require_sha256` 开启时拒绝自动安装（见 [`crate::flow`]）。
+pub fn can_verify_package(manifest: &FlatManifest) -> bool {
+    has_whole_hash(manifest) || has_full_part_hashes(manifest)
+}
+
 // ---------- manifest TTL 缓存 ----------
 
 /// manifest 缓存 TTL：5 分钟。
@@ -220,7 +260,7 @@ pub async fn fetch_with_cache(urls: &[String], app_name: &str) -> Result<FlatMan
 
 /// manifest 缓存文件路径（按 app_name 隔离，避免不同应用的 manifest 互相覆盖）
 fn manifest_cache_path(app_name: &str) -> PathBuf {
-    qingshu::update::get_myapp_dir(Some(app_name)).join("manifest_cache.json")
+    crate::appdir::app_dir(Some(app_name)).join("manifest_cache.json")
 }
 
 /// 读取未过期的缓存（过期/损坏/不存在均返回 None）
@@ -555,5 +595,60 @@ mod tests {
         )
         .expect("应可解析");
         assert_eq!(m.store_url.as_deref(), Some("https://apps.apple.com/app/id123"));
+    }
+
+    // ---------- 包完整性可验证性（require_sha256 闸门的判定依据） ----------
+
+    #[test]
+    fn whole_hash_present_and_trimmed() {
+        let mut m = m("2.0.0", true);
+        assert!(!has_whole_hash(&m));
+        assert!(!can_verify_package(&m));
+
+        m.sha256 = Some("  abc123  ".to_string());
+        assert!(has_whole_hash(&m));
+        assert_eq!(whole_hash(&m), Some("abc123"));
+        assert!(can_verify_package(&m));
+    }
+
+    #[test]
+    fn blank_whole_hash_counts_as_missing() {
+        // 空串/纯空白 = 没给校验值，不能蒙混过闸门
+        let mut m = m("2.0.0", true);
+        m.sha256 = Some("   ".to_string());
+        assert!(!has_whole_hash(&m));
+        assert!(!can_verify_package(&m));
+    }
+
+    #[test]
+    fn part_hashes_qualify_only_when_covering_every_part() {
+        let mut m = m("2.0.0", true);
+        m.parts = Some(vec!["a.zip.001".into(), "a.zip.002".into()]);
+        // 没有 part_sha256 → 整包也没有 → 不可验证
+        assert!(!has_full_part_hashes(&m));
+        assert!(!can_verify_package(&m));
+
+        // 等长且每项非空 → 可验证
+        m.part_sha256 = Some(vec!["aa".into(), "bb".into()]);
+        assert!(has_full_part_hashes(&m));
+        assert!(can_verify_package(&m));
+
+        // 长度对不上：下载层会放弃逐卷校验，此处不得算可验证
+        m.part_sha256 = Some(vec!["aa".into()]);
+        assert!(!has_full_part_hashes(&m));
+
+        // 等长但某项为空串：同上
+        m.part_sha256 = Some(vec!["aa".into(), "  ".into()]);
+        assert!(!has_full_part_hashes(&m));
+    }
+
+    #[test]
+    fn parts_without_whole_hash_still_verifiable() {
+        // 只有整包 sha256 缺失、分卷校验齐全的分卷清单也应放行（线上常见形态）
+        let mut m = m("2.0.0", true);
+        m.parts = Some(vec!["p.001".into()]);
+        m.part_sha256 = Some(vec!["aa".into()]);
+        assert!(!has_whole_hash(&m));
+        assert!(can_verify_package(&m));
     }
 }

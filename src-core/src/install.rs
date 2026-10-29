@@ -4,7 +4,7 @@ use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use std::io::Read as _; // Read::take（流式截断，防 zip bomb 闸 2）
 
-use qingshu::update::LocalManifest;
+use crate::local_manifest::LocalManifest;
 
 /// 安装阶段回调：接收中文消息与可选进度百分比（0-100）
 pub type StageCallback = Arc<dyn Fn(&str, Option<f64>) + Send + Sync>;
@@ -161,10 +161,8 @@ pub async fn save_local_manifest(
         None,
         None,
     );
-    manifest
-        .save(path)
-        .await
-        .map_err(|e| format!("保存本地版本记录失败 {}: {}", path.display(), e))
+    // 错误信息已由 [`LocalManifest::save`] 带上目标路径，此处不再重复拼接
+    manifest.save(path).await
 }
 
 /// 解压总量硬顶：8GB。

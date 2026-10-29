@@ -23,8 +23,9 @@ futures-util = "0.3"
 sha2 = "0.10"
 hex = "0.4"
 zip = "2"
-# 统一能力库（自有封装）：update 模块提供 LocalManifest 本地版本记录与 get_myapp_dir
-qingshu = { path = "../../../qingshu.work/rust/qingshu", features = ["update"] }
+# 本地版本记录（app.json）时间戳：与旧 qingshu 实现同格式（UTC 秒级 RFC3339）
+# default-features=false 只保留时钟所需的最小依赖面
+chrono = { version = "0.4", default-features = false, features = ["clock"] }
 
 # 注意：unused_imports / unused_variables / dead_code 是 rustc lint，
 # 必须放在 [lints.rust]；放进 [lints.clippy] 会触发 unknown lint 警告且不生效

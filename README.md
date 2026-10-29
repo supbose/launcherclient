@@ -20,6 +20,8 @@ launcherclient/
 ├── src-core/              # 共享核心库（无 UI，可被任何外壳复用）
 │   └── src/  cli.rs config.rs defaults.rs manifest.rs
 │              download.rs install.rs cleanup.rs services.rs
+│              appdir.rs local_manifest.rs instance.rs
+│              elevation.rs shell.rs client.rs
 │              phase.rs flow.rs
 ├── src-egui/              # 启动器主程序（egui 0.37）
 │   ├── src/    main.rs app.rs templates.rs widgets.rs theme.rs preview.rs
@@ -48,7 +50,7 @@ launcherclient/
 | 操作系统 | Windows（exe 图标/版本资源由 `rc.exe` 嵌入；Linux/macOS 可编译但跳过资源嵌入） |
 | Rust | ≥ 1.95（egui/eframe 0.37 的 `rust-version` 为 1.95），本机验证 1.97 |
 | 工具链 | MSVC（`x86_64-pc-windows-msvc`）+ Windows SDK，需提供 `rc.exe` |
-| 本地依赖 | 自有能力库 `qingshu`，以相对路径引用：`../../../qingshu.work/rust/qingshu`（即 `D:\WorkspaceProject\cnb\qingshu.work\rust\qingshu`，需开启 `update` feature）。**该目录必须存在**，否则两个 crate 都无法编译 |
+| 外部依赖 | **无仓库外依赖**。原以相对路径引用的自研能力库 `qingshu`（`../../../qingshu.work/rust/qingshu`）已于 2026-10-30 移除，其用到的两项能力复刻进本仓库：应用数据目录解析 `src-core/src/appdir.rs`、本地版本记录 `app.json` `src-core/src/local_manifest.rs`。克隆后即可直接 `cargo build`，无需再准备同级目录 |
 | 包管理器 | pnpm（仅用于运行 `package.json` 里的构建脚本，也可直接 `cargo`） |
 
 ---
@@ -120,7 +122,7 @@ pnpm qsm:release --name MyApp --app-name myapp --manifest-url https://a.cdn.myap
 ```
 launcherclient.exe [--app-name <名称>] [--name <标题>] [--launch <目标程序路径>]
                    [--manifest <manifest地址>] [--current-version <版本>]
-                   [--template <A~H>] [--check-only]
+                   [--template <A~H>] [--check-only] [--allow-missing-sha256]
                    [--preview [--stage <0-10|名称>]]
 ```
 
@@ -133,6 +135,7 @@ launcherclient.exe [--app-name <名称>] [--name <标题>] [--launch <目标程�
 | `--current-version` | 强制指定当前版本，覆盖本地 app.json | 自动探测 |
 | `--template` | 启动器界面模板 A~H（大小写不敏感，见 4.7） | 未给时取 update.json 的 `launcher_template`，再回落编译期烘焙值（无烘焙即 `F`） |
 | `--check-only` | 纯检测：不建窗、不下载、不拉起目标程序，按退出码结束（见下表） | 关闭 |
+| `--allow-missing-sha256` | 放行「清单没给 SHA256」的更新包，关闭 `require_sha256` 校验闸（见 4.3）。仅在服务端确实无法提供校验值时临时使用 | 关闭（即校验闸开启） |
 | `--preview` / `--stage` | 仅 src-egui：本地预览八套布局与各阶段画面，不联网 | 关闭 |
 
 未知参数只打印告警并忽略，不会中断启动。
@@ -166,6 +169,7 @@ launcherclient.exe [--app-name <名称>] [--name <标题>] [--launch <目标程�
 | `launcher_template` | 字符串 | 界面模板 A~H，大小写不敏感；留空或未知值回落默认 `F`（未知值会在 stderr 告警，不会白屏） |
 | `homepage` | 字符串 | 官网首页地址；下载/合并环节的自动重试用尽后，错误态出现「前往官网重新下载」按钮，点击用系统浏览器打开这里。留空则用内置默认 `https://launcherclient.qsw.us.ci/`（构建期 `--homepage` 烘焙值优先） |
 | `retry_times` | 数字 | 同一环节的自动重试次数（**含首次尝试**），默认 `3` = 首次 + 自动重试 2 次。下载与解压校验各自独立计数；写 `0` 视为 `1`（只试一次），上限 `10` |
+| `require_sha256` | 布尔 | **包完整性校验闸，默认开启**。开启时若清单既没有整包 `sha256`、分卷模式的 `part_sha256` 也没和 `parts` 一一对齐，则在弹 UAC 之前直接拒绝安装，错误态提示改走官网下载。写 `false`（或加命令行 `--allow-missing-sha256`）可放行无校验值的包——只建议在内网/自建源这类链路可信的环境使用。缺省即 `true`，无需显式写 |
 
 示例：
 
@@ -183,7 +187,8 @@ launcherclient.exe [--app-name <名称>] [--name <标题>] [--launch <目标程�
   "services": ["QsmServer"],
   "launcher_template": "C",
   "homepage": "https://www.qcsm.ltd",
-  "retry_times": 3
+  "retry_times": 3,
+  "require_sha256": true
 }
 ```
 
@@ -199,19 +204,28 @@ launcherclient.exe [--app-name <名称>] [--name <标题>] [--launch <目标程�
 | `update` | 否，默认 `true` | 更新总闸。`false` 时一律视为无更新——**`force_update` / `min_version` 同时失效**，启动器静默拉起目标程序 |
 | `url` | 单包模式必填 | 完整 zip 下载地址。单包模式下留空直接报错「manifest 缺少 url 字段（单包模式必填）」，不进入自动重试（重试解决不了配置问题） |
 | `parts` | 分卷模式必填 | 分卷地址数组（`.zip.001/.002/...`，按序拼接为完整 zip）。**非空即走分卷，`url` 被忽略**；两种模式随时可切，客户端自动识别 |
-| `part_sha256` | 否 | 各卷 SHA256。与 `parts` **等长**时逐卷校验，长度不符则不做逐卷校验；已下载且校验合格的卷在重跑时自动复用，不重复下载 |
-| `sha256` | 强烈建议 | 合并后完整 zip 的 SHA256（十六进制，大小写不敏感），下载结束后再整体复核一次。留空 = 跳过整体校验，**并禁用「复用已下载包」**——否则上次中断的半包会被当成完整包直接安装 |
+| `part_sha256` | 分卷模式建议必填 | 各卷 SHA256。与 `parts` **等长且每项非空**时逐卷校验，长度不符或留有空项则不做逐卷校验；已下载且校验合格的卷在重跑时自动复用，不重复下载。分卷模式下这份「齐全」的数组即可满足 `require_sha256` 闸（见 4.3），无需再给整包 `sha256` |
+| `sha256` | **默认必填** | 合并后完整 zip 的 SHA256（十六进制，大小写不敏感），下载结束后整体复核一次；校验按 256 KB 分块流式计算，GB 级包也不会把哈希读进内存。留空 = 跳过整体校验，**并禁用「复用已下载包」**（否则上次中断的半包会被当成完整包直接安装）；在 `require_sha256` 开启时（默认），`sha256` 与齐备的 `part_sha256` **两者都没有 → 直接拒绝安装**，需要放行得显式写 `"require_sha256": false` 或加 `--allow-missing-sha256` |
 | `size_bytes` | 否 | 完整包字节数（等于各分卷之和）。**分卷模式**下作为整体进度的分母（单包模式用 HTTP `Content-Length`，不读此字段）；留空时分卷界面只有已下载字节、没有百分比与剩余时间 |
 | `release_date` | 否 | 发布时间（ISO 8601，`pkgtool` 写入打包时刻的 UTC 时间）。客户端只解析留存，界面不展示 |
 | `changelog` | 否 | 更新日志字符串数组，逐条展示。拉到清单后即登记，「发现新版本 → 下载 → 校验 → 安装 → 完成」全程可见；空数组则界面不出现日志区 |
 | `force_update` | 否，默认 `false` | 版本级强制更新标记。`true` 时进入**阻断式**强制更新界面，没有「稍后升级」出口。前提仍是清单 `version` 比本地新——本地已是该版本或更高时无包可升，按「已是最新」处理 |
 | `min_version` | 否 | 最低允许版本。当前版本低于它即触发阻断式强制更新，与 `force_update` **任一成立即生效**；留空/缺失 = 不设门槛。强制更新界面显示的「要求版本号」优先取它，否则回落 `version` |
-| `store_url` | 否 | 应用商店地址。**非空时**强制更新界面才出现「前往应用商店」按钮，点击用系统默认浏览器打开它；留空则不显示该入口，只留「下载升级包」 |
+| `store_url` | 否 | 应用商店地址。**非空时**强制更新界面才出现「前往应用商店」按钮，点击用系统默认浏览器打开它；留空则不显示该入口，只留「下载升级包」。打开前会先过一遍校验（见下方「服务端下发链接的校验」），不合格的地址不会送去 shell，而是改开本地配置的 `homepage` |
 
 `min_version` / `force_update` / `store_url` 三个强制更新字段**只由服务端下发**，本地 `update.json` 无法覆盖（写进去也不生效）。
 
+**服务端下发链接的校验**（`shell::sanitize_url`）：这些字符串是远端可控、且可能落到**提权后**的进程里的，
+所以不直接拼进 `cmd /C start`。打开前依次要求：能被 URL 解析、协议是 `http`/`https`、有主机名、
+重新序列化后不残留裸 `%` 转义、不含 `"` `|` `<` `>` `^` 与控制字符。引号、空格、反斜杠这类会被
+URL 归一化（`"` → `%22`），环境变量写法与换行会被解析器吃掉，因此它们到不了 shell。任一条不过即拒绝打开，
+`store_url` 的降级动作是改开本地配置的官网首页并在 stderr 记录原因。
+
+**校验闸的时机**：`require_sha256` 的检查放在**弹 UAC 之前**——先让用户点了「是」再告之「这包装不了」是最差的顺序。
+
 > 对照线上清单（`qsm 0.4.37`）：它同时写了 `url` 与 `parts` / `part_sha256`，因为 `parts` 非空，
 > 客户端实际走的是**分卷下载**，`url` 只作为手动下载/兜底入口存在——这种「双写」是允许的，不是配置冲突。
+> 它也同时给了整包 `sha256` 与 28 条齐备的 `part_sha256`，所以默认开启的 `require_sha256` 闸不影响现网发布。
 
 **判定顺序**（`flow::run_startup`）：`update` 开关 → 版本比较 → 是否触发强制更新（`min_version` 或 `force_update`）→ 否则展示「发现新版本，可稍后升级」。
 
@@ -246,15 +260,16 @@ launcherclient.exe [--app-name <名称>] [--name <标题>] [--launch <目标程�
 
 ### 4.6 本地目录布局
 
-根目录 = `qingshu::update::get_myapp_dir(app_name)`：
+根目录 = `qsltd_updater_core::appdir::app_dir(app_name)`（原 `qingshu::update::get_myapp_dir` 的等价复刻，行为逐条对齐，历史安装位置不变）：
 
-- 默认：`%APPDATA%\<app_name>\`（如 `C:\Users\<user>\AppData\Roaming\qsm`）
-- 若 exe 同目录存在 `config/config.toml` 或 `config.toml` 且 `[appdata] dir=` 配置了合法路径，则用该路径
-- 若运行在 SYSTEM 用户目录，降级到 `%LOCALAPPDATA%\<app_name>` 或 `%PROGRAMDATA%\QsLtdService\<app_name>`
+- 默认：`%APPDATA%\<app_name>\`（如 `C:\Users\<user>\AppData\Roaming\qsm`）；`app_name` 为空时用固定名 `qsltd-update`
+- 若 exe 同目录存在 `config/config.toml` 或 `config.toml`（或当前工作目录下的 `config.toml`）且 `[appdata] dir=` 配置了合法路径，则**整盘使用该路径**（不再拼接 `app_name`）；指向 SYSTEM 账户目录的配置视为无效，继续走默认解析
+- 若运行在 SYSTEM 用户目录，降级到 `%LOCALAPPDATA%\<app_name>` 或 `%PROGRAMDATA%\QsLtdService\<app_name>`，都取不到时退回当前工作目录
 
 ```
 <root>/
 ├── app.json              # 本地版本记录（当前版本等）
+├── updater.lock          # 单实例互斥锁：进程存活期间独占打开，退出（含被杀/崩溃）由系统释放
 ├── manifest_cache.json   # manifest 的 5 分钟 TTL 缓存（仅「重试」路径读取，按 app_name 隔离）
 ├── downloads/            # 下载暂存：完整 zip（update_<版本>.zip）与分卷（安装成功后清理，失败保留以便复用）
 └── app/
@@ -263,6 +278,9 @@ launcherclient.exe [--app-name <名称>] [--name <标题>] [--launch <目标程�
     └── _del_app_2.1.0/   # 删除失败（目录被占用）的残留，下次启动再清
 ```
 
+- **单实例**：启动时抢占 `<root>/updater.lock`（Windows 下以 `share_mode(0)` 独占打开），最多等 5 秒；
+  拿不到就打日志直接退出，避免两个更新器同时写 `app.json`、同时清理版本目录。提权交接（父进程 spawn 完提权副本
+  立刻退出）因此不会互锁，锁文件由 OS 回收，崩溃残留也不会留下「永远打不开」的死锁。`--check-only` 与 `--preview` 不取锁。
 - **回滚**：旧版本目录按 `max_versions` 保留（含当前版本），需要回滚时把启动目标指回旧目录即可。
 - **清理**：安装成功后清理本次下载缓存（失败不清理，便于重跑复用），再按版本从旧到新删除超出 `max_versions` 的目录，当前版本目录始终保留。
 - **服务**：`services` 中的服务在**安装前**逐个卸载（先停止后卸载，单个失败不中断），卸载后不恢复不重启。
@@ -382,7 +400,9 @@ cd src-pkgtool && cargo test
 - `version.rc` / `icon.rc` 中的公司名、产品名、版本号是 Windows 资源硬编码字段，改动后需重新构建；改版本号推荐走 `pnpm egui:build`。
 - release 构建会 `strip` 符号并关闭 panic 位置信息，用于减小体积、降低杀软启发式误报。
 - `src-pkgtool` 的 release profile 刻意放宽了 LTO 与优化级别（`opt-level = 2` / `lto = false`），以规避特定环境下编译 `windows-sys` 的偶发崩溃；`src-egui` 保持 `opt-level = 3` + LTO。
-- 更新器只做「下载 → 校验 → 解压 → 拉起」，不做包签名校验；分发链路请自行保证 HTTPS 与 CDN 可信。
+- 更新器只做「下载 → 校验 → 解压 → 拉起」，**不做包签名校验**；分发链路请自行保证 HTTPS 与 CDN 可信。
+  `require_sha256`（默认开启）挡住的是「传输损坏 + 无完整性证据的包」，不是伪造者——他能同时改掉服务器上的包和哈希，
+  SHA256 就形同不存在。真正的来源可信只能靠 HTTPS 证书链与代码签名。
 - 打包工具目前不含：文件 diff 勾选/筛选、发布通道概念、压缩级别与 SHA-256 开关、构建历史持久化与回滚、日志级别筛选。
 
 ---

@@ -74,6 +74,11 @@ pub struct UpdateSettings {
     /// 缺省用 [`defaults::DEFAULT_RETRY_TIMES`]，0 或 1 视为只试一次
     #[serde(default)]
     pub retry_times: Option<u32>,
+    /// 是否要求服务端清单提供包完整性校验值（缺省 = true = 要求）。
+    /// 显式 `false` 才放行「没给 SHA256 的包」，命令行 `--allow-missing-sha256`
+    /// 是同义出口；判定见 [`resolve_require_sha256`]。
+    #[serde(default)]
+    pub require_sha256: Option<bool>,
 }
 
 impl UpdateSettings {
@@ -113,6 +118,22 @@ pub fn resolve_retry_times(specified: Option<u32>) -> u32 {
         Some(0) => 1,
         Some(n) => n.min(10),
     }
+}
+
+/// 解析「清单必须提供包完整性校验值」开关的生效值
+///
+/// 默认**开启**：更新器是自替换、可能提权的程序，没有 SHA256 就对下载来的
+/// 包毫无完整性证据，装坏包/装被动过手脚的包的代价远高于「服务器忘了填」。
+/// 两条关得掉的路（都只用于自建/内网这类服务器与链路都可信的环境）：
+/// - 命令行 `--allow-missing-sha256`
+/// - update.json `"require_sha256": false`
+///
+/// 命令行只能**关**不能开（它本身就是「allow-missing」），配置项缺省按 true 处理。
+pub fn resolve_require_sha256(cli_allows_missing: bool, settings: Option<bool>) -> bool {
+    if cli_allows_missing {
+        return false;
+    }
+    settings.unwrap_or(true)
 }
 
 /// max_versions 默认值：当前版本 + 1 个旧版本（回滚资产）；构建期可经 QSLTD_MAX_VERSIONS 覆盖
@@ -233,7 +254,8 @@ fn generate_default_template(dir: &std::path::Path) -> bool {
             "services": "更新前需卸载的 Windows 服务名数组；运行中的先停止后卸载，卸载后不恢复不重启",
             "launcher_template": "启动器界面模板，可选 A~H（大小写不敏感）：A 信息密度 · B 环形居中 · C 顶部步骤条 · D 极简留白 · E 日志为主 · F 环形步骤 · G 品牌沉浸 · H 极简轻量；留空或未知值用默认 F",
             "homepage": "官网首页地址；下载地址全部失败时界面上的「前往官网」按钮跳这里，留空用内置默认",
-            "retry_times": "同一环节（下载 / 解压校验）的自动重试次数（含首次尝试），默认 3：失败后自动再试 2 次，仍失败才提示前往官网重新下载"
+            "retry_times": "同一环节（下载 / 解压校验）的自动重试次数（含首次尝试），默认 3：失败后自动再试 2 次，仍失败才提示前往官网重新下载",
+            "require_sha256": "是否要求服务器清单提供包完整性校验值，默认 true：整包 sha256 缺失且分卷 part_sha256 也没给齐时拒绝自动安装。自建/内网等可信环境确需放行时设为 false（等价于命令行 --allow-missing-sha256）"
         },
         "manifest_url": defaults::DEFAULT_MANIFEST_URLS,
         "app_name": defaults::DEFAULT_APP_NAME,
@@ -246,7 +268,10 @@ fn generate_default_template(dir: &std::path::Path) -> bool {
         "services": defaults::DEFAULT_SERVICES,
         "launcher_template": defaults::DEFAULT_LAUNCHER_TEMPLATE,
         "homepage": defaults::DEFAULT_HOMEPAGE,
-        "retry_times": defaults::DEFAULT_RETRY_TIMES
+        "retry_times": defaults::DEFAULT_RETRY_TIMES,
+        // 显式写出默认值：这条开关关掉就是放弃包完整性校验，写在配置里比
+        // 藏在「缺省即 true」里更容易被接手的人看见
+        "require_sha256": true
     });
     let Ok(content) = serde_json::to_string_pretty(&template) else {
         eprintln!("[配置] 默认模板序列化失败");
@@ -367,6 +392,33 @@ mod tests {
         let s: UpdateSettings = serde_json::from_str("{}").expect("空配置应可解析");
         assert!(s.launcher_template().is_none());
         assert_eq!(resolve_launcher_template(s.launcher_template().as_deref()), "F");
+    }
+
+    // ---------- require_sha256（包完整性闸门） ----------
+
+    #[test]
+    fn require_sha256_absent_means_on() {
+        // 缺省即要求：老 update.json 一个字没改，也自动获得这层保护
+        let s: UpdateSettings = serde_json::from_str("{}").expect("空配置应可解析");
+        assert!(s.require_sha256.is_none());
+        assert!(resolve_require_sha256(false, s.require_sha256));
+    }
+
+    #[test]
+    fn require_sha256_explicit_false_disables() {
+        let s: UpdateSettings =
+            serde_json::from_str(r#"{"require_sha256": false}"#).expect("应可解析");
+        assert_eq!(s.require_sha256, Some(false));
+        assert!(!resolve_require_sha256(false, s.require_sha256));
+    }
+
+    #[test]
+    fn require_sha256_cli_escape_hatch_overrides_config_true() {
+        // 命令行只用来「放行」：写了 --allow-missing-sha256 就关，配置写 true 也不再强开
+        assert!(!resolve_require_sha256(true, Some(true)));
+        assert!(!resolve_require_sha256(true, None));
+        // 反过来不行：命令行没有强开语义
+        assert!(resolve_require_sha256(false, None));
     }
 
     #[test]
