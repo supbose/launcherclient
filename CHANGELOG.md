@@ -16,6 +16,12 @@
 
 
 
+
+## v0.2.1 (2026-10-30)
+### 🚀 新增功能
+
+- [3db78f3](/-/commit/3db78f39274aa55ac621e79964161e76e8e9d5e2) 新增(src-core): 内聚自研能力库，新增单实例互斥与包完整性校验机制 (README.md, launcherclient-guide/launcherclient-guide.html, src-core/Cargo.lock, src-core/Cargo.toml, src-core/src/appdir.rs, src-core/src/cli.rs, src-core/src/config.rs, src-core/src/download.rs, src-core/src/elevation.rs, src-core/src/flow.rs, src-core/src/install.rs, src-core/src/instance.rs, src-core/src/lib.rs, src-core/src/local_manifest.rs, src-core/src/manifest.rs, src-core/src/shell.rs, src-egui/Cargo.lock, src-egui/Cargo.toml, src-egui/src/main.rs, update.json)
+
 ## v0.2.0 (2026-10-30)
 ## v0.1.39 (2026-10-30)
 ### 🚀 新增功能
