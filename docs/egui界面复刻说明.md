@@ -76,7 +76,7 @@
 
 | 项 | Tauri/Vue | egui | 一致性 |
 | --- | --- | --- | --- |
-| 窗口标题 | 更新程序 | `theme::WINDOW_TITLE` | 一致 |
+| 窗口标题 | `tauri.conf.json` 静态标题（Vue 侧标题栏左侧不显示文字） | 运行时解析 `config::resolve_launcher_name`（`--name` > update.json `name` > 烘焙默认 `defaults::DEFAULT_LAUNCHER_NAME`），同一值喂给 `ViewportBuilder::with_title` 与自绘标题栏 `widgets::draw_titlebar` | egui 侧多显示一段标题文字（有意增强） |
 | 客户区尺寸 | 440 × 420 | `WINDOW_SIZE = (440.0, 420.0)` | 一致 |
 | 预览窗口高度 | 590（`preview.html`） | 420 + `PREVIEW_EXTRA_HEIGHT(150)` | 一致 |
 | 标题栏 | `.min-title-bar` 高 32px，`padding-top:32px` | `TITLEBAR_HEIGHT = 32.0` | 一致 |

@@ -249,6 +249,7 @@ mod tests {
     fn cfg_with_services(services: &[&str]) -> ResolvedConfig {
         ResolvedConfig {
             app_name: "test".to_string(),
+            launcher_name: "启动器".to_string(),
             manifest_urls: vec![],
             launch: None,
             max_versions: 3,

@@ -62,20 +62,28 @@ fn main() {
     let phase = PhaseHandle::new();
 
     if preview_mode {
+        // 预览模式不读 update.json（避免在预览目录里生成配置模板），
+        // 标题只走「命令行 --name > 编译期烘焙默认」两级
+        let title = qsltd_updater_core::config::resolve_launcher_name(
+            args.launcher_name.as_deref(),
+            None,
+        );
         run_ui(
             &args,
             phase,
             Arc::new(Mutex::new(None)),
             true,
             preview_stage,
+            &title,
         );
         return;
     }
 
     let cfg = flow::resolve_config(&args);
     eprintln!(
-        "[更新器] 启动，应用: {}，界面模板: {}，manifest 地址 {} 个: {}",
+        "[更新器] 启动，应用: {}，标题: {}，界面模板: {}，manifest 地址 {} 个: {}",
         cfg.app_name,
+        cfg.launcher_name,
         cfg.template,
         cfg.manifest_urls.len(),
         cfg.manifest_urls.join(" → ")
@@ -111,19 +119,22 @@ fn main() {
             .ok();
     }
 
-    run_ui(&args, phase, startup, false, 0);
+    run_ui(&args, phase, startup, false, 0, &cfg.launcher_name);
 }
 
 /// 进入 eframe 事件循环
 ///
 /// - `phase`: 共享阶段快照（真实模式已含首帧阶段；预览模式为空）
 /// - `preview`: true 时渲染模板/阶段切换面板（复刻 Preview.vue）
+/// - `title`: 生效标题（`--name` > update.json `name` > 编译期烘焙默认），
+///   同时用于系统窗口标题与自绘标题栏左侧文字
 fn run_ui(
     args: &CliArgs,
     phase: PhaseHandle,
     startup: Arc<Mutex<Option<StartupDecision>>>,
     preview: bool,
     preview_stage: usize,
+    title: &str,
 ) {
     // 生效模板：命令行 --template > 默认（F）；预览模式可在面板里切换
     let template = qsltd_updater_core::phase::resolve_template_key(
@@ -138,7 +149,7 @@ fn run_ui(
     let native_options = eframe::NativeOptions {
         viewport: {
             let viewport = egui::ViewportBuilder::default()
-                .with_title(app::WINDOW_TITLE)
+                .with_title(title)
                 .with_inner_size([app::WINDOW_SIZE.0, window_h])
                 .with_resizable(false)
                 .with_decorations(false)
@@ -155,12 +166,22 @@ fn run_ui(
         ..Default::default()
     };
 
+    // 标题栏文字用一份 owned 标题（闭包 move 进 UpdaterApp），系统窗口标题/
+    // eframe app_name 直接用形参 `title` 的借用，避免同一值既借又移
+    let app_name = title.to_string();
     let result = eframe::run_native(
-        app::WINDOW_TITLE,
+        title,
         native_options,
         Box::new(move |cc| {
-            Ok(Box::new(app::UpdaterApp::new(cc, phase, startup, template, preview, preview_stage))
-                as Box<dyn eframe::App>)
+            Ok(Box::new(app::UpdaterApp::new(
+                cc,
+                phase,
+                startup,
+                template,
+                preview,
+                preview_stage,
+                app_name,
+            )) as Box<dyn eframe::App>)
         }),
     );
     if let Err(e) = result {

@@ -6,6 +6,7 @@
 //! {
 //!   "manifest_url": "https://qsw.us.ci/update/qsm/version.json",
 //!   "app_name": "qsm",
+//!   "name": "启动器",
 //!   "launch": "目标程序.exe",
 //!   "current_version": "2.1.1"
 //! }
@@ -45,6 +46,10 @@ pub struct UpdateSettings {
     /// 应用名称，决定配置/下载/安装目录
     #[serde(default)]
     pub app_name: Option<String>,
+    /// 启动器标题：标题栏左侧文字与系统窗口标题。
+    /// 留空（或整项缺失）用 exe 编译期烘焙的默认标题（`--name` 构建参数）
+    #[serde(default)]
+    pub name: Option<String>,
     /// 更新完成后要拉起的目标程序路径
     #[serde(default)]
     pub launch: Option<String>,
@@ -84,6 +89,18 @@ impl UpdateSettings {
             .filter(|v| !v.is_empty())
             .map(|v| v.to_ascii_uppercase())
     }
+
+    /// 生效的启动器标题原值（未归一长度）
+    ///
+    /// 只做去首尾空白与「空串视为未配置」，与 `launch`/`current_version` 的
+    /// `""` 语义一致；换行剔除与长度上限由 [`resolve_launcher_name`] 负责。
+    pub fn launcher_name(&self) -> Option<String> {
+        self.name
+            .as_deref()
+            .map(str::trim)
+            .filter(|v| !v.is_empty())
+            .map(str::to_string)
+    }
 }
 
 /// 解析生效的自动重试次数（含首次尝试）
@@ -106,6 +123,47 @@ pub const DEFAULT_MAX_VERSIONS: usize = match defaults::BUILD_MAX_VERSIONS {
 
 /// 合法启动器界面模板键（与 `src-egui/src/templates.rs` 下的八套布局一一对应）
 pub const VALID_LAUNCHER_TEMPLATES: &[&str] = &["A", "B", "C", "D", "E", "F", "G", "H"];
+
+/// 启动器标题最长字符数（按字符计，中文算 1 个）
+///
+/// 与 `scripts/pybuild.py` 的 `LAUNCHER_NAME_MAX` 同值：标题栏单行可容纳上限，
+/// 超出即截断（界面侧再按可用宽度以省略号收尾，不挤压右侧按钮）。
+pub const LAUNCHER_NAME_MAX: usize = 64;
+
+/// 解析生效的启动器标题：命令行 `--name` > update.json `name` > 编译期烘焙默认
+///
+/// - 两者优先级在此集中（命令行显式给了非空值才压过配置文件），
+///   归一规则见下；两者都没给 → [`defaults::DEFAULT_LAUNCHER_NAME`]
+///   （构建期 `pybuild.py --name` 烘焙值，未烘焙即「启动器」）
+/// - 换行与制表符剔除（标题是单行文本，配置手滑不该让标题栏断行）
+/// - 超过 [`LAUNCHER_NAME_MAX`] 字符 → 截断并告警（写错长度不该顶掉关闭按钮）
+pub fn resolve_launcher_name(cli: Option<&str>, file: Option<&str>) -> String {
+    let from_cli = cli.map(str::trim).filter(|v| !v.is_empty());
+    let Some(raw) = from_cli.or(file).map(str::trim).filter(|v| !v.is_empty()) else {
+        return defaults::DEFAULT_LAUNCHER_NAME.to_string();
+    };
+    let cleaned: String = raw
+        .chars()
+        .filter(|c| !matches!(c, '\r' | '\n' | '\t'))
+        .collect();
+    let cleaned = cleaned.trim();
+    if cleaned.is_empty() {
+        eprintln!(
+            "[配置] 启动器标题只有空白字符，回落到内置默认「{}」",
+            defaults::DEFAULT_LAUNCHER_NAME
+        );
+        return defaults::DEFAULT_LAUNCHER_NAME.to_string();
+    }
+    if cleaned.chars().count() > LAUNCHER_NAME_MAX {
+        let truncated: String = cleaned.chars().take(LAUNCHER_NAME_MAX).collect();
+        eprintln!(
+            "[配置] 启动器标题超过 {} 字符，已截断为 {:?}",
+            LAUNCHER_NAME_MAX, truncated
+        );
+        return truncated;
+    }
+    cleaned.to_string()
+}
 
 /// 解析生效的启动器界面模板：命令行 > update.json > 内置默认
 ///
@@ -168,6 +226,7 @@ fn generate_default_template(dir: &std::path::Path) -> bool {
         "_说明": {
             "manifest_url": "服务器 version.json 地址；数组表示按序故障转移，第一个失败自动切换下一个",
             "app_name": "应用名称，决定配置/下载/安装目录（%APPDATA%\\<app_name>）",
+            "name": "启动器标题（标题栏左侧文字与系统窗口标题）；留空用 exe 内置标题（构建期 --name 烘焙，默认「启动器」），单行、最长 64 字符",
             "launch": "更新完成后拉起的目标程序；相对路径按安装目录解析；留空则自动定位安装目录中的主程序拉起（文件名与应用名匹配者优先）",
             "current_version": "强制指定当前版本；留空自动从本地 app.json 探测",
             "max_versions": "保留的版本目录数量（含当前版本，旧目录即回滚资产），默认 2",
@@ -178,6 +237,9 @@ fn generate_default_template(dir: &std::path::Path) -> bool {
         },
         "manifest_url": defaults::DEFAULT_MANIFEST_URLS,
         "app_name": defaults::DEFAULT_APP_NAME,
+        // 标题留空 = 跟随 exe 内置值：换一版烘焙了 --name 的 exe 覆盖安装后，
+        // 老目录里的 update.json 不会把旧标题钉死（与 current_version 的留空语义一致）
+        "name": "",
         "launch": format!("{}.exe", defaults::DEFAULT_APP_NAME),
         "current_version": "",
         "max_versions": DEFAULT_MAX_VERSIONS,
@@ -380,6 +442,87 @@ mod tests {
         // 没配就是 None，由 resolve_config 回落到 DEFAULT_HOMEPAGE
         let s: UpdateSettings = serde_json::from_str("{}").expect("解析");
         assert!(s.homepage.is_none());
+    }
+
+    #[test]
+    fn launcher_name_field_parsed() {
+        let s: UpdateSettings =
+            serde_json::from_str(r#"{"name": "青杉应用中心"}"#).expect("解析");
+        assert_eq!(s.launcher_name().as_deref(), Some("青杉应用中心"));
+        // 未配置 / 空串 / 全空白都视为「跟随 exe 内置标题」
+        assert!(UpdateSettings::default().launcher_name().is_none());
+        let s: UpdateSettings = serde_json::from_str(r#"{"name": ""}"#).expect("解析");
+        assert!(s.launcher_name().is_none());
+        let s: UpdateSettings = serde_json::from_str(r#"{"name": "   "}"#).expect("解析");
+        assert!(s.launcher_name().is_none());
+    }
+
+    #[test]
+    fn launcher_name_absent_falls_back_to_baked_default() {
+        assert_eq!(
+            resolve_launcher_name(None, None),
+            defaults::DEFAULT_LAUNCHER_NAME.to_string()
+        );
+        assert_eq!(
+            resolve_launcher_name(Some(""), Some("")),
+            defaults::DEFAULT_LAUNCHER_NAME.to_string()
+        );
+    }
+
+    #[test]
+    fn launcher_name_explicit_wins_and_trims() {
+        assert_eq!(resolve_launcher_name(Some("My App"), None), "My App");
+        assert_eq!(resolve_launcher_name(None, Some("  青杉启动器 \n")), "青杉启动器");
+    }
+
+    #[test]
+    fn launcher_name_priority_command_line_over_update_json() {
+        // 命令行 > update.json > 烘焙默认（与 --template / manifest_url 同构）
+        assert_eq!(
+            resolve_launcher_name(Some("命令行标题"), Some("配置文件标题")),
+            "命令行标题"
+        );
+        assert_eq!(
+            resolve_launcher_name(None, Some("配置文件标题")),
+            "配置文件标题"
+        );
+        // 命令行只给了空白 = 没给，仍取配置文件值
+        assert_eq!(
+            resolve_launcher_name(Some("   "), Some("配置文件标题")),
+            "配置文件标题"
+        );
+    }
+
+    #[test]
+    fn launcher_name_strips_line_breaks_keeps_single_line() {
+        // 标题只有一行：配置里混进换行/制表符要剔除，不能让标题栏断行
+        assert_eq!(resolve_launcher_name(None, Some("青杉\r\n应用中心")), "青杉应用中心");
+        assert_eq!(resolve_launcher_name(Some("A\tB"), None), "AB");
+        // 剔完只剩空白 → 回落内置默认
+        assert_eq!(
+            resolve_launcher_name(None, Some("\r\n\t ")),
+            defaults::DEFAULT_LAUNCHER_NAME.to_string()
+        );
+    }
+
+    #[test]
+    fn launcher_name_over_length_is_truncated_not_rejected() {
+        // 超长截断到上限（保留可用标题），而不是整项丢弃
+        let long = "标".repeat(LAUNCHER_NAME_MAX + 20);
+        let got = resolve_launcher_name(Some(&long), None);
+        assert_eq!(got.chars().count(), LAUNCHER_NAME_MAX);
+        assert!(got.chars().all(|c| c == '标'));
+    }
+
+    #[test]
+    fn generated_template_keeps_name_empty() {
+        // 生成的模板里 name 留空：跟随 exe 烘焙值，避免把旧标题钉进部署目录
+        let s: UpdateSettings = serde_json::from_str(r#"{"name": ""}"#).expect("解析");
+        assert!(s.launcher_name().is_none());
+        assert_eq!(
+            resolve_launcher_name(s.launcher_name().as_deref(), None),
+            defaults::DEFAULT_LAUNCHER_NAME.to_string()
+        );
     }
 
     #[test]

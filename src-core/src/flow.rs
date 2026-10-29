@@ -37,6 +37,8 @@ use crate::services;
 #[derive(Debug, Clone)]
 pub struct ResolvedConfig {
     pub app_name: String,
+    /// 启动器标题（标题栏左侧文字 + 系统窗口标题）：命令行 --name > update.json name > 烘焙默认
+    pub launcher_name: String,
     /// manifest 地址列表（按序故障转移）
     pub manifest_urls: Vec<String>,
     pub launch: Option<String>,
@@ -92,8 +94,15 @@ pub fn resolve_config(args: &CliArgs) -> ResolvedConfig {
         args.template.as_deref().or(settings_template.as_deref()),
     );
 
+    // 标题优先级同上：命令行 --name > update.json name > 编译期烘焙默认
+    // （空串/全空白按未指定处理，规则集中在 resolve_launcher_name）
+    let settings_name = settings.launcher_name();
+    let launcher_name =
+        config::resolve_launcher_name(args.launcher_name.as_deref(), settings_name.as_deref());
+
     ResolvedConfig {
         app_name,
+        launcher_name,
         manifest_urls: args
             .manifest_url
             .clone()
@@ -329,8 +338,9 @@ pub fn spawn_flow(args: CliArgs, handle: PhaseHandle) {
         .spawn(move || {
             let cfg = resolve_config(&args);
             eprintln!(
-                "[更新器] 启动，应用: {}，界面模板: {}，manifest 地址 {} 个: {}",
+                "[更新器] 启动，应用: {}，标题: {}，界面模板: {}，manifest 地址 {} 个: {}",
                 cfg.app_name,
+                cfg.launcher_name,
                 cfg.template,
                 cfg.manifest_urls.len(),
                 cfg.manifest_urls.join(" → ")

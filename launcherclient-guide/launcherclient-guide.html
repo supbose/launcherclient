@@ -330,7 +330,7 @@ footer { border-top: 1px solid var(--rule); margin-top: 64px; padding: 28px 0 44
     <h2>四、启动器使用说明</h2>
 
     <h3><span class="no">4.1</span>命令行参数</h3>
-    <pre><code>launcherclient.exe [--app-name &lt;名称&gt;] [--launch &lt;目标程序路径&gt;]
+    <pre><code>launcherclient.exe [--app-name &lt;名称&gt;] [--name &lt;标题&gt;] [--launch &lt;目标程序路径&gt;]
                    [--manifest &lt;manifest地址&gt;] [--current-version &lt;版本&gt;]
                    [--template &lt;A~H&gt;] [--check-only]
                    [--preview [--stage &lt;0-7|名称&gt;]]</code></pre>
@@ -339,6 +339,7 @@ footer { border-top: 1px solid var(--rule); margin-top: 64px; padding: 28px 0 44
         <thead><tr><th>参数</th><th>说明</th><th>默认</th></tr></thead>
         <tbody>
           <tr><td class="nowrap"><code>--app-name</code></td><td>应用名，决定配置 / 下载 / 安装目录与拉取的清单</td><td>未给时取 update.json 的 <code>app_name</code>，再回落内置默认 <code>qsm</code></td></tr>
+          <tr><td class="nowrap"><code>--name</code></td><td>启动器标题：标题栏左侧文字与系统窗口标题。单行、最长 64 字符（换行剔除、超长截断，界面上再按可用宽度以省略号收尾）。只影响显示，不参与目录派生</td><td>未给时取 update.json 的 <code>name</code>，再回落打包时烘焙的标题（默认「启动器」）</td></tr>
           <tr><td class="nowrap"><code>--launch</code></td><td>更新完成后拉起的目标程序；相对路径按安装目录解析</td><td>空 = 自动定位安装目录中的主程序</td></tr>
           <tr><td class="nowrap"><code>--manifest</code></td><td>服务器 version.json 地址，覆盖 update.json 中的配置</td><td>见内置默认地址</td></tr>
           <tr><td class="nowrap"><code>--current-version</code></td><td>强制指定当前版本，覆盖本地 app.json 的探测结果</td><td>自动探测</td></tr>
@@ -358,6 +359,7 @@ footer { border-top: 1px solid var(--rule); margin-top: 64px; padding: 28px 0 44
         <tbody>
           <tr><td><code>manifest_url</code></td><td>字符串 / 字符串数组</td><td>服务器 version.json 地址；数组时<mark class="key">按序故障转移</mark>，第一个失败自动换下一个</td></tr>
           <tr><td><code>app_name</code></td><td>字符串</td><td>应用名，决定本地目录与拉取的清单</td></tr>
+          <tr><td><code>name</code></td><td>字符串</td><td>启动器标题（标题栏左侧文字与系统窗口标题）；单行、最长 64 字符。<mark class="key">留空则跟随 exe 内置标题</mark>，这样换一版烘焙了新标题的 exe 覆盖安装即可生效，不会被老配置钉死</td></tr>
           <tr><td><code>launch</code></td><td>字符串</td><td>更新完成后拉起的目标程序；留空自动定位安装目录中的主程序</td></tr>
           <tr><td><code>current_version</code></td><td>字符串</td><td>强制指定当前版本；留空自动从本地 <code>app.json</code> 探测</td></tr>
           <tr><td><code>max_versions</code></td><td>数字</td><td>保留的版本目录数量（含当前版本，旧目录即回滚资产），默认 <code>2</code></td></tr>
@@ -374,6 +376,7 @@ footer { border-top: 1px solid var(--rule); margin-top: 64px; padding: 28px 0 44
     "https://down.cdn.qcsm.ltd/manifest.json"
   ],
   "app_name": "qsm",
+  "name": "",
   "launch": "",
   "current_version": "",
   "max_versions": 2,

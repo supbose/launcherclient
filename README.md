@@ -91,7 +91,9 @@ pnpm build:egui:qsm --name MyApp --app-name myapp --manifest-url https://a.cdn.m
 ```
 
 `--name <标题>` 指定启动器标题栏左侧显示的文字（同时作为系统窗口标题），内置默认「启动器」；
-不传该参数时标题栏显示默认标题。参数经 `QSLTD_NAME` 烘焙进 exe，运行时无需再传。
+不传该参数时标题栏显示默认标题。参数经 `QSLTD_NAME` 烘焙进 exe，作为**该 exe 的默认标题**。
+运行时还能再覆盖一层，优先级为 **命令行 `--name` > `update.json` 的 `name` > 编译期烘焙值 > 「启动器」**
+（详见 4.2 / 4.3）：同一份 exe 可以给不同部署目录配不同标题，无需重新打包。
 
 参数链路：pybuild.py 校验后转 `QSLTD_*` 环境变量 → `src-core/build.rs` 生成覆盖常量 → `defaults.rs` / `config.rs` 优先采用。
 验证方式：把产物放入空目录运行一次，自动生成的 `update.json` 模板即为烘焙后的默认值。
@@ -113,7 +115,7 @@ pnpm build:egui:qsm --name MyApp --app-name myapp --manifest-url https://a.cdn.m
 ### 4.2 命令行参数
 
 ```
-launcherclient.exe [--app-name <名称>] [--launch <目标程序路径>]
+launcherclient.exe [--app-name <名称>] [--name <标题>] [--launch <目标程序路径>]
                    [--manifest <manifest地址>] [--current-version <版本>]
                    [--template <A|B|C|D|E>] [--check-only]
                    [--preview [--stage <0-7|名称>]]
@@ -122,6 +124,7 @@ launcherclient.exe [--app-name <名称>] [--launch <目标程序路径>]
 | 参数 | 说明 | 默认 |
 | --- | --- | --- |
 | `--app-name` | 应用名，决定配置/下载/安装目录与拉取的清单 | 未给时取 update.json 的 `app_name`，再回落内置默认 `qsm` |
+| `--name` | 启动器标题：标题栏左侧文字 + 系统窗口标题（单行，最长 64 字符，超长截断）。只影响显示，不参与目录派生 | 未给时取 update.json 的 `name`，再回落编译期烘焙标题（无烘焙即「启动器」） |
 | `--launch` | 更新完成后拉起的目标程序；相对路径按安装目录解析；留空则自动定位安装目录中的主程序 | 空 |
 | `--manifest` | 服务器 version.json 地址，覆盖 update.json | 见 `defaults::DEFAULT_MANIFEST_URLS` |
 | `--current-version` | 强制指定当前版本，覆盖本地 app.json | 自动探测 |
@@ -147,6 +150,7 @@ launcherclient.exe [--app-name <名称>] [--launch <目标程序路径>]
 | --- | --- | --- |
 | `manifest_url` | 字符串 或 字符串数组 | 服务器 version.json 地址；数组时**按序故障转移**，第一个失败自动换下一个 |
 | `app_name` | 字符串 | 应用名，决定本地目录 |
+| `name` | 字符串 | 启动器标题（标题栏左侧文字与系统窗口标题）；单行、最长 64 字符，换行会被剔除、超长会截断。**留空则跟随 exe 内置标题**（构建期 `--name` 烘焙值，未烘焙即「启动器」），这样换一版烘焙了新标题的 exe 覆盖安装即可生效，不会被老配置钉死 |
 | `launch` | 字符串 | 更新完成后拉起的目标程序 |
 | `current_version` | 字符串 | 强制指定当前版本，留空自动从本地 `app.json` 探测 |
 | `max_versions` | 数字 | 保留的版本目录数量（含当前版本，旧目录即回滚资产），默认 2 |
@@ -164,6 +168,7 @@ launcherclient.exe [--app-name <名称>] [--launch <目标程序路径>]
     "https://down.cdn.qcsm.ltd/manifest.json"
   ],
   "app_name": "qsm",
+  "name": "",
   "launch": "",
   "current_version": "",
   "max_versions": 2,

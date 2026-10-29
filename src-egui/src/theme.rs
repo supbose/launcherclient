@@ -8,9 +8,6 @@ use egui::{Color32, Context, FontDefinitions, Vec2};
 
 // ---- 窗口 ----
 
-/// 窗口标题（tauri.conf.json main.title）：与 `app::WINDOW_TITLE` 同源，
-/// 构建期可经 `--name` / `QSLTD_NAME` 覆盖（见 `qsltd_updater_core::defaults`）
-pub const WINDOW_TITLE: &str = qsltd_updater_core::defaults::DEFAULT_LAUNCHER_NAME;
 /// 窗口客户区尺寸（tauri.conf.json main: 440×420，逻辑像素）
 pub const WINDOW_SIZE: (f32, f32) = (440.0, 420.0);
 /// 标题栏高度（App.vue .updater-root padding-top / MinTitleBar .title-bar height）

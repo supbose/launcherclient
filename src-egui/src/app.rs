@@ -20,11 +20,6 @@ use crate::templates;
 use crate::theme;
 use crate::widgets;
 
-/// 窗口标题（同时用于标题栏左侧文字与系统窗口标题）
-///
-/// 构建期可经 `--name` / `QSLTD_NAME` 烘焙覆盖（见 `qsltd_updater_core::defaults`），
-/// 未传参数时用内置默认「启动器」。
-pub const WINDOW_TITLE: &str = qsltd_updater_core::defaults::DEFAULT_LAUNCHER_NAME;
 /// 窗口客户区尺寸（tauri.conf.json main: 440×420）
 pub const WINDOW_SIZE: (f32, f32) = (440.0, 420.0);
 /// 预览模式下窗口高度（底部模板/阶段切换条）
@@ -32,6 +27,8 @@ pub const PREVIEW_EXTRA_HEIGHT: f32 = 150.0;
 
 /// 更新器应用状态
 pub struct UpdaterApp {
+    /// 生效标题（标题栏左侧文字；系统窗口标题在建窗时已按同值设置）
+    title: String,
     /// 共享阶段快照（后台线程写 / UI 读）
     phase: PhaseHandle,
     /// 当前帧渲染用的阶段载荷
@@ -85,10 +82,12 @@ impl UpdaterApp {
         template: String,
         preview: bool,
         preview_stage: usize,
+        title: String,
     ) -> Self {
         theme::install_fonts(&cc.egui_ctx);
         theme::zero_item_spacing(&cc.egui_ctx);
         Self {
+            title,
             phase,
             payload: None,
             has_downloaded: false,
@@ -293,8 +292,8 @@ impl eframe::App for UpdaterApp {
         let full = ui.max_rect();
         widgets::paint_bg(ui.painter(), full);
 
-        // 标题栏（左侧显示标题文字，右侧最小化/关闭）
-        let tb = widgets::draw_titlebar(ui, WINDOW_TITLE);
+        // 标题栏（左侧显示生效标题，右侧最小化/关闭）
+        let tb = widgets::draw_titlebar(ui, &self.title);
         match tb {
             widgets::TitleBarAction::Minimize => {
                 ui.ctx().send_viewport_cmd(egui::ViewportCommand::Minimized(true));

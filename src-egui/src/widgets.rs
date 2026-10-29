@@ -32,10 +32,43 @@ pub enum TitleBarAction {
     Close,
 }
 
+/// 单行文本按可用宽度截断，超出部分以省略号收尾
+///
+/// egui 的 `Painter::text` 既不换行也不加省略号，溢出只会被裁剪区硬切一刀，
+/// 中文标题就表现为「末尾露出半个字」。这里先整体测宽，装不下就从尾部逐字
+/// 回退，直到「前缀 + …」完整放得下（标题最长 64 字符，逐字回退成本可忽略）。
+fn ellipsize_to_width(painter: &Painter, text: &str, font: &FontId, max_width: f32) -> String {
+    if max_width <= 0.0 {
+        return String::new();
+    }
+    let width_of = |s: &str| {
+        painter
+            .layout_no_wrap(s.to_owned(), font.clone(), theme::TEXT)
+            .size()
+            .x
+    };
+    if width_of(text) <= max_width {
+        return text.to_string();
+    }
+    let mut chars: Vec<char> = text.chars().collect();
+    loop {
+        if chars.is_empty() {
+            // 连一个省略号都放不下（标题栏被压到极窄）：宁可空着也不溢出到按钮上
+            return String::new();
+        }
+        chars.pop();
+        let candidate: String = chars.iter().collect::<String>() + "…";
+        if width_of(&candidate) <= max_width {
+            return candidate;
+        }
+    }
+}
+
 /// 标题栏：32px 高、可拖拽、左侧标题文字、右侧最小化/关闭按钮（MinTitleBar.vue 复刻）
 ///
-/// `title` 为构建期烘焙的启动器标题（见 `app::WINDOW_TITLE`），左侧内边距处
-/// 垂直居中显示；宽度受拖拽区限制，超长文字裁切，不遮挡右侧按钮。
+/// `title` 为生效标题（命令行 `--name` > update.json `name` > 编译期烘焙默认，
+/// 见 `qsltd_updater_core::config::resolve_launcher_name`），左侧内边距处垂直居中
+/// 显示；宽度受拖拽区限制，超长以省略号收尾（不露半个字、不遮挡右侧按钮）。
 /// 按钮悬停：白色 10% 底 + 图标变白；关闭悬停：#e81123 底 + 白图标。
 pub fn draw_titlebar(ui: &mut Ui, title: &str) -> TitleBarAction {
     let (rect, _) = ui.allocate_exact_size(
@@ -66,11 +99,15 @@ pub fn draw_titlebar(ui: &mut Ui, title: &str) -> TitleBarAction {
         Pos2::new(drag_rect.right() - TITLE_INSET, rect.bottom()),
     );
     if !title.is_empty() && text_rect.width() > 0.0 {
-        ui.painter_at(text_rect).text(
+        let font = FontId::proportional(13.0);
+        let text_painter = ui.painter_at(text_rect);
+        // 预留 1px 余量：字体度量与光栅化有零点几像素误差，贴着边界会削到笔画
+        let shown = ellipsize_to_width(&text_painter, title, &font, text_rect.width() - 1.0);
+        text_painter.text(
             Pos2::new(text_rect.left(), rect.center().y - TITLE_V_NUDGE),
             Align2::LEFT_CENTER,
-            title,
-            FontId::proportional(13.0),
+            shown,
+            font,
             theme::text_alpha(220),
         );
     }
