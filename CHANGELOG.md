@@ -3,6 +3,17 @@
 
 
 
+
+## v0.1.28 (2026-10-29)
+### 🚀 新增功能
+
+- [86c03b8](/-/commit/86c03b8d2be60b16f8c611cb57e8ac5f2474bd39) 新增(launcherclient): 将 store_url 迁移至服务端 manifest 并补全打包工具配置 (.workbuddy/memory/2026-10-28.md)
+- [239d550](/-/commit/239d5508a961a0d3180da5cd00a4e02cedd7dbe8) 新增(pkgtool): 打包工具支持配置并产出 force_update/min_version/store_url (src-pkgtool/src/main.rs)
+
+### ♻️ 代码重构
+
+- [444bd05](/-/commit/444bd0563bd18c6c2f91c230d339ea5c624b8a5a) 重构(src-core): store_url 迁至服务端 manifest，清除本地配置残留 (src-core/src/config.rs, src-core/src/elevation.rs, src-core/src/flow.rs, src-core/src/phase.rs, src-egui/src/app.rs, src-egui/src/templates.rs, update.json, version.json.example)
+
 ## v0.1.27-beta.1 (2026-10-28)
 ### 🚀 新增功能
 
