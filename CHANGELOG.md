@@ -10,6 +10,12 @@
 
 
 
+
+## v0.1.35 (2026-10-29)
+### 🚀 新增功能
+
+- [892b135](/-/commit/892b13519e3c0ad33a5a8df9a3255c37c842a886) 新增(src-core): 新增构建期产品线参数烘焙功能 (.workbuddy/memory/2026-10-29.md, README.md, package.json, scripts/pybuild.py, src-core/build.rs, src-core/src/config.rs, src-core/src/defaults.rs, src-egui/version.rc)
+
 ## v0.1.34 (2026-10-29)
 ### 📦 构建系统
 
