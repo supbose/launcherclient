@@ -6,6 +6,7 @@
     python scripts/pybuild.py pkgtool   # 打包工具 src-pkgtool/icon.rc  -> pkgtool.exe
 
 可选构建参数（编译期烘焙进 exe 内置默认值，替代 qsm 默认产品线；未传项保持默认）：
+    --name <标题>              默认启动器标题（窗口标题栏左侧显示文字）
     --app-name <名称>          默认应用名（决定配置/下载/安装目录）
     --manifest-url <地址>      默认 manifest 地址，可重复传实现按序故障转移
     --homepage <地址>          默认官网首页
@@ -224,6 +225,8 @@ def build_target(target: Target, csv_version: str, dotted_version: str, build_en
 
 APP_NAME_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._-]*$")
 VALID_TEMPLATES = "ABCDEFGH"
+# 启动器标题最长字符数：标题栏单行可容纳上限，超长会挤压右侧按钮区
+LAUNCHER_NAME_MAX = 64
 
 
 def collect_build_env(args: argparse.Namespace) -> dict[str, str]:
@@ -234,6 +237,18 @@ def collect_build_env(args: argparse.Namespace) -> dict[str, str]:
         if not APP_NAME_RE.match(args.app_name):
             raise BuildError(f"--app-name 不合法：{args.app_name!r}，仅允许字母数字开头、由字母数字 . _ - 组成")
         env["QSLTD_APP_NAME"] = args.app_name
+
+    if args.name is not None:
+        launcher_name = args.name.strip()
+        if not launcher_name:
+            raise BuildError("--name 不合法：标题不能为空")
+        if any(ch in launcher_name for ch in "\r\n"):
+            raise BuildError(f"--name 不合法：{args.name!r}，标题不能包含换行符")
+        if len(launcher_name) > LAUNCHER_NAME_MAX:
+            raise BuildError(
+                f"--name 过长：{len(launcher_name)} 字符，最多 {LAUNCHER_NAME_MAX} 字符"
+            )
+        env["QSLTD_NAME"] = launcher_name
 
     if args.manifest_url:
         for url in args.manifest_url:
@@ -278,6 +293,7 @@ def make_parser() -> argparse.ArgumentParser:
         "可选构建参数在编译期烘焙进 exe 内置默认值（替代 qsm 默认产品线），未传项保持默认。",
         epilog=(
             "构建参数说明（全部可选，经 QSLTD_* 环境变量传给 src-core/build.rs 生成覆盖常量）：\n"
+            "  --name           烘焙后作为启动器窗口标题栏左侧标题（默认「启动器」）\n"
             "  --app-name       烘焙后决定 exe 无 update.json 时的默认应用名及配置/下载/安装目录\n"
             "  --manifest-url   可重复传，顺序即故障转移顺序；仅传一个则无备用地址\n"
             "  --service        可重复传，仅影响生成的 update.json 模板；运行时未配置 services 则不卸载\n"
@@ -300,6 +316,7 @@ def make_parser() -> argparse.ArgumentParser:
     except BuildError:
         version_text = "未知（package.json 不可读）"
     parser.add_argument("--version", action="version", version=f"launcherclient {version_text}", help="显示 package.json 中的构建版本号（即本次打包将烘焙进 rc 的版本）后退出")
+    parser.add_argument("--name", metavar="标题", help="默认启动器标题（窗口标题栏左侧显示文字，内置默认：启动器），非空、不含换行，最长 64 字符")
     parser.add_argument("--app-name", metavar="名称", help="默认应用名（内置默认：qsm），仅允许字母数字开头、由字母数字 . _ - 组成")
     parser.add_argument("--manifest-url", metavar="地址", action="append", default=[], help="默认 manifest 地址（内置默认：qsm 双 CDN 容灾），需以 http(s):// 开头，可重复传")
     parser.add_argument("--homepage", metavar="地址", help="默认官网首页地址（内置默认：https://www.qcsm.ltd），需以 http(s):// 开头")

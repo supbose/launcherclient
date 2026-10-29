@@ -79,16 +79,19 @@ pnpm dist              # python scripts/build.py
 
 ### 3.1 构建期产品线参数（build:egui:qsm）
 
-启动器内置默认值（app_name、manifest 地址、官网、模板、重试、版本目录数、服务）默认对应 qsm 产品线；
+启动器内置默认值（app_name、标题、manifest 地址、官网、模板、重试、版本目录数、服务）默认对应 qsm 产品线；
 可通过 `pnpm build:egui:qsm` 追加参数，**编译期烘焙进 exe**（未传项保持 qsm 默认，不影响原有流程）：
 
 ```bash
 # 默认（等价 pnpm egui:build，qsm 配置）
 pnpm build:egui:qsm
 
-# 自定义产品线示例：myapp + 双 manifest 容灾 + 模板 B + 卸载 MySvc/MyHelper
-pnpm build:egui:qsm --app-name myapp --manifest-url https://a.cdn.myapp.ltd/version.json --manifest-url https://b.cdn.myapp.ltd/version.json --homepage https://www.myapp.ltd --template B --retry-times 5 --max-versions 3 --service MySvc --service MyHelper
+# 自定义产品线示例：标题 MyApp + myapp + 双 manifest 容灾 + 模板 B + 卸载 MySvc/MyHelper
+pnpm build:egui:qsm --name MyApp --app-name myapp --manifest-url https://a.cdn.myapp.ltd/version.json --manifest-url https://b.cdn.myapp.ltd/version.json --homepage https://www.myapp.ltd --template B --retry-times 5 --max-versions 3 --service MySvc --service MyHelper
 ```
+
+`--name <标题>` 指定启动器标题栏左侧显示的文字（同时作为系统窗口标题），内置默认「启动器」；
+不传该参数时标题栏显示默认标题。参数经 `QSLTD_NAME` 烘焙进 exe，运行时无需再传。
 
 参数链路：pybuild.py 校验后转 `QSLTD_*` 环境变量 → `src-core/build.rs` 生成覆盖常量 → `defaults.rs` / `config.rs` 优先采用。
 验证方式：把产物放入空目录运行一次，自动生成的 `update.json` 模板即为烘焙后的默认值。

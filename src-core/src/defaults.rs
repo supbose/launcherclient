@@ -35,6 +35,15 @@ pub const DEFAULT_APP_NAME: &str = match BUILD_APP_NAME {
     None => "qsm",
 };
 
+/// 默认启动器标题（标题栏左侧文字，同时作为系统窗口标题）
+///
+/// 构建期可经 `--name` / `QSLTD_NAME` 烘焙覆盖；未传参数时用内置默认「启动器」。
+/// 入口：`python scripts/pybuild.py egui --name <标题>`。
+pub const DEFAULT_LAUNCHER_NAME: &str = match BUILD_NAME {
+    Some(name) => name,
+    None => "启动器",
+};
+
 /// 默认启动器界面模板（launcher template）
 ///
 /// 可选值 A~H，对应 `src-egui/src/templates.rs` 下八套独立布局

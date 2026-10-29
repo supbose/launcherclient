@@ -32,10 +32,12 @@ pub enum TitleBarAction {
     Close,
 }
 
-/// 标题栏：32px 高、可拖拽、右侧最小化/关闭按钮（MinTitleBar.vue 复刻）
+/// 标题栏：32px 高、可拖拽、左侧标题文字、右侧最小化/关闭按钮（MinTitleBar.vue 复刻）
 ///
+/// `title` 为构建期烘焙的启动器标题（见 `app::WINDOW_TITLE`），左侧内边距处
+/// 垂直居中显示；宽度受拖拽区限制，超长文字裁切，不遮挡右侧按钮。
 /// 按钮悬停：白色 10% 底 + 图标变白；关闭悬停：#e81123 底 + 白图标。
-pub fn draw_titlebar(ui: &mut Ui) -> TitleBarAction {
+pub fn draw_titlebar(ui: &mut Ui, title: &str) -> TitleBarAction {
     let (rect, _) = ui.allocate_exact_size(
         Vec2::new(ui.available_width(), theme::TITLEBAR_HEIGHT),
         Sense::hover(),
@@ -51,6 +53,22 @@ pub fn draw_titlebar(ui: &mut Ui) -> TitleBarAction {
     if drag.drag_started() {
         ui.ctx()
             .send_viewport_cmd(egui::ViewportCommand::StartDrag);
+    }
+
+    // 标题文字（左侧内边距、垂直居中；裁在拖拽区内，不遮按钮）
+    const TITLE_INSET: f32 = 12.0;
+    let text_rect = Rect::from_min_max(
+        Pos2::new(rect.left() + TITLE_INSET, rect.top()),
+        Pos2::new(drag_rect.right() - TITLE_INSET, rect.bottom()),
+    );
+    if !title.is_empty() && text_rect.width() > 0.0 {
+        ui.painter_at(text_rect).text(
+            Pos2::new(text_rect.left(), rect.center().y),
+            Align2::LEFT_CENTER,
+            title,
+            FontId::proportional(13.0),
+            theme::text_alpha(220),
+        );
     }
 
     let mut action = TitleBarAction::None;

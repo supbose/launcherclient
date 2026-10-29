@@ -12,6 +12,7 @@ use std::path::Path;
 /// (构建参数环境变量, 生成常量名, 是否 '|' 分隔列表, 是否数值)
 const OVERRIDES: &[(&str, &str, bool, bool)] = &[
     ("QSLTD_APP_NAME", "BUILD_APP_NAME", false, false),
+    ("QSLTD_NAME", "BUILD_NAME", false, false),
     ("QSLTD_MANIFEST_URLS", "BUILD_MANIFEST_URLS", true, false),
     ("QSLTD_HOMEPAGE", "BUILD_HOMEPAGE", false, false),
     ("QSLTD_LAUNCHER_TEMPLATE", "BUILD_LAUNCHER_TEMPLATE", false, false),
