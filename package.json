@@ -16,11 +16,12 @@
   "repository": "https://github.com/qsltdupdater/qsltdupdater",
   "scripts": {
     "build": "cd src-egui && cargo build --release",
+    "dist": "python scripts/build.py",
     "dev": "cd src-egui && cargo run",
     "egui": "cd src-egui && cargo build --release",
-    "egui:build": "python scripts/build_egui.py",
+    "egui:build": "python scripts/pybuild.py egui",
     "egui:dev": "cd src-egui && cargo run",
-    "pkgtool": "cd src-pkgtool && cargo build --release",
+    "pkgtool": "python scripts/pybuild.py pkgtool",
     "pkgtool:dev": "cd src-pkgtool && cargo run",
     "preview": "cd src-egui/target/release && .\\launcherclient.exe --preview --template F --stage error"
   },

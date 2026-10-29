@@ -1,10 +1,14 @@
 #!/usr/bin/env python3
-"""egui 打包脚本：把 package.json 的版本号同步到 version.rc，随后执行 cargo release 构建。
+"""pybuild 打包脚本：把 package.json 的版本号同步到目标 crate 的版本资源 rc 文件，随后执行 cargo release 构建。
+
+用法：
+    python scripts/pybuild.py egui      # 启动器   src-egui/version.rc  -> launcherclient.exe
+    python scripts/pybuild.py pkgtool   # 打包工具 src-pkgtool/icon.rc  -> pkgtool.exe
 
 流程：
 1. 读取 package.json 的 version 字段；
-2. 将版本号写入 src-egui/version.rc（FILEVERSION / PRODUCTVERSION / FileVersion / ProductVersion）；
-3. 校验 version.rc 写入结果后执行 cargo build --release；
+2. 将版本号写入目标 rc（FILEVERSION / PRODUCTVERSION / FileVersion / ProductVersion）；
+3. 校验 rc 写入结果后执行 cargo build --release；
 4. 校验 cargo 默认 release 产物并核对 exe 内嵌版本号。
 """
 
@@ -19,9 +23,20 @@ from pathlib import Path
 
 PROJECT_ROOT = Path(__file__).resolve().parent.parent
 PACKAGE_JSON = PROJECT_ROOT / "package.json"
-EGUI_DIR = PROJECT_ROOT / "src-egui"
-VERSION_RC = EGUI_DIR / "version.rc"
-BIN_NAME = "launcherclient"
+
+
+class Target:
+    def __init__(self, name: str, src_dir: Path, rc_name: str, bin_name: str) -> None:
+        self.name = name
+        self.src_dir = src_dir
+        self.rc_path = src_dir / rc_name
+        self.bin_name = bin_name
+
+
+TARGETS = {
+    "egui": Target("egui", PROJECT_ROOT / "src-egui", "version.rc", "launcherclient"),
+    "pkgtool": Target("pkgtool", PROJECT_ROOT / "src-pkgtool", "icon.rc", "pkgtool"),
+}
 
 # package.json 只允许 1.2.3 或 1.2.3.4 形式的数值版本号（可带 v 前缀）
 PACKAGE_VERSION_RE = re.compile(r"^[vV]?(\d+)\.(\d+)\.(\d+)(?:\.(\d+))?$")
@@ -71,7 +86,7 @@ def parse_version(version: str) -> tuple[str, str]:
 def _replace_single_line(lines: list[str], label: str, matcher: re.Pattern[str], content: str) -> None:
     hits = [index for index, line in enumerate(lines) if matcher.match(line.strip())]
     if len(hits) != 1:
-        raise BuildError(f"version.rc 中 {label} 配置项数量异常（期望 1 处，实际 {len(hits)} 处）")
+        raise BuildError(f"rc 文件中 {label} 配置项数量异常（期望 1 处，实际 {len(hits)} 处）")
 
     index = hits[0]
     original = lines[index]
@@ -81,15 +96,15 @@ def _replace_single_line(lines: list[str], label: str, matcher: re.Pattern[str],
     lines[index] = indent + content + ending
 
 
-def sync_version_rc(csv_version: str, dotted_version: str) -> None:
+def sync_version_rc(target: Target, csv_version: str, dotted_version: str) -> None:
     try:
-        text = VERSION_RC.read_bytes().decode("utf-8")
+        text = target.rc_path.read_bytes().decode("utf-8")
     except FileNotFoundError as exc:
-        raise BuildError(f"未找到 version.rc：{VERSION_RC}") from exc
+        raise BuildError(f"未找到 rc 文件：{target.rc_path}") from exc
     except UnicodeDecodeError as exc:
-        raise BuildError(f"version.rc 不是合法的 UTF-8 编码：{exc}") from exc
+        raise BuildError(f"rc 文件不是合法的 UTF-8 编码：{exc}") from exc
     except OSError as exc:
-        raise BuildError(f"读取 version.rc 失败：{exc}") from exc
+        raise BuildError(f"读取 rc 文件失败：{exc}") from exc
 
     lines = text.splitlines(keepends=True)
     replacements = (
@@ -110,36 +125,36 @@ def sync_version_rc(csv_version: str, dotted_version: str) -> None:
         _replace_single_line(lines, label, matcher, content)
 
     if not any(line.strip() == "#pragma code_page(65001)" for line in lines):
-        raise BuildError("version.rc 缺少 #pragma code_page(65001)，中文资源会按系统 ANSI 代码页解析导致乱码")
+        raise BuildError("rc 文件缺少 #pragma code_page(65001)，中文资源会按系统 ANSI 代码页解析导致乱码")
 
-    temp_path = VERSION_RC.with_suffix(".rc.tmp")
+    temp_path = target.rc_path.with_suffix(".rc.tmp")
     try:
         with temp_path.open("w", encoding="utf-8", newline="") as fh:
             fh.write("".join(lines))
-        os.replace(temp_path, VERSION_RC)
+        os.replace(temp_path, target.rc_path)
     except OSError as exc:
-        raise BuildError(f"写入 version.rc 失败：{exc}") from exc
+        raise BuildError(f"写入 rc 文件失败：{exc}") from exc
 
     try:
-        written_lines = VERSION_RC.read_text(encoding="utf-8").splitlines()
+        written_lines = target.rc_path.read_text(encoding="utf-8").splitlines()
     except OSError as exc:
-        raise BuildError(f"回读 version.rc 校验失败：{exc}") from exc
+        raise BuildError(f"回读 rc 文件校验失败：{exc}") from exc
 
     for label, _, content in replacements:
         if not any(line.strip() == content for line in written_lines):
-            raise BuildError(f"version.rc 写入后校验失败：未找到正确的 {label} 配置")
+            raise BuildError(f"rc 文件写入后校验失败：未找到正确的 {label} 配置")
 
 
-def run_cargo_build() -> Path:
+def run_cargo_build(target: Target) -> Path:
     try:
-        subprocess.run(["cargo", "build", "--release"], cwd=str(EGUI_DIR), check=True)
+        subprocess.run(["cargo", "build", "--release"], cwd=str(target.src_dir), check=True)
     except FileNotFoundError as exc:
         raise BuildError("未找到 cargo 命令，请确认 Rust 工具链已安装并加入 PATH") from exc
     except subprocess.CalledProcessError as exc:
         raise BuildError(f"cargo build --release 执行失败，退出码 {exc.returncode}") from exc
 
-    exe_name = f"{BIN_NAME}.exe" if os.name == "nt" else BIN_NAME
-    return EGUI_DIR / "target" / "release" / exe_name
+    exe_name = f"{target.bin_name}.exe" if os.name == "nt" else target.bin_name
+    return target.src_dir / "target" / "release" / exe_name
 
 
 def verify_artifact(exe_path: Path, dotted_version: str) -> None:
@@ -174,30 +189,41 @@ def verify_artifact(exe_path: Path, dotted_version: str) -> None:
     print(f"      已确认产物内嵌版本号：{actual}")
 
 
+def build_target(target: Target, csv_version: str, dotted_version: str) -> Path:
+    """执行单目标打包：同步 rc 版本 → cargo release → 校验产物，返回 exe 路径。"""
+    print(f"[1/3] 同步版本号到 rc 文件：{target.rc_path}")
+    sync_version_rc(target, csv_version, dotted_version)
+    print("      版本号配置已写入并通过回读校验")
+
+    print(f"[2/3] 执行 cargo build --release：{target.src_dir}")
+    exe_path = run_cargo_build(target)
+    print("      cargo 构建成功")
+
+    print("[3/3] 校验 cargo 默认 release 产物")
+    verify_artifact(exe_path, dotted_version)
+    print(f"打包完成（{target.name}）：版本 {dotted_version}")
+    return exe_path
+
+
 def main() -> int:
     try:
         sys.stdout.reconfigure(line_buffering=True)
     except (AttributeError, OSError):
         pass
 
+    if len(sys.argv) != 2 or sys.argv[1] not in TARGETS:
+        names = " / ".join(TARGETS)
+        print(f"用法：python scripts/pybuild.py <{names}>", file=sys.stderr)
+        return 2
+
+    target = TARGETS[sys.argv[1]]
     try:
-        print(f"[1/4] 读取 package.json 版本号：{PACKAGE_JSON}")
+        print(f"读取 package.json 版本号：{PACKAGE_JSON}")
         version = read_package_version()
         csv_version, dotted_version = parse_version(version)
         print(f"      版本号：{version} -> rc {csv_version} / 字符串 {dotted_version}")
 
-        print(f"[2/4] 同步版本号到 version.rc：{VERSION_RC}")
-        sync_version_rc(csv_version, dotted_version)
-        print("      版本号配置已写入并通过回读校验")
-
-        print(f"[3/4] 执行 cargo build --release：{EGUI_DIR}")
-        exe_path = run_cargo_build()
-        print("      cargo 构建成功")
-
-        print("[4/4] 校验 cargo 默认 release 产物")
-        verify_artifact(exe_path, dotted_version)
-
-        print(f"打包完成：版本 {dotted_version}")
+        build_target(target, csv_version, dotted_version)
         return 0
     except BuildError as exc:
         print(f"打包失败：{exc}", file=sys.stderr)

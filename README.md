@@ -30,7 +30,7 @@ launcherclient/
 │   ├── assets/icon.ico
 │   └── icon.rc            # exe 图标 + 文件版本信息
 ├── scripts/
-│   ├── build_egui.py      # 同步 package.json 版本号 → version.rc → cargo release
+│   ├── pybuild.py         # 同步 package.json 版本号 → 目标 rc（version.rc / icon.rc）→ cargo release
 │   └── versionTools.py    # 旧版 Python 打包脚本（已由 pkgtool 取代，保留参考）
 ├── docs/                  # 选型与界面设计文档
 ├── update.json            # 启动器本地配置文件（示例，随 exe 部署）
@@ -64,20 +64,23 @@ pnpm build
 pnpm dev
 
 # 启动器：release 构建 + 先把 package.json 的版本号同步进 version.rc
-pnpm egui:build        # python scripts/build_egui.py
+pnpm egui:build        # python scripts/pybuild.py egui
 
-# 打包工具：release 构建
-pnpm pkgtool
+# 打包工具：release 构建 + 先把 package.json 的版本号同步进 icon.rc
+pnpm pkgtool           # python scripts/pybuild.py pkgtool
 # 产物：src-pkgtool/target/release/pkgtool.exe
 
 # 打包工具：debug 运行
 pnpm pkgtool:dev
+
+# 全量打包：依次打包启动器 + 打包工具，产物复制到 dist/<版本号>/
+pnpm dist              # python scripts/build.py
 ```
 
 > **版本号同步**：`version.rc` / `icon.rc` 里的 `FILEVERSION`/`FileVersion`/`ProductVersion`
-> 是硬编码的 Windows 资源字段。只有 `pnpm egui:build`（`scripts/build_egui.py`）会把它同步为
+> 是硬编码的 Windows 资源字段。只有 `pnpm egui:build` / `pnpm pkgtool`（`scripts/pybuild.py`）会把它同步为
 > `package.json` 的版本；直接 `pnpm build` 只跑 cargo，rc 中的版本号保持上次同步的值。
-> 当前 `package.json` 为 `0.1.22`，`src-egui/version.rc` 为 `0.1.21.0`——需要一致时请跑一次 `pnpm egui:build`。
+> 需要一致时请跑一次对应的 pybuild 目标。
 
 ---
 
