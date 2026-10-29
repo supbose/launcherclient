@@ -16,7 +16,7 @@
   "repository": "https://github.com/qsltdupdater/qsltdupdater",
   "scripts": {
     "build": "cd src-egui && cargo build --release",
-    "build:egui:qsm": "python scripts/pybuild.py egui",
+    "build:egui:qsm": "python scripts/pybuild.py egui --app-name qsm --manifest-url https://qsc.cdn.qcsm.ltd/update/qsm/version.json --manifest-url https://qsw.us.ci/update/qsm/version.json --homepage https://qsm.us.ci --template F --retry-times 5 --max-versions 3 --service QsmServer\n",
     "dev": "cd src-egui && cargo run",
     "dist": "python scripts/build.py",
     "egui": "cd src-egui && cargo build --release",
