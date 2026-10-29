@@ -7,6 +7,12 @@
 
 
 
+
+## v0.1.32 (2026-10-29)
+### 📝 文档更新
+
+- [1083731](/-/commit/1083731ea985d75beb6a9b80f0b3769a78b65c98) 文档(launcherclient-guide): 添加 launcherclient 项目使用说明文档及配套资源 (.trae-html-share-packages/launcherclient-guide/launcherclient-guide.html.zip, launcherclient-guide/_shared/fonts/JetBrainsMono-Bold.ttf, launcherclient-guide/_shared/fonts/JetBrainsMono-Regular.ttf, launcherclient-guide/_shared/fonts/WorkSans-Bold.ttf, launcherclient-guide/_shared/fonts/WorkSans-Regular.ttf, launcherclient-guide/_shared/js/mermaid.min.js, launcherclient-guide/launcherclient-guide.html)
+
 ## v0.1.31 (2026-10-29)
 ### 🚀 新增功能
 
