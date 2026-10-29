@@ -4,6 +4,9 @@ version = "0.1.0"
 edition = "2021"
 description = "QsLtd 更新包打包工具（egui 版，versionTools.py 的纯 Rust GUI 重实现）"
 license = "MIT"
+authors = ["supbose <supbose@qingshu.work>"]
+homepage = "https://github.com/qsltdupdater/qsltdupdater"
+repository = "https://github.com/qsltdupdater/qsltdupdater"
 
 [[bin]]
 name = "pkgtool"

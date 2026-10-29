@@ -508,6 +508,7 @@ enum Page {
     History,
     Version,
     Log,
+    About,
 }
 
 impl Page {
@@ -518,6 +519,7 @@ impl Page {
             Page::History => "历史构建",
             Page::Version => "下载与版本",
             Page::Log => "日志",
+            Page::About => "关于",
         }
     }
 }
@@ -818,6 +820,21 @@ fn draw_progress_ring(ui: &mut egui::Ui, diameter: f32, pct: f32, big: &str, sub
         egui::FontId::proportional(11.0),
         MUTED,
     );
+}
+
+/// 关于页图标：ico 解码结果缓存一次（OnceLock），避免每帧重复解析
+fn about_icon() -> Option<std::sync::Arc<egui::ColorImage>> {
+    static ICON: std::sync::OnceLock<Option<std::sync::Arc<egui::ColorImage>>> =
+        std::sync::OnceLock::new();
+    ICON.get_or_init(|| {
+        load_window_icon().map(|ic| {
+            std::sync::Arc::new(egui::ColorImage::from_rgba_unmultiplied(
+                [ic.width as usize, ic.height as usize],
+                &ic.rgba,
+            ))
+        })
+    })
+    .clone()
 }
 
 /// 在 content 区渲染一个带标题的分组卡片：左侧品牌色竖条 + 主文字色标题，下方半透明圆角卡片。
@@ -1634,6 +1651,167 @@ impl PackToolApp {
                     });
             });
     }
+
+    /// 关于页：头部英雄卡（图标 + 名称 + 版本徽标 + 元信息）+ 双栏（应用信息 | 第三方依赖）。
+    /// 版本取自 package.json（PKG_VERSION，build.rs 注入），其余项目信息取自 Cargo.toml [package]。
+    fn page_about(&self, ui: &mut egui::Ui) {
+        ui.heading(egui::RichText::new("关于").size(18.0).strong().color(TEXT));
+        ui.add_space(4.0);
+
+        // ---- 头部英雄卡：图标 | 名称+版本徽标 / 元信息 / 主页链接 ----
+        egui::Frame::default()
+            .fill(CARD_BG)
+            .stroke(egui::Stroke::new(1.0, BORDER))
+            .inner_margin(egui::Margin::symmetric(16, 14))
+            .corner_radius(10.0)
+            .show(ui, |ui| {
+                ui.horizontal(|ui| {
+                    if let Some(img) = about_icon() {
+                        let tex = ui.ctx().load_texture_cached(
+                            "about_icon",
+                            ui.scope_id().with(egui::IdSalt::new("about_icon")),
+                            img,
+                            egui::TextureOptions::LINEAR,
+                        );
+                        ui.add(
+                            egui::Image::new(&tex).max_size(egui::vec2(56.0, 56.0)),
+                        );
+                        ui.add_space(10.0);
+                    }
+                    ui.vertical(|ui| {
+                        ui.horizontal(|ui| {
+                            ui.label(
+                                egui::RichText::new("QsLtd 更新包打包工具")
+                                    .size(17.0)
+                                    .strong()
+                                    .color(TEXT),
+                            );
+                            ui.add_space(8.0);
+                            // 版本徽标：蓝底圆角，宽度按文本实测
+                            let txt = format!("v{}", env!("PKG_VERSION"));
+                            let w = ui
+                                .painter()
+                                .layout_no_wrap(
+                                    txt.clone(),
+                                    egui::FontId::proportional(12.0),
+                                    ACCENT,
+                                )
+                                .size()
+                                .x
+                                + 16.0;
+                            let (rect, _) =
+                                ui.allocate_exact_size(egui::vec2(w, 20.0), egui::Sense::hover());
+                            ui.painter()
+                                .rect_filled(rect.shrink(1.0), 5.0, ACCENT_SOFT);
+                            ui.painter().text(
+                                rect.center(),
+                                egui::Align2::CENTER_CENTER,
+                                &txt,
+                                egui::FontId::proportional(12.0),
+                                ACCENT,
+                            );
+                        });
+                        ui.add_space(4.0);
+                        ui.label(
+                            egui::RichText::new(format!(
+                                "{} · {} · {}",
+                                env!("CARGO_PKG_NAME"),
+                                env!("CARGO_PKG_LICENSE"),
+                                env!("CARGO_PKG_AUTHORS")
+                            ))
+                            .size(12.0)
+                            .color(MUTED),
+                        );
+                        ui.add_space(2.0);
+                        ui.hyperlink(env!("CARGO_PKG_HOMEPAGE"));
+                    });
+                });
+            });
+        ui.add_space(18.0);
+
+        // ---- 双栏：左 = 应用信息，右 = 第三方依赖 ----
+        // 注意：allocate_ui 会继承父布局，horizontal 内必须显式 top_down（配置页同款坑）
+        let deps: [(&str, &str, &str); 13] = [
+            ("eframe", "0.37", "MIT OR Apache-2.0"),
+            ("egui", "0.37", "MIT OR Apache-2.0"),
+            ("zip", "2", "MIT"),
+            ("sha2", "0.10", "MIT OR Apache-2.0"),
+            ("hex", "0.4", "MIT OR Apache-2.0"),
+            ("serde", "1", "MIT OR Apache-2.0"),
+            ("serde_json", "1", "MIT OR Apache-2.0"),
+            ("chrono", "0.4", "MIT OR Apache-2.0"),
+            ("walkdir", "2", "Unlicense OR MIT"),
+            ("regex", "1", "MIT OR Apache-2.0"),
+            ("rfd", "0.14", "MIT"),
+            ("ico", "0.4", "MIT"),
+            ("embed-resource", "3", "MIT"),
+        ];
+        let top_down = egui::Layout::top_down(egui::Align::Min);
+        let h = ui.available_height();
+        ui.horizontal(|ui| {
+            let left_w = 320.0;
+            let right_w = ui.available_width() - left_w - 14.0;
+            ui.allocate_ui_with_layout(egui::vec2(left_w, h), top_down, |ui| {
+                section(ui, "应用信息", |ui| {
+                    let rows: [(&str, &str); 4] = [
+                        ("名称", env!("CARGO_PKG_NAME")),
+                        ("版本", env!("PKG_VERSION")),
+                        ("许可证", env!("CARGO_PKG_LICENSE")),
+                        ("描述", env!("CARGO_PKG_DESCRIPTION")),
+                    ];
+                    for (k, v) in rows {
+                        ui.horizontal(|ui| {
+                            ui.add_sized(
+                                [64.0, 20.0],
+                                egui::Label::new(
+                                    egui::RichText::new(k).size(12.5).color(MUTED),
+                                ),
+                            );
+                            if k == "描述" {
+                                // 长文本自动换行，与标签顶对齐
+                                ui.vertical(|ui| {
+                                    ui.add_space(2.0);
+                                    ui.label(
+                                        egui::RichText::new(v).size(12.5).color(TEXT),
+                                    );
+                                });
+                            } else {
+                                ui.label(egui::RichText::new(v).size(12.5).color(TEXT));
+                            }
+                        });
+                        ui.add_space(6.0);
+                    }
+                });
+            });
+            ui.add_space(14.0);
+            ui.allocate_ui_with_layout(egui::vec2(right_w, h), top_down, |ui| {
+                // 卡片内固定高度滚动：13 行依赖不再溢出窗口底部
+                // （section 头部 ≈23 + 间距 8 + 卡片上下内边距 24 + 尾部 18 ≈ 73）
+                let list_h = (h - 74.0).max(140.0);
+                section(ui, "第三方依赖", |ui| {
+                    egui::ScrollArea::vertical()
+                        .max_height(list_h)
+                        .auto_shrink([false, true])
+                        .show(ui, |ui| {
+                            for (name, ver, lic) in deps {
+                                ui.horizontal(|ui| {
+                                    // 名称列固定宽：许可证列纵向对齐
+                                    ui.add_sized(
+                                        [120.0, 20.0],
+                                        egui::Hyperlink::from_label_and_url(
+                                            egui::RichText::new(format!("{name} {ver}")).size(12.5),
+                                            format!("https://crates.io/crates/{name}"),
+                                        ),
+                                    );
+                                    ui.label(egui::RichText::new(lic).size(12.5).color(MUTED));
+                                });
+                                ui.add_space(5.0);
+                            }
+                        });
+                });
+            });
+        });
+    }
 }
 
 impl eframe::App for PackToolApp {
@@ -1685,6 +1863,7 @@ impl eframe::App for PackToolApp {
                     Page::History,
                     Page::Version,
                     Page::Log,
+                    Page::About,
                 ] {
                     let active = self.current_page == p;
                     let resp = ui.add(
@@ -1738,6 +1917,7 @@ impl eframe::App for PackToolApp {
                         Page::History => self.page_history(ui),
                         Page::Version => self.page_version(ui),
                         Page::Log => self.page_log(ui),
+                        Page::About => self.page_about(ui),
                         Page::Config => unreachable!(),
                     });
             }

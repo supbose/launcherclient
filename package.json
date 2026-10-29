@@ -11,5 +11,18 @@
     "pkgtool:dev": "cd src-pkgtool && cargo run",
     "preview": "cd src-egui/target/release && .\\launcherclient.exe --preview --template F --stage error"
   },
+  "author": {
+    "name": "supbose",
+    "email": "supbose@qingshu.work"
+  },
+  "license": "MIT",
+  "description": "qsltdupdater is a tool to update qsltdupdater.",
+  "keywords": [
+    "qsltdupdater",
+    "update",
+    "tool"
+  ],
+  "homepage": "https://github.com/qsltdupdater/qsltdupdater",
+  "repository": "https://github.com/qsltdupdater/qsltdupdater",
   "version": "0.1.30"
 }
