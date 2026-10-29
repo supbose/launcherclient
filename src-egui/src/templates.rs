@@ -129,6 +129,16 @@ pub fn draw_force_update(
         theme::text_alpha(153),
     );
 
+    // 更新日志：用户此刻正要决策「下载升级包 / 稍后升级」，日志是决策依据；
+    // manifest 未带日志时整块不占位（与其余界面日志卡约定一致），
+    // 固定高度内部滚动，不随条目数撑破 420 高窗口。
+    let log = view.changelog();
+    if !log.is_empty() {
+        ui.add_space(16.0);
+        let log_h = (ui.available_height() - 89.0).max(72.0);
+        widgets::log_card(ui, &log, log_h);
+    }
+
     // 动作行（推到内容区底部居中）
     ui.with_layout(Layout::top_down(Align::Center), |ui| {
         ui.add_space(18.0);
