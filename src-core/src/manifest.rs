@@ -76,7 +76,12 @@ pub async fn fetch_with_failover(urls: &[String]) -> Result<FlatManifest, String
     let mut last_err = String::new();
     for (i, url) in urls.iter().enumerate() {
         if urls.len() > 1 {
-            eprintln!("[更新器] 尝试 manifest 地址 {}/{}: {}", i + 1, urls.len(), url);
+            eprintln!(
+                "[更新器] 尝试 manifest 地址 {}/{}: {}",
+                i + 1,
+                urls.len(),
+                url
+            );
         }
         match fetch(url).await {
             Ok(m) => {
@@ -121,7 +126,8 @@ async fn fetch(url: &str) -> Result<FlatManifest, String> {
 
 /// 判断是否需要更新：manifest.update 为 false 时直接返回 false；
 /// 双方版本均可按 semver 解析时用 semver 比较，否则以版本号字符串不等作为更新依据
-pub fn need_update(current_version: &str, manifest: &FlatManifest) -> bool {    if !manifest.update {
+pub fn need_update(current_version: &str, manifest: &FlatManifest) -> bool {
+    if !manifest.update {
         return false;
     }
     match (
@@ -450,9 +456,8 @@ mod tests {
     #[test]
     fn manifest_unknown_fields_are_ignored() {
         // 服务端加字段不应阻塞老客户端
-        let m: FlatManifest =
-            serde_json::from_str(r#"{"version": "1.0.0", "future_field": 42}"#)
-                .expect("未知字段应被忽略");
+        let m: FlatManifest = serde_json::from_str(r#"{"version": "1.0.0", "future_field": 42}"#)
+            .expect("未知字段应被忽略");
         assert_eq!(m.version, "1.0.0");
     }
 
@@ -503,7 +508,11 @@ mod tests {
             .map(|d| d.as_secs())
             .unwrap_or(0);
         let _ = std::fs::remove_file(&path);
-        write_entry(&path, now.saturating_sub(MANIFEST_CACHE_TTL.as_secs()), &m("1.0.0", true));
+        write_entry(
+            &path,
+            now.saturating_sub(MANIFEST_CACHE_TTL.as_secs()),
+            &m("1.0.0", true),
+        );
         assert!(load_fresh_cache(&path).is_some(), "age == TTL 应仍命中");
         let _ = std::fs::remove_file(&path);
     }
@@ -512,7 +521,10 @@ mod tests {
     fn cache_corrupt_file_returns_none() {
         let path = temp_cache_path("corrupt");
         std::fs::write(&path, b"not a json").expect("写损坏缓存");
-        assert!(load_fresh_cache(&path).is_none(), "损坏缓存必须静默视为未命中");
+        assert!(
+            load_fresh_cache(&path).is_none(),
+            "损坏缓存必须静默视为未命中"
+        );
         let _ = std::fs::remove_file(&path);
     }
 
@@ -538,20 +550,32 @@ mod tests {
 
     #[test]
     fn below_min_version_semver() {
-        assert!(!is_below_min_version("2.1.3", &fm_with("2.1.3", Some("2.1.0"), false)));
-        assert!(is_below_min_version("2.0.0", &fm_with("2.1.3", Some("2.1.0"), false)));
+        assert!(!is_below_min_version(
+            "2.1.3",
+            &fm_with("2.1.3", Some("2.1.0"), false)
+        ));
+        assert!(is_below_min_version(
+            "2.0.0",
+            &fm_with("2.1.3", Some("2.1.0"), false)
+        ));
     }
 
     #[test]
     fn below_min_version_none_means_no_constraint() {
         // min_version 缺失：任何当前版本都不算「低于最低版本」
-        assert!(!is_below_min_version("0.0.1", &fm_with("1.0.0", None, false)));
+        assert!(!is_below_min_version(
+            "0.0.1",
+            &fm_with("1.0.0", None, false)
+        ));
     }
 
     #[test]
     fn forced_update_flag_triggers_regardless_of_version() {
         // 标记强制更新：即便当前版本等于最新版也要升级
-        assert!(requires_force_update("2.1.3", &fm_with("2.1.3", None, true)));
+        assert!(requires_force_update(
+            "2.1.3",
+            &fm_with("2.1.3", None, true)
+        ));
     }
 
     #[test]
@@ -560,12 +584,18 @@ mod tests {
         assert!(!requires_force_update("3.0.0", &m));
         assert!(requires_force_update("1.9.0", &m));
         let f = fm_with("3.0.0", Some("2.0.0"), true);
-        assert!(requires_force_update("3.0.0", &f), "标记强制更新时高于 min 仍触发");
+        assert!(
+            requires_force_update("3.0.0", &f),
+            "标记强制更新时高于 min 仍触发"
+        );
     }
 
     #[test]
     fn required_version_prefers_min_then_manifest_version() {
-        assert_eq!(required_version(&fm_with("2.1.3", Some("2.0.0"), false)), "2.0.0");
+        assert_eq!(
+            required_version(&fm_with("2.1.3", Some("2.0.0"), false)),
+            "2.0.0"
+        );
         assert_eq!(required_version(&fm_with("2.1.3", None, true)), "2.1.3");
     }
 
@@ -594,7 +624,10 @@ mod tests {
             r#"{"version": "2.0.0", "store_url": "https://apps.apple.com/app/id123"}"#,
         )
         .expect("应可解析");
-        assert_eq!(m.store_url.as_deref(), Some("https://apps.apple.com/app/id123"));
+        assert_eq!(
+            m.store_url.as_deref(),
+            Some("https://apps.apple.com/app/id123")
+        );
     }
 
     // ---------- 包完整性可验证性（require_sha256 闸门的判定依据） ----------

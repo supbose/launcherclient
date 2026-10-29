@@ -5,7 +5,7 @@
 
 use egui::{
     emath::Pos2, epaint::PathShape, Align2, Color32, CursorIcon, FontId, Mesh, Painter, Rect,
-    RichText, Sense, Shape, Stroke, Vec2, Ui,
+    RichText, Sense, Shape, Stroke, Ui, Vec2,
 };
 
 use crate::theme;
@@ -80,12 +80,18 @@ pub fn draw_titlebar(ui: &mut Ui, title: &str) -> TitleBarAction {
     // 拖拽区（按钮区域除外）
     let drag_rect = Rect::from_min_max(
         rect.left_top(),
-        Pos2::new(rect.right() - theme::TITLEBAR_BTN_WIDTH * 2.0, rect.bottom()),
+        Pos2::new(
+            rect.right() - theme::TITLEBAR_BTN_WIDTH * 2.0,
+            rect.bottom(),
+        ),
     );
-    let drag = ui.interact(drag_rect, ui.scope_id().with("tb-drag"), Sense::click_and_drag());
+    let drag = ui.interact(
+        drag_rect,
+        ui.scope_id().with("tb-drag"),
+        Sense::click_and_drag(),
+    );
     if drag.drag_started() {
-        ui.ctx()
-            .send_viewport_cmd(egui::ViewportCommand::StartDrag);
+        ui.ctx().send_viewport_cmd(egui::ViewportCommand::StartDrag);
     }
 
     // 标题文字（左侧内边距、垂直居中；裁在拖拽区内，不遮按钮）
@@ -136,7 +142,10 @@ pub fn draw_titlebar(ui: &mut Ui, title: &str) -> TitleBarAction {
     };
     let cy = y_center;
     painter.line_segment(
-        [Pos2::new(min_rect.center().x - 7.0, cy), Pos2::new(min_rect.center().x + 7.0, cy)],
+        [
+            Pos2::new(min_rect.center().x - 7.0, cy),
+            Pos2::new(min_rect.center().x + 7.0, cy),
+        ],
         Stroke::new(2.0, min_color),
     );
     min_resp.clone().on_hover_cursor(CursorIcon::PointingHand);
@@ -175,7 +184,7 @@ pub fn draw_titlebar(ui: &mut Ui, title: &str) -> TitleBarAction {
 pub fn spinner(painter: &Painter, center: Pos2, radius: f32, width: f32, color: Color32) {
     let t = painter.ctx().input(|i| i.time);
     let track = Stroke::new(width, theme::text_alpha(38)); // rgba(255,255,255,0.15)
-    // 底圈
+                                                           // 底圈
     let circle: Vec<Pos2> = (0..=48)
         .map(|i| {
             let a = (i as f64 / 48.0) * std::f64::consts::TAU;
@@ -241,7 +250,12 @@ pub fn pill(ui: &mut Ui, text: &str) -> Rect {
     let (rect, _) = ui.allocate_exact_size(size, Sense::hover());
     let painter = ui.painter_at(rect);
     painter.rect_filled(rect, size.y / 2.0, theme::tint(theme::ACCENT, 36)); // 0.14
-    painter.rect_stroke(rect, size.y / 2.0, Stroke::new(1.0, theme::tint(theme::ACCENT, 89)), egui::StrokeKind::Inside); // 0.35
+    painter.rect_stroke(
+        rect,
+        size.y / 2.0,
+        Stroke::new(1.0, theme::tint(theme::ACCENT, 89)),
+        egui::StrokeKind::Inside,
+    ); // 0.35
     painter.galley(
         rect.left_top() + Vec2::new(pad_x, pad_y),
         galley,
@@ -261,7 +275,12 @@ pub fn log_card(ui: &mut Ui, items: &[&str], body_h: f32) {
     let (rect, _) = ui.allocate_exact_size(Vec2::new(full_width, body_h + 42.0), Sense::hover());
     let painter = ui.painter_at(rect);
     painter.rect_filled(rect, 8.0, theme::W04);
-    painter.rect_stroke(rect, 8.0, Stroke::new(1.0, theme::W08), egui::StrokeKind::Inside);
+    painter.rect_stroke(
+        rect,
+        8.0,
+        Stroke::new(1.0, theme::W08),
+        egui::StrokeKind::Inside,
+    );
 
     // 卡片内部布局
     let inner = Rect::from_min_max(
@@ -326,8 +345,7 @@ pub fn inline_log(ui: &mut Ui, items: &[&str]) {
                 if i > 0 {
                     let w = ui.available_width();
                     let (r, _) = ui.allocate_exact_size(Vec2::new(w, 1.0), Sense::hover());
-                    ui.painter_at(r)
-                        .rect_filled(r, 0.0, theme::W08);
+                    ui.painter_at(r).rect_filled(r, 0.0, theme::W08);
                 }
                 ui.label(
                     RichText::new(*line)
@@ -344,12 +362,10 @@ pub fn inline_log(ui: &mut Ui, items: &[&str]) {
 pub fn button(ui: &mut Ui, text: &str, primary: bool, enabled: bool) -> bool {
     let font = FontId::proportional(13.0);
     let pad = Vec2::new(26.0, 7.0);
-    let text_color = if primary {
-        Color32::WHITE
-    } else {
-        theme::TEXT
-    };
-    let galley = ui.painter().layout_no_wrap(text.to_owned(), font, text_color);
+    let text_color = if primary { Color32::WHITE } else { theme::TEXT };
+    let galley = ui
+        .painter()
+        .layout_no_wrap(text.to_owned(), font, text_color);
     let size = galley.size() + pad * 2.0;
     let (rect, resp) = ui.allocate_exact_size(size, Sense::click());
     let painter = ui.painter_at(rect);
@@ -381,8 +397,16 @@ pub fn button(ui: &mut Ui, text: &str, primary: bool, enabled: bool) -> bool {
         );
     }
 
-    let tc = if enabled { text_color } else { theme::text_alpha(153) };
-    let tc = if primary && !enabled { Color32::from_white_alpha(153) } else { tc };
+    let tc = if enabled {
+        text_color
+    } else {
+        theme::text_alpha(153)
+    };
+    let tc = if primary && !enabled {
+        Color32::from_white_alpha(153)
+    } else {
+        tc
+    };
     let offset = ((size - galley.size()) * 0.5).round();
     painter.galley(rect.left_top() + offset, galley, tc);
 
@@ -406,7 +430,16 @@ pub fn actions_row(
     ui.horizontal(|ui| {
         ui.add_space(0.0);
         if show_retry {
-            if button(ui, if retrying { "正在重试..." } else { "重试" }, true, !retrying) {
+            if button(
+                ui,
+                if retrying {
+                    "正在重试..."
+                } else {
+                    "重试"
+                },
+                true,
+                !retrying,
+            ) {
                 act = Some(Action::Retry);
             }
             ui.add_space(10.0);
@@ -434,7 +467,14 @@ pub fn actions_row(
 pub fn error_hint(attempt_text: &str, stage_name: &str, needs_homepage: bool) -> String {
     // 环节名 + 已试次数：「下载已自动重试 2 次（共 3 次尝试）」
     let tried = if attempt_text.is_empty() {
-        format!("{}失败", if stage_name.is_empty() { "更新" } else { stage_name })
+        format!(
+            "{}失败",
+            if stage_name.is_empty() {
+                "更新"
+            } else {
+                stage_name
+            }
+        )
     } else if stage_name.is_empty() {
         attempt_text.to_string()
     } else {
@@ -479,11 +519,7 @@ pub fn centered_label(ui: &mut Ui, text: &str, size: f32, color: Color32) {
 /// - 有商店地址（`has_store`）：展示「前往应用商店」
 /// - 始终展示「下载升级包」（primary，走更新流程）
 /// - 非阻断（`blocking=false`）：额外展示「稍后升级」，允许应用照常启动
-pub fn force_update_actions_row(
-    ui: &mut Ui,
-    blocking: bool,
-    has_store: bool,
-) -> Option<Action> {
+pub fn force_update_actions_row(ui: &mut Ui, blocking: bool, has_store: bool) -> Option<Action> {
     let mut act = None;
     ui.horizontal(|ui| {
         ui.add_space(0.0);

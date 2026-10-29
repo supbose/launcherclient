@@ -20,7 +20,10 @@ use chrono::{SecondsFormat, Utc};
 use serde::{Deserialize, Serialize};
 
 /// 本地版本记录，落盘为 `<应用目录>\app.json`
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+///
+/// `Default` 用 derive：所有字段都是 `Option` / `String` / `bool`，派生结果即
+/// 「全 None + 全空串 + false」，与旧手写实现一致，且新增字段不会漏初始化。
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
 pub struct LocalManifest {
     /// 应用名称（向前兼容：旧版本 manifest 可能没有此字段）
     #[serde(default)]
@@ -37,22 +40,6 @@ pub struct LocalManifest {
     /// WebSocket 服务完整地址（格式：ws://127.0.0.1:8889）
     #[serde(skip_serializing_if = "Option::is_none")]
     pub ws_address: Option<String>,
-}
-
-impl Default for LocalManifest {
-    fn default() -> Self {
-        Self {
-            name: None,
-            version: String::new(),
-            installed_at: String::new(),
-            installed_path: String::new(),
-            last_check: String::new(),
-            launch_app: None,
-            use_version_dir: false,
-            api_address: None,
-            ws_address: None,
-        }
-    }
 }
 
 /// 当前 UTC 时刻的秒级 RFC3339 字符串（如 `2026-10-30T07:12:56Z`）
@@ -220,7 +207,11 @@ mod tests {
         // 秒级 UTC、Z 结尾：20 字符 + 无小数点
         assert!(m.installed_at.ends_with('Z'), "{}", m.installed_at);
         assert!(!m.installed_at.contains('.'), "{}", m.installed_at);
-        let digits: usize = m.installed_at.chars().filter(|c| c.is_ascii_digit()).count();
+        let digits: usize = m
+            .installed_at
+            .chars()
+            .filter(|c| c.is_ascii_digit())
+            .count();
         assert_eq!(digits, 14, "应为 YYYYMMDDHHMMSS 秒级精度");
 
         let named = LocalManifest::new("qsm", "2.0.0", "p", None, true, None, None);

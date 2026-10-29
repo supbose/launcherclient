@@ -313,7 +313,10 @@ mod tests {
     fn one_or_many_single_string() {
         let v: OneOrMany =
             serde_json::from_str(r#""https://example.com/version.json""#).expect("单地址应可解析");
-        assert_eq!(v.to_urls(), vec!["https://example.com/version.json".to_string()]);
+        assert_eq!(
+            v.to_urls(),
+            vec!["https://example.com/version.json".to_string()]
+        );
     }
 
     #[test]
@@ -366,16 +369,18 @@ mod tests {
             s.services,
             Some(vec!["QsmServer".to_string(), "QsmHelper".to_string()])
         );
-        assert_eq!(s.manifest_url.map(|m| m.to_urls()).map(|u| u.len()), Some(2));
+        assert_eq!(
+            s.manifest_url.map(|m| m.to_urls()).map(|u| u.len()),
+            Some(2)
+        );
     }
 
     #[test]
     fn settings_unknown_fields_ignored() {
         // 生成的模板带 _说明 文档字段（对象），读取时必须忽略
-        let s: UpdateSettings = serde_json::from_str(
-            r#"{"_说明": {"manifest_url": "..."}, "app_name": "qsm"}"#,
-        )
-        .expect("未知字段应被忽略");
+        let s: UpdateSettings =
+            serde_json::from_str(r#"{"_说明": {"manifest_url": "..."}, "app_name": "qsm"}"#)
+                .expect("未知字段应被忽略");
         assert_eq!(s.app_name.as_deref(), Some("qsm"));
     }
 
@@ -391,7 +396,10 @@ mod tests {
         // 未配置 → 默认模板 F
         let s: UpdateSettings = serde_json::from_str("{}").expect("空配置应可解析");
         assert!(s.launcher_template().is_none());
-        assert_eq!(resolve_launcher_template(s.launcher_template().as_deref()), "F");
+        assert_eq!(
+            resolve_launcher_template(s.launcher_template().as_deref()),
+            "F"
+        );
     }
 
     // ---------- require_sha256（包完整性闸门） ----------
@@ -449,7 +457,10 @@ mod tests {
         let s: UpdateSettings =
             serde_json::from_str(r#"{"launcher_template": ""}"#).expect("应可解析");
         assert!(s.launcher_template().is_none());
-        assert_eq!(resolve_launcher_template(s.launcher_template().as_deref()), "F");
+        assert_eq!(
+            resolve_launcher_template(s.launcher_template().as_deref()),
+            "F"
+        );
     }
 
     #[test]
@@ -498,8 +509,7 @@ mod tests {
 
     #[test]
     fn launcher_name_field_parsed() {
-        let s: UpdateSettings =
-            serde_json::from_str(r#"{"name": "青杉应用中心"}"#).expect("解析");
+        let s: UpdateSettings = serde_json::from_str(r#"{"name": "青杉应用中心"}"#).expect("解析");
         assert_eq!(s.launcher_name().as_deref(), Some("青杉应用中心"));
         // 未配置 / 空串 / 全空白都视为「跟随 exe 内置标题」
         assert!(UpdateSettings::default().launcher_name().is_none());
@@ -524,7 +534,10 @@ mod tests {
     #[test]
     fn launcher_name_explicit_wins_and_trims() {
         assert_eq!(resolve_launcher_name(Some("My App"), None), "My App");
-        assert_eq!(resolve_launcher_name(None, Some("  青杉启动器 \n")), "青杉启动器");
+        assert_eq!(
+            resolve_launcher_name(None, Some("  青杉启动器 \n")),
+            "青杉启动器"
+        );
     }
 
     #[test]
@@ -548,7 +561,10 @@ mod tests {
     #[test]
     fn launcher_name_strips_line_breaks_keeps_single_line() {
         // 标题只有一行：配置里混进换行/制表符要剔除，不能让标题栏断行
-        assert_eq!(resolve_launcher_name(None, Some("青杉\r\n应用中心")), "青杉应用中心");
+        assert_eq!(
+            resolve_launcher_name(None, Some("青杉\r\n应用中心")),
+            "青杉应用中心"
+        );
         assert_eq!(resolve_launcher_name(Some("A\tB"), None), "AB");
         // 剔完只剩空白 → 回落内置默认
         assert_eq!(
@@ -603,7 +619,13 @@ mod tests {
         let content = std::fs::read_to_string(&path).expect("读取 update.json");
         let s: UpdateSettings = serde_json::from_str(&content).expect("update.json 应可解析");
         assert!(s.manifest_url.is_some(), "仓库示例应带 manifest_url");
-        assert!(!content.contains("store_url"), "update.json 不应再含 store_url");
-        assert!(!content.contains("force_update"), "update.json 不应再含 force_update");
+        assert!(
+            !content.contains("store_url"),
+            "update.json 不应再含 store_url"
+        );
+        assert!(
+            !content.contains("force_update"),
+            "update.json 不应再含 force_update"
+        );
     }
 }

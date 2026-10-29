@@ -59,9 +59,7 @@ where
     }
     // 已处于提权重试副本仍非提权：不再重复拉起，交回 services.rs 的退出码 5 兜底
     if std::env::args().any(|a| a == ELEVATION_RETRY_FLAG) {
-        eprintln!(
-            "[更新器] 提权重试副本仍非管理员，停止重复拉起，交回 sc 退出码兜底"
-        );
+        eprintln!("[更新器] 提权重试副本仍非管理员，停止重复拉起，交回 sc 退出码兜底");
         return Ok(false);
     }
     match relaunch_fn() {

@@ -150,11 +150,7 @@ impl PhasePayload {
     }
 
     /// 构造错误阶段载荷，并标记本次失败是否出在下载环节
-    pub fn failure(
-        message: &str,
-        sub: &str,
-        download_failed: bool,
-    ) -> Self {
+    pub fn failure(message: &str, sub: &str, download_failed: bool) -> Self {
         let mut p = Self::new(Stage::Error, message, sub, None);
         p.download_failed = download_failed;
         p
@@ -210,12 +206,7 @@ impl PhasePayload {
     /// - `blocking`：是否阻断启动（true=必须升级，无「稍后升级」出口；
     ///   false=非阻断，提供「稍后升级」让应用照常启动）
     /// - `has_store`：是否提供「前往应用商店」入口（服务端 manifest store_url 非空）
-    pub fn force_update(
-        current: &str,
-        required: &str,
-        blocking: bool,
-        has_store: bool,
-    ) -> Self {
+    pub fn force_update(current: &str, required: &str, blocking: bool, has_store: bool) -> Self {
         let mut p = Self::new(
             Stage::ForceUpdate,
             if blocking {

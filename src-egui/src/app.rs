@@ -13,7 +13,9 @@ use std::time::Instant;
 use egui::{Color32, FontId, RichText, Sense, Ui, Vec2};
 use qsltd_updater_core::flow;
 use qsltd_updater_core::manifest::FlatManifest;
-use qsltd_updater_core::phase::{resolve_template_key, PhaseHandle, PhasePayload, PhaseView, Stage};
+use qsltd_updater_core::phase::{
+    resolve_template_key, PhaseHandle, PhasePayload, PhaseView, Stage,
+};
 
 use crate::preview;
 use crate::templates;
@@ -189,7 +191,12 @@ impl eframe::App for UpdaterApp {
             // - SilentExit：无更新，隐藏窗口并静默退出（用户无感）
             // - Show：写入首帧阶段快照并启动后台下载流程，标记窗口需显示
             if !self.startup_consumed {
-                if let Some(decision) = self.startup.lock().unwrap_or_else(|e| e.into_inner()).take() {
+                if let Some(decision) = self
+                    .startup
+                    .lock()
+                    .unwrap_or_else(|e| e.into_inner())
+                    .take()
+                {
                     self.startup_consumed = true;
                     match decision {
                         flow::StartupDecision::SilentExit(code) => {
@@ -197,7 +204,9 @@ impl eframe::App for UpdaterApp {
                             std::process::exit(code);
                         }
                         flow::StartupDecision::Show(ctx) => {
-                            let flow::StartupContext { manifest, initial, .. } = *ctx;
+                            let flow::StartupContext {
+                                manifest, initial, ..
+                            } = *ctx;
                             let is_force = initial.stage() == Stage::ForceUpdate;
                             self.phase.set(initial);
                             self.startup_show = true;
@@ -284,7 +293,11 @@ impl eframe::App for UpdaterApp {
             self.payload.as_ref().map(|p| p.stage()),
             Some(Stage::Checking) | Some(Stage::Downloading) | Some(Stage::Installing) | None
         );
-        ctx.request_repaint_after(std::time::Duration::from_millis(if animating { 33 } else { 150 }));
+        ctx.request_repaint_after(std::time::Duration::from_millis(if animating {
+            33
+        } else {
+            150
+        }));
     }
 
     /// 每帧渲染：根 ui 无边距无背景，全窗口自绘
@@ -296,7 +309,8 @@ impl eframe::App for UpdaterApp {
         let tb = widgets::draw_titlebar(ui, &self.title);
         match tb {
             widgets::TitleBarAction::Minimize => {
-                ui.ctx().send_viewport_cmd(egui::ViewportCommand::Minimized(true));
+                ui.ctx()
+                    .send_viewport_cmd(egui::ViewportCommand::Minimized(true));
             }
             widgets::TitleBarAction::Close => {
                 // 与系统关闭同路径：send Close → logic 拦截关键阶段
@@ -312,10 +326,8 @@ impl eframe::App for UpdaterApp {
         } else {
             ui.available_height()
         };
-        let (area, _) = ui.allocate_exact_size(
-            Vec2::new(ui.available_width(), content_h),
-            Sense::hover(),
-        );
+        let (area, _) =
+            ui.allocate_exact_size(Vec2::new(ui.available_width(), content_h), Sense::hover());
 
         // 预览模式：阶段载荷来自面板预设；真实模式：来自共享快照
         // 决策前的「检测中」（payload 为 None）：只渲染极简屏，
@@ -356,11 +368,7 @@ impl eframe::App for UpdaterApp {
             // 成功打开浏览器后用户视线已经在别处，不需要再占版面）
             if let Some(err) = self.homepage_error.as_deref() {
                 if view.stage() == Stage::Error {
-                    ui.label(
-                        RichText::new(err)
-                            .size(11.0)
-                            .color(theme::text_alpha(140)),
-                    );
+                    ui.label(RichText::new(err).size(11.0).color(theme::text_alpha(140)));
                 }
             }
             action
@@ -431,7 +439,12 @@ fn draw_close_confirm(ui: &mut Ui, show: &mut bool, confirmed: &mut bool) {
     let card = egui::Rect::from_center_size(full.center(), Vec2::new(330.0, 148.0));
     let painter = ui.painter();
     painter.rect_filled(card, 10.0, theme::BG_TOP);
-    painter.rect_stroke(card, 10.0, egui::Stroke::new(1.0, theme::W18), egui::StrokeKind::Inside);
+    painter.rect_stroke(
+        card,
+        10.0,
+        egui::Stroke::new(1.0, theme::W18),
+        egui::StrokeKind::Inside,
+    );
 
     painter.text(
         card_label_pos(card, 24.0),
@@ -490,7 +503,12 @@ fn modal_button(ui: &mut Ui, rect: egui::Rect, label: &str, primary: bool) -> bo
         if resp.hovered() {
             painter.rect_filled(rect, 6.0, theme::W10_HOVER);
         }
-        painter.rect_stroke(rect, 6.0, egui::Stroke::new(1.0, theme::W20), egui::StrokeKind::Inside);
+        painter.rect_stroke(
+            rect,
+            6.0,
+            egui::Stroke::new(1.0, theme::W20),
+            egui::StrokeKind::Inside,
+        );
     }
     painter.text(
         rect.center(),

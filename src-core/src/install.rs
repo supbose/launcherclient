@@ -1,8 +1,8 @@
-﻿//! 更新包安装：zip 解压到版本目录 + 写入本地版本记录（app.json）
+//! 更新包安装：zip 解压到版本目录 + 写入本地版本记录（app.json）
 
+use std::io::Read as _;
 use std::path::{Path, PathBuf};
-use std::sync::Arc;
-use std::io::Read as _; // Read::take（流式截断，防 zip bomb 闸 2）
+use std::sync::Arc; // Read::take（流式截断，防 zip bomb 闸 2）
 
 use crate::local_manifest::LocalManifest;
 
@@ -27,7 +27,8 @@ pub fn find_main_executable(install_dir: &Path, app_name: &str) -> Option<PathBu
         .map(|e| e.path())
         .filter(|p| {
             p.is_file()
-                && p.extension().is_some_and(|ext| ext.eq_ignore_ascii_case("exe"))
+                && p.extension()
+                    .is_some_and(|ext| ext.eq_ignore_ascii_case("exe"))
                 && !p.file_stem().is_some_and(|s| {
                     let stem = s.to_string_lossy().to_lowercase();
                     SELF_EXE_STEMS.contains(&stem.as_str())
@@ -71,7 +72,11 @@ pub fn find_main_executable(install_dir: &Path, app_name: &str) -> Option<PathBu
 /// - `on_stage`: 安装阶段回调（中文消息 + 进度百分比，解压阶段按条目实时推进）
 ///
 /// 返回安装目录路径
-pub async fn install(zip_path: &Path, install_dir: &Path, on_stage: StageCallback) -> Result<PathBuf, String> {
+pub async fn install(
+    zip_path: &Path,
+    install_dir: &Path,
+    on_stage: StageCallback,
+) -> Result<PathBuf, String> {
     // 安装目录已存在则先删除（同版本重装场景）
     if install_dir.exists() {
         on_stage(&format!("清理旧目录: {}", install_dir.display()), None);
@@ -286,7 +291,8 @@ fn extract_zip_with_limits(
             {
                 use std::os::unix::fs::PermissionsExt;
                 if let Some(mode) = unix_mode {
-                    let _ = std::fs::set_permissions(&out_path, std::fs::Permissions::from_mode(mode));
+                    let _ =
+                        std::fs::set_permissions(&out_path, std::fs::Permissions::from_mode(mode));
                 }
             }
         }
@@ -298,7 +304,12 @@ fn extract_zip_with_limits(
             .map(|n| n.to_string_lossy().into_owned())
             .unwrap_or_default();
         on_stage(
-            &format!("正在解压更新包... {} / {}（{}）", i + 1, total as u64, brief),
+            &format!(
+                "正在解压更新包... {} / {}（{}）",
+                i + 1,
+                total as u64,
+                brief
+            ),
             Some(pct),
         );
     }
@@ -463,10 +474,7 @@ mod tests {
     #[test]
     fn temp_dir_appends_tmp_suffix() {
         let d = Path::new("/apps/qsm/app/app_2.1.2");
-        assert_eq!(
-            temp_dir_for(d),
-            Path::new("/apps/qsm/app/app_2.1.2_tmp")
-        );
+        assert_eq!(temp_dir_for(d), Path::new("/apps/qsm/app/app_2.1.2_tmp"));
     }
 
     #[test]
@@ -517,8 +525,7 @@ mod tests {
         make_test_zip(&zip, &[("a.txt", b"hello"), ("sub/b.bin", &[0u8; 64])])?;
         let out = dir.join("out");
         std::fs::create_dir_all(&out)?;
-        extract_zip(&zip, &out, &noop_stage())
-            .map_err(io::Error::other)?;
+        extract_zip(&zip, &out, &noop_stage()).map_err(io::Error::other)?;
         assert_eq!(std::fs::read(out.join("a.txt"))?, b"hello");
         assert_eq!(std::fs::read(out.join("sub/b.bin"))?.len(), 64);
         let _ = std::fs::remove_dir_all(&dir);
@@ -533,8 +540,7 @@ mod tests {
         make_test_zip(&zip, &[("exact.txt", &[b'a'; 100])])?;
         let out = dir.join("out");
         std::fs::create_dir_all(&out)?;
-        extract_zip_with_limits(&zip, &out, &noop_stage(), 1_000, 100)
-            .map_err(io::Error::other)?;
+        extract_zip_with_limits(&zip, &out, &noop_stage(), 1_000, 100).map_err(io::Error::other)?;
         assert_eq!(std::fs::read(out.join("exact.txt"))?.len(), 100);
         let _ = std::fs::remove_dir_all(&dir);
         Ok(())
@@ -583,8 +589,7 @@ mod tests {
         make_test_zip(&zip, &[("../evil.txt", b"evil"), ("ok.txt", b"fine")])?;
         let out = dir.join("out");
         std::fs::create_dir_all(&out)?;
-        extract_zip(&zip, &out, &noop_stage())
-            .map_err(io::Error::other)?;
+        extract_zip(&zip, &out, &noop_stage()).map_err(io::Error::other)?;
         assert!(out.join("ok.txt").exists(), "正常条目应解压");
         assert!(!out.join("evil.txt").exists(), "穿越条目不应写入 dest");
         assert!(!dir.join("evil.txt").exists(), "穿越条目不应写入 dest 之外");

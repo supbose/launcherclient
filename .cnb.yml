@@ -1,0 +1,65 @@
+# CNB 云原生构建流水线：提交与 PR 上跑「发布可信度」门禁。
+#
+# 层级是 分支 → 事件 → Pipeline → Stage（串行）；CNB 默认已拉好代码，不需要 checkout 步骤。
+#
+# 门禁分两档，刻意不是一锅端：
+#   硬门禁（失败即红）= 不需要在 Linux 上编译 UI 的检查项
+#     · 版本号一致性（package.json 为唯一来源）
+#     · rustfmt 检查（只看源码，不触发编译，所以 UI crate 也能覆盖）
+#     · src-core clippy -D warnings
+#     · src-core 单元测试（214 个，纯单元、无系统副作用）
+#   软门禁（失败只打印，不拦合并）= 需要在 Linux 上真的编译 UI 的检查项
+#     · src-egui / src-pkgtool 的 clippy
+#     原因：eframe/wgpu 在 Linux 要 X11/Wayland 与 OpenSSL 系统包，wgpu 还要求 Vulkan/GL 栈，
+#     镜像里缺任何一个都会把流水线变成「和代码无关的红」。这两个 crate 的严格检查
+#     请在 Windows 开发机上跑（本地已验证 0 warning），或后续单独配一个带依赖的镜像。
+#
+# 签名（Authenticode）不在流水线里：需要 .pfx 与时间戳服务，属于发布机的事，
+# 见 scripts/pybuild.py 的 --codesign-pfx / --codesign-tsa 与 README §7。
+main:
+  push: &ci
+    - name: launcherclient-quality-gate
+      image: rust:1-bookworm
+      stages:
+        - name: 准备工具链与系统依赖
+          script:
+            - rustup component add rustfmt clippy
+            # libssl-dev/pkg-config：src-core 的 reqwest 默认走 native-tls，Linux 上要有 OpenSSL 开发头
+            - apt-get update -qq
+            - apt-get install -y -qq --no-install-recommends ca-certificates pkg-config libssl-dev python3
+            - rustc --version && cargo --version && python3 --version
+
+        - name: 版本号一致性（package.json 为唯一来源）
+          script:
+            # 漂移即失败：Cargo.toml/rc 与 package.json 不同源时，产物「关于」页与 exe 属性会自相矛盾
+            - python3 scripts/pybuild.py --check-version
+
+        - name: 格式检查（硬门禁）
+          script:
+            # --all 覆盖 workspace 成员（src-core + src-egui）；src-pkgtool 被 workspace 刻意排除，单独查
+            - cargo fmt --all -- --check
+            - (cd src-pkgtool && cargo fmt --check)
+
+        - name: Clippy src-core（硬门禁）
+          script:
+            # 只编 src-core，不碰 UI crate，因此这条在 Linux 上稳定可复现
+            - cargo clippy -p qsltd-updater-core --all-targets -- -D warnings
+
+        - name: 单元测试 src-core（硬门禁）
+          script:
+            # default features 不含 integration：不会去碰 sc.exe / 真实网络
+            - cargo test -p qsltd-updater-core
+
+        - name: Clippy src-egui（软门禁）
+          script:
+            - >-
+              cargo clippy -p qsltdupdater-egui --all-targets -- -D warnings
+              || echo "[软门禁] src-egui 在 Linux 上编译依赖不全（X11/Wayland/OpenSSL/wgpu），本条不拦合并；请在 Windows 开发机执行同样命令确认"
+
+        - name: Clippy src-pkgtool（软门禁）
+          script:
+            - >-
+              (cd src-pkgtool && cargo clippy --all-targets -- -D warnings)
+              || echo "[软门禁] src-pkgtool 同上，依赖 egui 渲染栈，Linux 镜像缺系统包时不拦合并"
+
+  pull_request: *ci

@@ -1,0 +1,36 @@
+# 根 workspace：统一「共享核心 + 生产壳」的依赖解析、版本字段与构建 profile。
+#
+# 收益：一条 `cargo test` / `cargo clippy` 覆盖两个 crate；只有一份 Cargo.lock，
+# 共享依赖不再各编一遍（此前 src-core 与 src-egui 各有一份 lock + 各一个 target）。
+#
+# src-pkgtool 刻意**不**纳入：它的 [profile.release] 把 lto 关掉、opt-level 降到 2、
+# codegen-units 提到 16，是为规避特定环境下编译 windows-sys 的偶发崩溃（见 README §7）。
+# workspace 的 profile 是全局唯一、成员不能覆盖，纳进来会让那份规避失效，
+# 顺带把发布产物 launcherclient.exe 的 LTO/strip 也一起退化。它继续独立构建。
+[workspace]
+resolver = "2"
+members = ["src-core", "src-egui"]
+exclude = ["src-pkgtool"]
+
+# 版本号的 Rust 侧唯一写入点。
+# 权威来源是 package.json 的 version，由 `python scripts/pybuild.py <target>` 同步到这里
+# （以及 src-pkgtool/Cargo.toml 与两个 rc 文件）；`--check-version` 负责校验一致性。
+# 手改这里会在下一次构建被覆盖，且 CI 会报漂移。
+[workspace.package]
+version = "0.2.1"
+edition = "2021"
+license = "MIT"
+authors = ["supbose <supbose@qq.com>"]
+
+# 以下 profile 原样从 src-egui/Cargo.toml 上移（workspace 内成员不能再定义 profile）。
+# 与纳入构建的 src-core 无冲突：它是纯库，此前没有自己的 profile。
+[profile.dev]
+debug = true
+opt-level = 0
+
+[profile.release]
+opt-level = 3
+lto = true
+# 剥离调试符号与 panic 位置信息：减小体积、降低杀软启发式误报率（对齐原 Tauri 版的既有约定）
+strip = true
+codegen-units = 1

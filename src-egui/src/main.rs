@@ -64,10 +64,8 @@ fn main() {
     if preview_mode {
         // 预览模式不读 update.json（避免在预览目录里生成配置模板），
         // 标题只走「命令行 --name > 编译期烘焙默认」两级
-        let title = qsltd_updater_core::config::resolve_launcher_name(
-            args.launcher_name.as_deref(),
-            None,
-        );
+        let title =
+            qsltd_updater_core::config::resolve_launcher_name(args.launcher_name.as_deref(), None);
         run_ui(
             &args,
             phase,
@@ -153,9 +151,8 @@ fn run_ui(
     title: &str,
 ) {
     // 生效模板：命令行 --template > 默认（F）；预览模式可在面板里切换
-    let template = qsltd_updater_core::phase::resolve_template_key(
-        args.template.as_deref().unwrap_or(""),
-    );
+    let template =
+        qsltd_updater_core::phase::resolve_template_key(args.template.as_deref().unwrap_or(""));
 
     let window_h = if preview {
         app::WINDOW_SIZE.1 + app::PREVIEW_EXTRA_HEIGHT

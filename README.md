@@ -17,6 +17,11 @@
 
 ```
 launcherclient/
+├── Cargo.toml             # 根 workspace：成员 = src-core + src-egui；src-pkgtool 刻意排除（见 §7）
+│                          # 也是版本号的 Rust 侧唯一写入点（[workspace.package]），由 pybuild 从 package.json 同步
+├── Cargo.lock             # workspace 共享的一份锁文件（两个成员 crate 不再各编一遍依赖）
+├── .cnb.yml               # CNB 流水线：版本号一致性 + fmt + clippy + 单测门禁（见 §3.3）
+├── target/                # workspace 成员的构建产物（launcherclient.exe 在这里）
 ├── src-core/              # 共享核心库（无 UI，可被任何外壳复用）
 │   └── src/  cli.rs config.rs defaults.rs manifest.rs
 │              download.rs install.rs cleanup.rs services.rs
@@ -27,17 +32,18 @@ launcherclient/
 │   ├── src/    main.rs app.rs templates.rs widgets.rs theme.rs preview.rs
 │   ├── assets/icon.ico  icon.png
 │   └── version.rc         # exe 图标 + 文件版本信息（build.rs 嵌入）
-├── src-pkgtool/           # 打包工具（egui 0.37）
+├── src-pkgtool/           # 打包工具（egui 0.37，独立 crate + 自己的 target/）
 │   ├── src/main.rs
 │   ├── assets/icon.ico
 │   └── icon.rc            # exe 图标 + 文件版本信息
 ├── scripts/
-│   ├── pybuild.py         # 同步 package.json 版本号 → 目标 rc（version.rc / icon.rc）→ cargo release
+│   ├── pybuild.py         # 版本铺开（package.json → Cargo/rc）→ cargo release → 产物校验 →（可选）Authenticode 签名
+│   ├── build.py           # 全量打包：两个目标依次构建并复制到 dist/<版本号>/
 │   └── versionTools.py    # 旧版 Python 打包脚本（已由 pkgtool 取代，保留参考）
 ├── docs/                  # 选型与界面设计文档
 ├── update.json            # 启动器本地配置文件（示例，随 exe 部署）
 ├── version.json.example   # 服务器版本清单示例
-├── package.json           # 构建脚本入口（pnpm）
+├── package.json           # 版本号的**权威来源** + 构建脚本入口（pnpm）
 └── CHANGELOG.md
 ```
 
@@ -58,17 +64,17 @@ launcherclient/
 ## 3. 构建与运行
 
 ```bash
-# 启动器：release 构建（= cd src-egui && cargo build --release）
+# 启动器：release 构建（workspace 根执行 = cargo build --release -p qsltdupdater-egui）
 pnpm build
-# 产物：src-egui/target/release/launcherclient.exe
+# 产物：target/release/launcherclient.exe
 
 # 启动器：debug 运行
 pnpm dev
 
-# 启动器：release 构建 + 先把 package.json 的版本号同步进 version.rc
+# 启动器：release 构建 + 先把版本号从 package.json 铺开到 Cargo 与两个 rc
 pnpm egui:build        # python scripts/pybuild.py egui
 
-# 打包工具：release 构建 + 先把 package.json 的版本号同步进 icon.rc
+# 打包工具：release 构建 + 同样的版本铺开（pkgtool 是独立 crate，产物在它自己的目录）
 pnpm pkgtool           # python scripts/pybuild.py pkgtool
 # 产物：src-pkgtool/target/release/pkgtool.exe
 
@@ -77,6 +83,13 @@ pnpm pkgtool:dev
 
 # 全量打包：依次打包启动器 + 打包工具，产物复制到 dist/<版本号>/
 pnpm dist              # python scripts/build.py
+
+# 只看版本被写到哪些文件、产物会落在哪里（不构建）
+python scripts/pybuild.py --show-paths
+
+# 版本号：校验 / 只同步不构建
+pnpm version:check     # python scripts/pybuild.py --check-version（CI 用的同一件事）
+pnpm version:sync      # python scripts/pybuild.py --sync-version
 ```
 
 ### 3.1 构建期产品线参数（qsm:release）
@@ -103,10 +116,63 @@ pnpm qsm:release --name MyApp --app-name myapp --manifest-url https://a.cdn.myap
 参数链路：pybuild.py 校验后转 `QSLTD_*` 环境变量 → `src-core/build.rs` 生成覆盖常量 → `defaults.rs` / `config.rs` 优先采用。
 验证方式：把产物放入空目录运行一次，自动生成的 `update.json` 模板即为烘焙后的默认值。
 
-> **版本号同步**：`version.rc` / `icon.rc` 里的 `FILEVERSION`/`FileVersion`/`ProductVersion`
-> 是硬编码的 Windows 资源字段。只有 `pnpm egui:build` / `pnpm pkgtool`（`scripts/pybuild.py`）会把它同步为
-> `package.json` 的版本；直接 `pnpm build` 只跑 cargo，rc 中的版本号保持上次同步的值。
-> 需要一致时请跑一次对应的 pybuild 目标。
+### 3.2 版本号：package.json 是唯一来源
+
+一份版本号在仓库里落在五个文件（两个 rc 各含「数值 + 字符串」两种写法），全部由 `package.json` 的 `version` 派生，写入方只有 `scripts/pybuild.py`：
+
+| 位置 | 形式 | 说明 |
+| --- | --- | --- |
+| `package.json` → `version` | `0.2.1` 或 `0.2.1.4` | **权威来源**，人工只改这里 |
+| `Cargo.toml` → `[workspace.package] version` | `0.2.1` | src-core / src-egui 都写 `version.workspace = true` 继承；Cargo 只接受三段 semver，四段版本的第四段进不了这里 |
+| `src-pkgtool/Cargo.toml` → `[package] version` | `0.2.1` | 该 crate 不在 workspace 内，单独写一份 |
+| `src-egui/version.rc` | `FILEVERSION 0,2,1,0` + `FileVersion`/`ProductVersion` 字符串 | exe 属性面板「文件版本」 |
+| `src-pkgtool/icon.rc` | 同上 | 同上 |
+
+> Cargo 的字段继承是**逐字段声明**的：成员只写 `version.workspace = true` 而漏掉 `edition.workspace = true`，
+> edition 会静默退回 2015，`async` 代码直接编不过（本项目踩过，故两个成员的 `edition`/`license`/`authors` 都显式继承）。
+
+同步时机与兜底：
+
+- `pnpm egui:build` / `pnpm pkgtool` / `pnpm dist`：**每次构建前自动铺开全部五处**，构建后再回读 exe 内嵌 `FileVersion` 做一致性核对，不一致直接失败——不会再出现「icon.rc 停在 0.1.32」这类漂移。
+- `pnpm version:check`（= `python scripts/pybuild.py --check-version`）：只读校验，打印每处「期望/实际」对照表，有漂移时退出码 1。
+- `pnpm version:sync`：只铺开、不构建。
+- 直接 `pnpm build` / `cargo build` 只跑 cargo，不动 rc —— 想用这条路径出正式包，先跑一次 `version:sync`。
+
+### 3.3 CI 门禁（`.cnb.yml`）
+
+push 与 pull_request 触发同一条流水线（YAML 锚点复用），分两档，理由是「能不能在 Linux 上稳定复现」：
+
+| 档 | 检查 | 说明 |
+| --- | --- | --- |
+| 硬门禁 | `--check-version` | 版本漂移 = 产物「关于」页与 exe 属性自相矛盾，直接拦 |
+| 硬门禁 | `cargo fmt --all -- --check` + pkgtool 的 `cargo fmt --check` | 只看源码不触发编译，UI crate 也能覆盖 |
+| 硬门禁 | `cargo clippy -p qsltd-updater-core --all-targets -- -D warnings` | 核心库 0 warning（本地已验证） |
+| 硬门禁 | `cargo test -p qsltd-updater-core` | 214 个纯单元测试；`integration` feature 不开，不碰 `sc.exe` 与真实网络 |
+| 软门禁 | `cargo clippy -p qsltdupdater-egui ...` / pkgtool 同上 | eframe/wgpu 在 Linux 需要 X11/Wayland + OpenSSL + Vulkan 系统包，镜像缺任一项就会变成「和代码无关的红」，故失败只打印不拦合并 |
+
+> 软门禁那两条在 Windows 开发机上是**能过且应当过**的：本地 `cargo clippy --workspace --all-targets -- -D warnings`
+> 与 pkgtool 同款命令当前均为 0 warning。等 CI 镜像补齐系统依赖，把 `|| echo` 去掉即可升级为硬门禁。
+
+### 3.4 代码签名（预留，默认不启用）
+
+`scripts/pybuild.py` 支持构建后 Authenticode 签名，**不传参数时构建流程与输出步数完全不变**（三步）：
+
+```bash
+# 只签名 + 带时间戳；口令从环境变量取，不落进仓库与 shell 历史
+set QSLTD_SIGN_PFX_PASSWORD=<证书口令>      # 发布机上设置，勿写进脚本与 CI 配置文件
+python scripts/pybuild.py egui --codesign-pfx D:\certs\qsltd.pfx --codesign-tsa http://timestamp.digicert.com
+```
+
+| 参数 | 作用 | 默认 |
+| --- | --- | --- |
+| `--codesign-pfx <路径>` | 给出才会签名 | 不签名 |
+| `--codesign-tsa <地址>` | RFC3161 时间戳；不填会打印「证书过期后历史包全部报红」的警告 | 无时间戳 |
+| `--codesign-pass-env <名>` | 存放 pfx 口令的环境变量名 | `QSLTD_SIGN_PFX_PASSWORD` |
+| `--signtool <路径>` | signtool.exe 路径 | 取 `PATH`，再回落 Windows SDK 下最新版本 |
+
+签名后会执行 `signtool verify /pa` 复核，失败即构建失败。两点已知限制：
+`/p` 传口令仍会让口令出现在那次 signtool 的进程命令行里（发布机更稳妥的做法是证书入库后用 `/sha1` 选择，本脚本暂未提供）；
+签名依赖 `signtool`，只能在 Windows 上执行，因此**没有**放进 Linux 流水线。
 
 ---
 
@@ -301,8 +367,11 @@ URL 归一化（`"` → `%22`），环境变量写法与换行会被解析器吃
 本地预览不需要联网：
 
 ```bash
-cd src-egui && cargo run -- --preview
-cd src-egui && cargo run -- --preview --template F --stage 9   # 强制更新（阻断）
+cargo run -p qsltdupdater-egui -- --preview
+cargo run -p qsltdupdater-egui -- --preview --template F --stage 9   # 强制更新（阻断）
+
+# 或直接跑已构建的 release 产物（workspace 化后在根 target/ 下）
+pnpm preview
 ```
 
 `--stage` 取值（也可传中文名称，未知值回落 1 下载中）：
@@ -381,28 +450,38 @@ pnpm pkgtool              # 构建 release：src-pkgtool/target/release/pkgtool.
 ## 6. 测试
 
 ```bash
-# 共享核心（纯单元测试）
-cd src-core && cargo test --lib
+# 共享核心（纯单元测试，214 个）——workspace 根执行，无需 cd 进目录
+cargo test -p qsltd-updater-core
 
 # 服务模块真实 sc.exe 冒烟（需管理员权限，默认关闭）
-cd src-core && cargo test --features integration
+cargo test -p qsltd-updater-core --features integration
 
-# 打包工具（含打包/切分/取消/版本号推算等用例）
+# 打包工具（含打包/切分/取消/版本号推算等用例）：不在 workspace 内，仍进目录跑
 cd src-pkgtool && cargo test
+
+# 门禁三件套（CI 里跑的同一组命令；src-egui/src-pkgtool 见 3.3 的软门禁说明）
+cargo fmt --all -- --check
+cargo clippy -p qsltd-updater-core --all-targets -- -D warnings
 ```
 
-两个 crate 都开启了 `unwrap_used = "deny"`（clippy），新增代码请避免使用 `unwrap()`。
+lint 口径：`unwrap_used = "deny"` / `expect_used = "warn"` 是生产代码的约束，两处刻意开口子——
+单元测试里 `unwrap()/expect()` 就是想要的写法（失败即 panic 并带原因），构建脚本没有调用方可接错误、
+只能 panic 让 cargo 停下。所以 `src-core/src/lib.rs` 用 `#![cfg_attr(test, allow(...))]` 只对 test
+配置放行，`build.rs` 各自 `#![allow(clippy::expect_used)]` 并注明原因；业务代码不受影响。
 
 ---
 
 ## 7. 注意事项
 
-- `version.rc` / `icon.rc` 中的公司名、产品名、版本号是 Windows 资源硬编码字段，改动后需重新构建；改版本号推荐走 `pnpm egui:build`。
-- release 构建会 `strip` 符号并关闭 panic 位置信息，用于减小体积、降低杀软启发式误报。
-- `src-pkgtool` 的 release profile 刻意放宽了 LTO 与优化级别（`opt-level = 2` / `lto = false`），以规避特定环境下编译 `windows-sys` 的偶发崩溃；`src-egui` 保持 `opt-level = 3` + LTO。
+- `version.rc` / `icon.rc` 中的公司名、产品名、版本号是 Windows 资源硬编码字段，改动后需重新构建；版本号本身不要手改，改 `package.json` 后由 `scripts/pybuild.py` 铺开（见 3.2），CI 用 `--check-version` 兜底。
+- release 构建会 `strip` 符号并关闭 panic 位置信息，用于减小体积、降低杀软启发式误报。profile 现在写在**根 `Cargo.toml`**（workspace 成员不能各自定义）：`opt-level = 3` + `lto = true` + `strip = true` + `codegen-units = 1`。
+- `src-pkgtool` 刻意**留在 workspace 之外**：它的 release profile 放宽了 LTO 与优化级别（`opt-level = 2` / `lto = false` / `codegen-units = 16`），用于规避特定环境下编译 `windows-sys` 的偶发崩溃。workspace 的 profile 全局唯一、成员无法覆盖，把它纳进来会让这份规避失效，顺带把发布产物 `launcherclient.exe` 的 LTO/strip 一起退化。
 - 更新器只做「下载 → 校验 → 解压 → 拉起」，**不做包签名校验**；分发链路请自行保证 HTTPS 与 CDN 可信。
   `require_sha256`（默认开启）挡住的是「传输损坏 + 无完整性证据的包」，不是伪造者——他能同时改掉服务器上的包和哈希，
-  SHA256 就形同不存在。真正的来源可信只能靠 HTTPS 证书链与代码签名。
+  SHA256 就形同不存在。真正的来源可信只能靠 HTTPS 证书链与代码签名；签名步骤已在 `pybuild.py` 预留（见 3.4），
+  等待发布机提供 `.pfx` 与时间戳服务。
+- 仓库根 `update.json` 是**示例文件**，但同名文件会被真实读取，且优先级高于编译期烘焙值（命令行 > update.json > 烘焙）。
+  发布时不要把仓库根这份带开发期 manifest 地址的 `update.json` 一起打进包，否则会覆盖烘焙结果。
 - 打包工具目前不含：文件 diff 勾选/筛选、发布通道概念、压缩级别与 SHA-256 开关、构建历史持久化与回滚、日志级别筛选。
 
 ---

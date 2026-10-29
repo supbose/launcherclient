@@ -142,18 +142,27 @@ mod tests {
     #[test]
     fn parse_all_flags() {
         let c = parse_from(&args(&[
-            "--app-name", "qsm",
-            "--name", "青杉应用中心",
-            "--launch", "D:/app/qsm.exe",
-            "--manifest", "https://example.com/version.json",
-            "--current-version", "1.2.3",
-            "--template", "B",
+            "--app-name",
+            "qsm",
+            "--name",
+            "青杉应用中心",
+            "--launch",
+            "D:/app/qsm.exe",
+            "--manifest",
+            "https://example.com/version.json",
+            "--current-version",
+            "1.2.3",
+            "--template",
+            "B",
             "--check-only",
         ]));
         assert_eq!(c.app_name, "qsm");
         assert_eq!(c.launcher_name.as_deref(), Some("青杉应用中心"));
         assert_eq!(c.launch.as_deref(), Some("D:/app/qsm.exe"));
-        assert_eq!(c.manifest_url.as_deref(), Some("https://example.com/version.json"));
+        assert_eq!(
+            c.manifest_url.as_deref(),
+            Some("https://example.com/version.json")
+        );
         assert_eq!(c.current_version.as_deref(), Some("1.2.3"));
         assert_eq!(c.template.as_deref(), Some("B"));
         assert!(c.check_only);
@@ -169,9 +178,12 @@ mod tests {
     fn parse_name_takes_last_and_keeps_spaces() {
         // 带空格的标题按一个值消费；重复传取最后一次
         let c = parse_from(&args(&[
-            "--name", "A Launcher",
-            "--app-name", "qsm",
-            "--name", "青杉 应用中心",
+            "--name",
+            "A Launcher",
+            "--app-name",
+            "qsm",
+            "--name",
+            "青杉 应用中心",
         ]));
         assert_eq!(c.launcher_name.as_deref(), Some("青杉 应用中心"));
         assert_eq!(c.app_name, "qsm");

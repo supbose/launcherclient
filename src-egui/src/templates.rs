@@ -5,7 +5,10 @@
 //! 自持布局与配色（互不覆盖，与 Vue 版结构一致），展示值统一来自
 //! `PhaseView`（usePhase.js 的 Rust 对应物）。
 
-use egui::{emath::Pos2, Align, Align2, Color32, FontId, Layout, RichText, Sense, Stroke, Ui, UiBuilder, Vec2};
+use egui::{
+    emath::Pos2, Align, Align2, Color32, FontId, Layout, RichText, Sense, Stroke, Ui, UiBuilder,
+    Vec2,
+};
 
 use qsltd_updater_core::phase::{PhaseView, Stage, STEP_LABELS};
 
@@ -53,7 +56,11 @@ pub fn draw_force_update(
     store_error: Option<&str>,
 ) -> Option<Action> {
     let blocking = view.is_blocking();
-    let accent = if blocking { theme::WARNING } else { theme::ACCENT };
+    let accent = if blocking {
+        theme::WARNING
+    } else {
+        theme::ACCENT
+    };
     let mut act: Option<Action> = None;
 
     // 警示图标 + 标题（居中）
@@ -77,11 +84,7 @@ pub fn draw_force_update(
     if let Some(err) = store_error {
         ui.add_space(12.0);
         ui.with_layout(Layout::top_down(Align::Center), |ui| {
-            ui.label(
-                RichText::new(err)
-                    .size(11.5)
-                    .color(theme::text_alpha(140)),
-            );
+            ui.label(RichText::new(err).size(11.5).color(theme::text_alpha(140)));
         });
     }
 
@@ -91,7 +94,12 @@ pub fn draw_force_update(
     let (card, _) = ui.allocate_exact_size(Vec2::new(width, 60.0), Sense::hover());
     let painter = ui.painter_at(card);
     painter.rect_filled(card, 8.0, theme::W04);
-    painter.rect_stroke(card, 8.0, Stroke::new(1.0, theme::W08), egui::StrokeKind::Inside);
+    painter.rect_stroke(
+        card,
+        8.0,
+        Stroke::new(1.0, theme::W08),
+        egui::StrokeKind::Inside,
+    );
     let col_w = card.width() / 2.0;
     painter.text(
         Pos2::new(card.left() + 14.0, card.top() + 12.0),
@@ -224,11 +232,11 @@ fn content<R>(ui: &mut Ui, pad: (f32, f32, f32, f32), add: impl FnOnce(&mut Ui) 
 /// 顶对齐标题行（.tpl-x__head）：标题 + 可选 pill（A 模板 pill 在右侧）
 fn head_with_pill(ui: &mut Ui, title: &str, pill: Option<&str>, err: bool) {
     ui.horizontal(|ui| {
-        ui.label(
-            RichText::new(title)
-                .size(16.0)
-                .color(if err { theme::ERROR_TEXT } else { theme::TEXT }),
-        );
+        ui.label(RichText::new(title).size(16.0).color(if err {
+            theme::ERROR_TEXT
+        } else {
+            theme::TEXT
+        }));
         if let Some(b) = pill {
             // pill 推到行尾
             let w = ui.available_width() - 80.0;
@@ -253,7 +261,11 @@ fn metrics_row(ui: &mut Ui, view: &PhaseView) {
             ui.add_space(w.min(ui.available_width()));
         }
         if !speed.is_empty() {
-            ui.label(RichText::new(speed).size(12.0).color(theme::text_alpha(153)));
+            ui.label(
+                RichText::new(speed)
+                    .size(12.0)
+                    .color(theme::text_alpha(153)),
+            );
         }
     });
 }
@@ -261,13 +273,21 @@ fn metrics_row(ui: &mut Ui, view: &PhaseView) {
 /// 下载明细行（.tpl-x__meta：左 sizeText 右 etaText）
 fn meta_row(ui: &mut Ui, left: String, right: String) {
     ui.horizontal(|ui| {
-        ui.label(RichText::new(&left).size(12.0).color(theme::text_alpha(140)));
+        ui.label(
+            RichText::new(&left)
+                .size(12.0)
+                .color(theme::text_alpha(140)),
+        );
         if !right.is_empty() {
             let w = ui.available_width() - 150.0;
             if w > 0.0 {
                 ui.add_space(w.min(ui.available_width()));
             }
-            ui.label(RichText::new(right).size(12.0).color(theme::text_alpha(140)));
+            ui.label(
+                RichText::new(right)
+                    .size(12.0)
+                    .color(theme::text_alpha(140)),
+            );
         }
     });
 }
@@ -279,7 +299,8 @@ fn spinner_row(ui: &mut Ui, sub: &str, color: Color32) {
         widgets::spinner(&ui.painter_at(r), r.center(), 7.75, 2.5, color);
         if !sub.is_empty() {
             ui.add_space(10.0);
-            ui.label(RichText::new(sub).size(12.5).color(theme::text_alpha(166))); // 0.65
+            ui.label(RichText::new(sub).size(12.5).color(theme::text_alpha(166)));
+            // 0.65
         }
     });
 }
@@ -291,15 +312,13 @@ fn dot_title_row(ui: &mut Ui, view: &PhaseView, dot_r: f32) {
         let (color, halo) = end_dot_color(view);
         widgets::status_dot(&ui.painter_at(r), r.center(), dot_r, color, halo);
         ui.add_space(10.0);
-        ui.label(
-            RichText::new(end_title(view))
-                .size(16.0)
-                .color(if view.stage() == Stage::Error {
-                    theme::ERROR_TEXT
-                } else {
-                    theme::TEXT
-                }),
-        );
+        ui.label(RichText::new(end_title(view)).size(16.0).color(
+            if view.stage() == Stage::Error {
+                theme::ERROR_TEXT
+            } else {
+                theme::TEXT
+            },
+        ));
     });
 }
 
@@ -322,13 +341,21 @@ fn template_a(
                 spinner_row(ui, "", theme::ACCENT);
                 ui.add_space(10.0);
                 ui.label(
-                    RichText::new(if view.message().is_empty() { "正在检查更新..." } else { view.message() })
-                        .size(16.0)
-                        .color(theme::TEXT),
+                    RichText::new(if view.message().is_empty() {
+                        "正在检查更新..."
+                    } else {
+                        view.message()
+                    })
+                    .size(16.0)
+                    .color(theme::TEXT),
                 );
                 if !view.sub().is_empty() {
                     ui.add_space(8.0);
-                    ui.label(RichText::new(view.sub()).size(12.0).color(theme::text_alpha(140)));
+                    ui.label(
+                        RichText::new(view.sub())
+                            .size(12.0)
+                            .color(theme::text_alpha(140)),
+                    );
                 }
                 if !view.sub().is_empty() && view.percent() > 0.0 {
                     ui.add_space(12.0);
@@ -336,7 +363,16 @@ fn template_a(
                 }
             }
             Stage::Downloading => {
-                head_with_pill(ui, if view.message().is_empty() { "正在下载更新包..." } else { view.message() }, view.badge(), false);
+                head_with_pill(
+                    ui,
+                    if view.message().is_empty() {
+                        "正在下载更新包..."
+                    } else {
+                        view.message()
+                    },
+                    view.badge(),
+                    false,
+                );
                 ui.add_space(14.0);
                 metrics_row(ui, view);
                 ui.add_space(14.0);
@@ -350,19 +386,31 @@ fn template_a(
                     widgets::spinner(&ui.painter_at(r), r.center(), 7.75, 2.5, theme::SUCCESS);
                     ui.add_space(10.0);
                     ui.label(
-                        RichText::new(if view.message().is_empty() { "正在安装更新..." } else { view.message() })
-                            .size(16.0)
-                            .color(theme::TEXT),
+                        RichText::new(if view.message().is_empty() {
+                            "正在安装更新..."
+                        } else {
+                            view.message()
+                        })
+                        .size(16.0)
+                        .color(theme::TEXT),
                     );
                 });
                 if !view.sub().is_empty() {
                     ui.add_space(8.0);
-                    ui.label(RichText::new(view.sub()).size(12.0).color(theme::text_alpha(140)));
+                    ui.label(
+                        RichText::new(view.sub())
+                            .size(12.0)
+                            .color(theme::text_alpha(140)),
+                    );
                 }
                 ui.add_space(12.0);
                 widgets::progress_track(ui, width, view.percent() as f32);
                 ui.add_space(10.0);
-                meta_row(ui, format!("{:.1}%", view.percent()), "请勿关闭窗口".to_string());
+                meta_row(
+                    ui,
+                    format!("{:.1}%", view.percent()),
+                    "请勿关闭窗口".to_string(),
+                );
             }
             Stage::ForceUpdate => {
                 return draw_force_update(ui, view, store_error);
@@ -371,11 +419,13 @@ fn template_a(
                 dot_title_row(ui, view, 7.0);
                 if !view.sub().is_empty() {
                     ui.add_space(8.0);
-                    ui.label(
-                        RichText::new(view.sub())
-                            .size(12.0)
-                            .color(if stage == Stage::Error { theme::tint(theme::ERROR_TEXT, 191) } else { theme::text_alpha(140) }),
-                    );
+                    ui.label(RichText::new(view.sub()).size(12.0).color(
+                        if stage == Stage::Error {
+                            theme::tint(theme::ERROR_TEXT, 191)
+                        } else {
+                            theme::text_alpha(140)
+                        },
+                    ));
                 }
                 error_hint_row(ui, view, 8.0);
             }
@@ -434,7 +484,11 @@ fn template_b(
                 ui.add_space(14.0);
                 widgets::centered_label(
                     ui,
-                    if view.message().is_empty() { "正在检查更新..." } else { view.message() },
+                    if view.message().is_empty() {
+                        "正在检查更新..."
+                    } else {
+                        view.message()
+                    },
                     15.0,
                     theme::TEXT,
                 );
@@ -444,18 +498,32 @@ fn template_b(
                 }
             }
             Stage::Downloading => {
-                widgets::progress_ring(ui, 48.0, view.percent() as f32, theme::TEXT, &view.speed_text());
+                widgets::progress_ring(
+                    ui,
+                    48.0,
+                    view.percent() as f32,
+                    theme::TEXT,
+                    &view.speed_text(),
+                );
                 ui.add_space(14.0);
                 widgets::centered_label(
                     ui,
-                    if view.message().is_empty() { "正在下载更新包..." } else { view.message() },
+                    if view.message().is_empty() {
+                        "正在下载更新包..."
+                    } else {
+                        view.message()
+                    },
                     15.0,
                     theme::TEXT,
                 );
                 ui.add_space(10.0);
                 ui.with_layout(Layout::top_down(Align::Center), |ui| {
                     ui.horizontal(|ui| {
-                        ui.label(RichText::new(view.size_text()).size(12.0).color(theme::text_alpha(140)));
+                        ui.label(
+                            RichText::new(view.size_text())
+                                .size(12.0)
+                                .color(theme::text_alpha(140)),
+                        );
                         if let Some(b) = view.badge() {
                             ui.add_space(10.0);
                             widgets::pill(ui, b);
@@ -472,7 +540,11 @@ fn template_b(
                 ui.add_space(14.0);
                 widgets::centered_label(
                     ui,
-                    if view.message().is_empty() { "正在安装更新..." } else { view.message() },
+                    if view.message().is_empty() {
+                        "正在安装更新..."
+                    } else {
+                        view.message()
+                    },
                     15.0,
                     theme::TEXT,
                 );
@@ -493,11 +565,13 @@ fn template_b(
                     let (color, halo) = end_dot_color(view);
                     widgets::status_dot(&ui.painter_at(r), r.center(), 8.0, color, halo);
                     ui.add_space(4.0);
-                    ui.label(
-                        RichText::new(end_title(view))
-                            .size(15.0)
-                            .color(if stage == Stage::Error { theme::ERROR_TEXT } else { theme::TEXT }),
-                    );
+                    ui.label(RichText::new(end_title(view)).size(15.0).color(
+                        if stage == Stage::Error {
+                            theme::ERROR_TEXT
+                        } else {
+                            theme::TEXT
+                        },
+                    ));
                 });
                 if !view.sub().is_empty() {
                     ui.add_space(8.0);
@@ -505,7 +579,11 @@ fn template_b(
                         ui,
                         view.sub(),
                         12.0,
-                        if stage == Stage::Error { theme::tint(theme::ERROR_TEXT, 191) } else { theme::text_alpha(140) },
+                        if stage == Stage::Error {
+                            theme::tint(theme::ERROR_TEXT, 191)
+                        } else {
+                            theme::text_alpha(140)
+                        },
                     );
                 }
                 error_hint_centered(ui, view, 8.0);
@@ -561,7 +639,11 @@ fn template_c(
                 ui.add_space(14.0);
                 head_with_pill(
                     ui,
-                    if view.message().is_empty() { "正在检查更新..." } else { view.message() },
+                    if view.message().is_empty() {
+                        "正在检查更新..."
+                    } else {
+                        view.message()
+                    },
                     view.badge(),
                     false,
                 );
@@ -574,7 +656,16 @@ fn template_c(
             }
             Stage::Downloading => {
                 ui.add_space(14.0);
-                head_with_pill(ui, if view.message().is_empty() { "正在下载更新包..." } else { view.message() }, view.badge(), false);
+                head_with_pill(
+                    ui,
+                    if view.message().is_empty() {
+                        "正在下载更新包..."
+                    } else {
+                        view.message()
+                    },
+                    view.badge(),
+                    false,
+                );
                 ui.add_space(14.0);
                 metrics_row(ui, view);
                 ui.add_space(14.0);
@@ -586,7 +677,11 @@ fn template_c(
                 ui.add_space(14.0);
                 head_with_pill(
                     ui,
-                    if view.message().is_empty() { "正在安装更新..." } else { view.message() },
+                    if view.message().is_empty() {
+                        "正在安装更新..."
+                    } else {
+                        view.message()
+                    },
                     view.badge(),
                     false,
                 );
@@ -595,7 +690,11 @@ fn template_c(
                 ui.add_space(14.0);
                 widgets::progress_track(ui, width, view.percent() as f32);
                 ui.add_space(10.0);
-                meta_row(ui, format!("{:.1}%", view.percent()), "请勿关闭窗口".to_string());
+                meta_row(
+                    ui,
+                    format!("{:.1}%", view.percent()),
+                    "请勿关闭窗口".to_string(),
+                );
             }
             Stage::ForceUpdate => {
                 return draw_force_update(ui, view, store_error);
@@ -605,11 +704,13 @@ fn template_c(
                 dot_title_row(ui, view, 7.0);
                 if !view.sub().is_empty() {
                     ui.add_space(8.0);
-                    ui.label(
-                        RichText::new(view.sub())
-                            .size(12.5)
-                            .color(if stage == Stage::Error { theme::tint(theme::ERROR_TEXT, 191) } else { theme::text_alpha(166) }),
-                    );
+                    ui.label(RichText::new(view.sub()).size(12.5).color(
+                        if stage == Stage::Error {
+                            theme::tint(theme::ERROR_TEXT, 191)
+                        } else {
+                            theme::text_alpha(166)
+                        },
+                    ));
                 }
                 error_hint_row(ui, view, 8.0);
             }
@@ -649,7 +750,11 @@ fn template_c(
 /// 边缘，不再留空隙），再画节点与标签。已完成段连接线为绿色半透明。
 fn draw_steps(ui: &mut Ui, view: &PhaseView, width: f32, last_step: i32) {
     // 错误态保留最后到达的步骤（view.step() 返回 -2 表示保持不变）
-    let step = if view.step() == -2 { last_step } else { view.step() };
+    let step = if view.step() == -2 {
+        last_step
+    } else {
+        view.step()
+    };
     let n = STEP_LABELS.len() as f32; // 4.0
     let dot_r = 8.0;
     let row_h = 40.0;
@@ -677,7 +782,11 @@ fn draw_steps(ui: &mut Ui, view: &PhaseView, width: f32, last_step: i32) {
         painter.rect_filled(
             egui::Rect::from_min_max(Pos2::new(x0, dot_y - 1.0), Pos2::new(x1, dot_y + 1.0)),
             1.0,
-            if done_seg { theme::tint(theme::SUCCESS, 128) } else { theme::W14 },
+            if done_seg {
+                theme::tint(theme::SUCCESS, 128)
+            } else {
+                theme::W14
+            },
         );
     }
 
@@ -693,7 +802,11 @@ fn draw_steps(ui: &mut Ui, view: &PhaseView, width: f32, last_step: i32) {
             widgets::status_dot(&painter, dot_c, dot_r, theme::DANGER, 4.0);
         } else if on {
             // 当前步：外环描边增强焦点（在 halo 之外再加一圈蓝边）
-            painter.circle_stroke(dot_c, dot_r + 3.0, Stroke::new(1.0, theme::tint(theme::ACCENT, 128)));
+            painter.circle_stroke(
+                dot_c,
+                dot_r + 3.0,
+                Stroke::new(1.0, theme::tint(theme::ACCENT, 128)),
+            );
             widgets::status_dot(&painter, dot_c, dot_r, theme::ACCENT, 4.0);
         } else if done {
             widgets::status_dot(&painter, dot_c, dot_r, theme::SUCCESS, 0.0);
@@ -707,7 +820,11 @@ fn draw_steps(ui: &mut Ui, view: &PhaseView, width: f32, last_step: i32) {
             egui::Align2::CENTER_CENTER,
             *label,
             egui::FontId::proportional(11.0),
-            if on { theme::ACCENT } else { theme::text_alpha(115) },
+            if on {
+                theme::ACCENT
+            } else {
+                theme::text_alpha(115)
+            },
         );
     }
 }
@@ -730,7 +847,11 @@ fn template_d(
             Stage::Checking => {
                 widgets::centered_label(
                     ui,
-                    if view.message().is_empty() { "正在检查更新..." } else { view.message() },
+                    if view.message().is_empty() {
+                        "正在检查更新..."
+                    } else {
+                        view.message()
+                    },
                     15.0,
                     theme::TEXT,
                 );
@@ -744,7 +865,11 @@ fn template_d(
             Stage::Downloading => {
                 widgets::centered_label(
                     ui,
-                    if view.message().is_empty() { "正在下载更新包..." } else { view.message() },
+                    if view.message().is_empty() {
+                        "正在下载更新包..."
+                    } else {
+                        view.message()
+                    },
                     15.0,
                     theme::TEXT,
                 );
@@ -774,7 +899,11 @@ fn template_d(
             Stage::Installing => {
                 widgets::centered_label(
                     ui,
-                    if view.message().is_empty() { "正在安装更新..." } else { view.message() },
+                    if view.message().is_empty() {
+                        "正在安装更新..."
+                    } else {
+                        view.message()
+                    },
                     15.0,
                     theme::TEXT,
                 );
@@ -795,11 +924,13 @@ fn template_d(
                     let (color, halo) = end_dot_color(view);
                     widgets::status_dot(&ui.painter_at(r), r.center(), 7.0, color, halo);
                     ui.add_space(6.0);
-                    ui.label(
-                        RichText::new(end_title(view))
-                            .size(15.0)
-                            .color(if stage == Stage::Error { theme::ERROR_TEXT } else { theme::TEXT }),
-                    );
+                    ui.label(RichText::new(end_title(view)).size(15.0).color(
+                        if stage == Stage::Error {
+                            theme::ERROR_TEXT
+                        } else {
+                            theme::TEXT
+                        },
+                    ));
                 });
                 if !view.sub().is_empty() {
                     ui.add_space(6.0);
@@ -807,7 +938,11 @@ fn template_d(
                         ui,
                         view.sub(),
                         12.0,
-                        if stage == Stage::Error { theme::tint(theme::ERROR_TEXT, 191) } else { theme::text_alpha(128) },
+                        if stage == Stage::Error {
+                            theme::tint(theme::ERROR_TEXT, 191)
+                        } else {
+                            theme::text_alpha(128)
+                        },
                     );
                 }
                 error_hint_centered(ui, view, 6.0);
@@ -894,9 +1029,17 @@ fn template_e(
             widgets::status_dot(&ui.painter_at(r), r.center(), 4.0, led_color, 3.0);
             ui.add_space(10.0);
             ui.label(
-                RichText::new(if view.message().is_empty() { status_fallback(view) } else { view.message() })
-                    .size(14.0)
-                    .color(if stage == Stage::Error { theme::ERROR_TEXT } else { theme::TEXT }),
+                RichText::new(if view.message().is_empty() {
+                    status_fallback(view)
+                } else {
+                    view.message()
+                })
+                .size(14.0)
+                .color(if stage == Stage::Error {
+                    theme::ERROR_TEXT
+                } else {
+                    theme::TEXT
+                }),
             );
             if show_percent(view) {
                 let pct = format!("{:.1}%", view.percent());
@@ -944,7 +1087,11 @@ fn template_e(
 
         if !view.sub().is_empty() && stage != Stage::Downloading {
             ui.add_space(14.0);
-            ui.label(RichText::new(view.sub()).size(12.0).color(theme::text_alpha(153)));
+            ui.label(
+                RichText::new(view.sub())
+                    .size(12.0)
+                    .color(theme::text_alpha(153)),
+            );
         }
         error_hint_row(ui, view, 10.0);
 
@@ -1091,7 +1238,11 @@ fn e_log_list(ui: &mut Ui, items: &[&str]) {
                         2.0,
                         theme::ACCENT,
                     );
-                    ui.label(RichText::new(*line).size(12.5).color(theme::text_alpha(217)));
+                    ui.label(
+                        RichText::new(*line)
+                            .size(12.5)
+                            .color(theme::text_alpha(217)),
+                    );
                 });
             }
         });
@@ -1126,7 +1277,11 @@ fn template_f(
                 ui.add_space(16.0);
                 widgets::centered_label(
                     ui,
-                    if view.message().is_empty() { "正在检查更新..." } else { view.message() },
+                    if view.message().is_empty() {
+                        "正在检查更新..."
+                    } else {
+                        view.message()
+                    },
                     15.0,
                     theme::TEXT,
                 );
@@ -1137,15 +1292,29 @@ fn template_f(
             }
             Stage::Downloading | Stage::Installing => {
                 let installing = stage == Stage::Installing;
-                let inner_sub = if installing { "解压中".to_string() } else { view.speed_text() };
+                let inner_sub = if installing {
+                    "解压中".to_string()
+                } else {
+                    view.speed_text()
+                };
                 ui.with_layout(Layout::top_down(Align::Center), |ui| {
-                    widgets::progress_ring(ui, 48.0, view.percent() as f32, theme::TEXT, &inner_sub);
+                    widgets::progress_ring(
+                        ui,
+                        48.0,
+                        view.percent() as f32,
+                        theme::TEXT,
+                        &inner_sub,
+                    );
                 });
                 ui.add_space(16.0);
                 widgets::centered_label(
                     ui,
                     if view.message().is_empty() {
-                        if installing { "正在安装更新..." } else { "正在下载更新包..." }
+                        if installing {
+                            "正在安装更新..."
+                        } else {
+                            "正在下载更新包..."
+                        }
                     } else {
                         view.message()
                     },
@@ -1167,11 +1336,13 @@ fn template_f(
                     let (color, halo) = end_dot_color(view);
                     widgets::status_dot(&ui.painter_at(r), r.center(), 8.0, color, halo);
                     ui.add_space(2.0);
-                    ui.label(
-                        RichText::new(end_title(view))
-                            .size(15.0)
-                            .color(if stage == Stage::Error { theme::ERROR_TEXT } else { theme::TEXT }),
-                    );
+                    ui.label(RichText::new(end_title(view)).size(15.0).color(
+                        if stage == Stage::Error {
+                            theme::ERROR_TEXT
+                        } else {
+                            theme::TEXT
+                        },
+                    ));
                 });
                 if !view.sub().is_empty() {
                     ui.add_space(8.0);
@@ -1179,7 +1350,11 @@ fn template_f(
                         ui,
                         view.sub(),
                         12.0,
-                        if stage == Stage::Error { theme::tint(theme::ERROR_TEXT, 191) } else { theme::text_alpha(140) },
+                        if stage == Stage::Error {
+                            theme::tint(theme::ERROR_TEXT, 191)
+                        } else {
+                            theme::text_alpha(140)
+                        },
                     );
                 }
                 error_hint_centered(ui, view, 8.0);
@@ -1239,7 +1414,12 @@ fn template_g(
         let (hero, _) = ui.allocate_exact_size(Vec2::new(width, hero_h), Sense::hover());
         let hp = ui.painter_at(hero);
         hp.rect_filled(hero, 10.0, theme::W04);
-        hp.rect_stroke(hero, 10.0, Stroke::new(1.0, theme::W08), egui::StrokeKind::Inside);
+        hp.rect_stroke(
+            hero,
+            10.0,
+            Stroke::new(1.0, theme::W08),
+            egui::StrokeKind::Inside,
+        );
         let c = hero.center();
         match stage {
             Stage::Checking => {
@@ -1247,7 +1427,11 @@ fn template_g(
                 hp.text(
                     Pos2::new(c.x, c.y + 14.0),
                     egui::Align2::CENTER_CENTER,
-                    if view.message().is_empty() { "正在检查更新..." } else { view.message() },
+                    if view.message().is_empty() {
+                        "正在检查更新..."
+                    } else {
+                        view.message()
+                    },
                     egui::FontId::proportional(15.0),
                     theme::TEXT,
                 );
@@ -1265,7 +1449,11 @@ fn template_g(
                     Pos2::new(c.x, c.y + 22.0),
                     egui::Align2::CENTER_CENTER,
                     if view.message().is_empty() {
-                        if installing { "正在安装更新..." } else { "正在下载更新包..." }
+                        if installing {
+                            "正在安装更新..."
+                        } else {
+                            "正在下载更新包..."
+                        }
                     } else {
                         view.message()
                     },
@@ -1284,7 +1472,11 @@ fn template_g(
                     egui::Align2::CENTER_CENTER,
                     end_title(view),
                     egui::FontId::proportional(18.0),
-                    if stage == Stage::Error { theme::ERROR_TEXT } else { theme::TEXT },
+                    if stage == Stage::Error {
+                        theme::ERROR_TEXT
+                    } else {
+                        theme::TEXT
+                    },
                 );
                 if !view.sub().is_empty() {
                     hp.text(
@@ -1292,7 +1484,11 @@ fn template_g(
                         egui::Align2::CENTER_CENTER,
                         view.sub(),
                         egui::FontId::proportional(12.0),
-                        if stage == Stage::Error { theme::tint(theme::ERROR_TEXT, 191) } else { theme::text_alpha(140) },
+                        if stage == Stage::Error {
+                            theme::tint(theme::ERROR_TEXT, 191)
+                        } else {
+                            theme::text_alpha(140)
+                        },
                     );
                 }
             }
@@ -1322,7 +1518,11 @@ fn template_g(
                 if w > 0.0 {
                     ui.add_space(w.min(ui.available_width()));
                 }
-                ui.label(RichText::new(right).size(11.5).color(theme::text_alpha(128)));
+                ui.label(
+                    RichText::new(right)
+                        .size(11.5)
+                        .color(theme::text_alpha(128)),
+                );
             }
         });
 
@@ -1372,7 +1572,11 @@ fn template_h(
                         r.center(),
                         6.0,
                         2.0,
-                        if stage == Stage::Installing { theme::SUCCESS } else { theme::ACCENT },
+                        if stage == Stage::Installing {
+                            theme::SUCCESS
+                        } else {
+                            theme::ACCENT
+                        },
                     );
                 }
                 _ => {
@@ -1382,9 +1586,17 @@ fn template_h(
             }
             ui.add_space(8.0);
             ui.label(
-                RichText::new(if view.message().is_empty() { status_fallback(view) } else { view.message() })
-                    .size(13.5)
-                    .color(if stage == Stage::Error { theme::ERROR_TEXT } else { theme::TEXT }),
+                RichText::new(if view.message().is_empty() {
+                    status_fallback(view)
+                } else {
+                    view.message()
+                })
+                .size(13.5)
+                .color(if stage == Stage::Error {
+                    theme::ERROR_TEXT
+                } else {
+                    theme::TEXT
+                }),
             );
             if show_percent(view) {
                 let pct = format!("{:.0}%", view.percent());
@@ -1413,7 +1625,11 @@ fn template_h(
         }
         if stage == Stage::Installing {
             ui.add_space(8.0);
-            ui.label(RichText::new("请勿关闭窗口").size(11.5).color(theme::text_alpha(128)));
+            ui.label(
+                RichText::new("请勿关闭窗口")
+                    .size(11.5)
+                    .color(theme::text_alpha(128)),
+            );
         }
         error_hint_row(ui, view, 8.0);
 
@@ -1441,7 +1657,11 @@ fn template_h(
                                 2.0,
                                 theme::text_alpha(128),
                             );
-                            ui.label(RichText::new(*line).size(12.0).color(theme::text_alpha(204)));
+                            ui.label(
+                                RichText::new(*line)
+                                    .size(12.0)
+                                    .color(theme::text_alpha(204)),
+                            );
                         });
                     }
                 });

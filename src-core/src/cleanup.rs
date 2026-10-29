@@ -105,10 +105,7 @@ async fn remove_dir_smart(dir: &Path) {
             // 重命名为待删除前缀，目录占用解除后下次启动清理
             let renamed = dir.with_file_name(format!("{}{}", PENDING_DELETE_PREFIX, name));
             match tokio::fs::rename(dir, &renamed).await {
-                Ok(_) => eprintln!(
-                    "[清理] 目录被占用，已重命名待下次清理: {}（{}）",
-                    name, e
-                ),
+                Ok(_) => eprintln!("[清理] 目录被占用，已重命名待下次清理: {}（{}）", name, e),
                 Err(re) => eprintln!(
                     "[清理] 旧版本目录删除失败且重命名失败: {}（删除: {}，重命名: {}）",
                     name, e, re

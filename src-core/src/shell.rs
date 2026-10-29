@@ -44,8 +44,8 @@ pub fn sanitize_url(raw: &str) -> Result<String, String> {
         return Err("链接为空".to_string());
     }
 
-    let parsed = reqwest::Url::parse(trimmed)
-        .map_err(|e| format!("链接无法解析（{}）: {}", trimmed, e))?;
+    let parsed =
+        reqwest::Url::parse(trimmed).map_err(|e| format!("链接无法解析（{}）: {}", trimmed, e))?;
 
     if !ALLOWED_SCHEMES.contains(&parsed.scheme()) {
         return Err(format!(
@@ -144,9 +144,15 @@ mod tests {
 
     #[test]
     fn accepts_plain_http_and_https() {
-        assert_eq!(ok("https://www.qcsm.ltd/download"), "https://www.qcsm.ltd/download");
+        assert_eq!(
+            ok("https://www.qcsm.ltd/download"),
+            "https://www.qcsm.ltd/download"
+        );
         // 首尾空白按未输入处理；查询串与片段是正常形态
-        assert_eq!(ok("  http://a.test/p?x=1#frag  "), "http://a.test/p?x=1#frag");
+        assert_eq!(
+            ok("  http://a.test/p?x=1#frag  "),
+            "http://a.test/p?x=1#frag"
+        );
     }
 
     #[test]

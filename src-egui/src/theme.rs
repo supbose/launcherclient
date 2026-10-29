@@ -88,7 +88,10 @@ const FONT_CANDIDATES: [&str; 5] = [
 /// 找不到任何候选字体时保留 egui 默认字体（界面仍可用，仅中文显示
 /// 退化为方块 —— 非常规 Windows 环境才会发生）。
 pub fn install_fonts(ctx: &Context) {
-    let Some(path) = FONT_CANDIDATES.iter().find(|p| std::path::Path::new(p).exists()) else {
+    let Some(path) = FONT_CANDIDATES
+        .iter()
+        .find(|p| std::path::Path::new(p).exists())
+    else {
         eprintln!("[更新器] 未找到系统中文字体，中文将无法显示");
         return;
     };

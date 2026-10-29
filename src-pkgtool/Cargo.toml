@@ -1,6 +1,6 @@
 [package]
 name = "qsltd-pkgtool"
-version = "0.1.0"
+version = "0.2.1"
 edition = "2021"
 description = "QsLtd 更新包打包工具（egui 版，versionTools.py 的纯 Rust GUI 重实现）"
 license = "MIT"

@@ -58,7 +58,7 @@ pub fn app_dir(app_name: Option<&str>) -> PathBuf {
         }
     }
 
-    base.unwrap_or_else(|| current_dir_or_dot()).join(name)
+    base.unwrap_or_else(current_dir_or_dot).join(name)
 }
 
 /// 平台配置目录（相当于 `dirs::config_dir()`，不引额外依赖）
@@ -72,7 +72,8 @@ fn base_config_dir() -> Option<PathBuf> {
     }
     #[cfg(target_os = "macos")]
     {
-        std::env::var_os("HOME").map(|h| PathBuf::from(h).join("Library").join("Application Support"))
+        std::env::var_os("HOME")
+            .map(|h| PathBuf::from(h).join("Library").join("Application Support"))
     }
     #[cfg(not(any(windows, target_os = "macos")))]
     {
@@ -191,11 +192,8 @@ mod tests {
 
     /// 造一个唯一临时目录
     fn temp_dir(tag: &str) -> PathBuf {
-        let d = std::env::temp_dir().join(format!(
-            "qsltd_appdir_test_{}_{}",
-            tag,
-            std::process::id()
-        ));
+        let d =
+            std::env::temp_dir().join(format!("qsltd_appdir_test_{}_{}", tag, std::process::id()));
         let _ = std::fs::remove_dir_all(&d);
         std::fs::create_dir_all(&d).expect("建临时目录");
         d
@@ -208,7 +206,11 @@ mod tests {
         let dir = app_dir(Some("qsm"));
         assert!(dir.ends_with("qsm"), "应以应用名为末级目录: {:?}", dir);
         // 基目录取不到时退到 cwd，但末级名不变
-        assert!(dir.is_absolute() || dir.starts_with("."), "路径应可派生: {:?}", dir);
+        assert!(
+            dir.is_absolute() || dir.starts_with("."),
+            "路径应可派生: {:?}",
+            dir
+        );
     }
 
     #[test]

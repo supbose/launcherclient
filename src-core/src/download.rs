@@ -77,10 +77,9 @@ where
     let mut downloaded: u64 = 0;
 
     // 读空闲超时：60 秒未收到任何新数据视为断流，报错退出（防止无限挂死）
-    while let Some(chunk) =
-        tokio::time::timeout(std::time::Duration::from_secs(60), stream.next())
-            .await
-            .map_err(|_| "下载数据流超时（60 秒无新数据）".to_string())?
+    while let Some(chunk) = tokio::time::timeout(std::time::Duration::from_secs(60), stream.next())
+        .await
+        .map_err(|_| "下载数据流超时（60 秒无新数据）".to_string())?
     {
         let chunk = chunk.map_err(|e| format!("下载数据流中断: {}", e))?;
         hasher.update(&chunk);
@@ -88,10 +87,7 @@ where
             .await
             .map_err(|e| format!("写入下载文件失败: {}", e))?;
         downloaded += chunk.len() as u64;
-        on_progress(DownloadProgress {
-            downloaded,
-            total,
-        });
+        on_progress(DownloadProgress { downloaded, total });
     }
 
     file.flush()
@@ -112,7 +108,8 @@ where
 pub fn sha256_of_file(file: &Path) -> Result<String, String> {
     use std::io::Read;
 
-    let handle = std::fs::File::open(file).map_err(|e| format!("打开文件失败 {}: {}", file.display(), e))?;
+    let handle =
+        std::fs::File::open(file).map_err(|e| format!("打开文件失败 {}: {}", file.display(), e))?;
     let mut reader = std::io::BufReader::with_capacity(CHUNK_BYTES, handle);
     let mut hasher = Sha256::new();
     let mut buf = vec![0u8; CHUNK_BYTES];
@@ -255,19 +252,17 @@ where
                 );
             }
         };
-        download_file(url, &part_path, cb)
-            .await
-            .map_err(|e| {
-                // e 已带统一前缀，这里只补卷号定位
-                let detail = e.strip_prefix(DOWNLOAD_FAIL_PREFIX).unwrap_or(&e);
-                format!(
-                    "{}分卷 {}/{} {}",
-                    DOWNLOAD_FAIL_PREFIX,
-                    i + 1,
-                    total,
-                    detail
-                )
-            })?;
+        download_file(url, &part_path, cb).await.map_err(|e| {
+            // e 已带统一前缀，这里只补卷号定位
+            let detail = e.strip_prefix(DOWNLOAD_FAIL_PREFIX).unwrap_or(&e);
+            format!(
+                "{}分卷 {}/{} {}",
+                DOWNLOAD_FAIL_PREFIX,
+                i + 1,
+                total,
+                detail
+            )
+        })?;
 
         // 逐卷校验
         if let Some(exp) = &expected {
@@ -361,7 +356,11 @@ where
     eprintln!("[合并] sync_all 完成，开始 SHA256 校验");
 
     // 整体 SHA256 校验
-    if let Some(expected) = expected_sha256.as_deref().map(str::trim).filter(|s| !s.is_empty()) {
+    if let Some(expected) = expected_sha256
+        .as_deref()
+        .map(str::trim)
+        .filter(|s| !s.is_empty())
+    {
         let actual = hex::encode(hasher.finalize());
         if !actual.eq_ignore_ascii_case(expected) {
             return Err(format!(
@@ -411,20 +410,29 @@ mod tests {
 
     #[test]
     fn percent_none_when_total_unknown() {
-        let p = DownloadProgress { downloaded: 100, total: None };
+        let p = DownloadProgress {
+            downloaded: 100,
+            total: None,
+        };
         assert_eq!(p.percent(), None);
     }
 
     #[test]
     fn percent_none_when_total_zero() {
         // 服务器谎报 Content-Length: 0 时不应除零
-        let p = DownloadProgress { downloaded: 100, total: Some(0) };
+        let p = DownloadProgress {
+            downloaded: 100,
+            total: Some(0),
+        };
         assert_eq!(p.percent(), None);
     }
 
     #[test]
     fn percent_computes_ratio() {
-        let p = DownloadProgress { downloaded: 25, total: Some(100) };
+        let p = DownloadProgress {
+            downloaded: 25,
+            total: Some(100),
+        };
         assert_eq!(p.percent(), Some(25.0));
     }
 
@@ -492,10 +500,7 @@ mod tests {
     fn sha256_of_file_empty_file() {
         // 空文件的 SHA256 是固定值，顺手验一下分块循环不会 panic
         let p = write_temp("zero_len", b"").expect("写空文件");
-        assert_eq!(
-            sha256_of_file(&p).expect("空文件应可校验"),
-            sha_of(b"")
-        );
+        assert_eq!(sha256_of_file(&p).expect("空文件应可校验"), sha_of(b""));
         let _ = std::fs::remove_file(&p);
     }
 
@@ -524,10 +529,18 @@ mod tests {
         let p1 = write_temp("bad1", b"AAA").expect("写分卷");
         let out = temp_path("badmerged", "zip");
         // 期望值对应别的内容 → 合并成功但整体校验失败
-        let err = merge_parts(std::slice::from_ref(&p1), &out, &Some(sha_of(b"ZZZ")), |_, _| {})
-            .await
-            .unwrap_err();
-        assert!(err.contains("整体 SHA256 校验不匹配"), "错误应说明整体不匹配: {err}");
+        let err = merge_parts(
+            std::slice::from_ref(&p1),
+            &out,
+            &Some(sha_of(b"ZZZ")),
+            |_, _| {},
+        )
+        .await
+        .unwrap_err();
+        assert!(
+            err.contains("整体 SHA256 校验不匹配"),
+            "错误应说明整体不匹配: {err}"
+        );
         let _ = std::fs::remove_file(&p1);
         let _ = std::fs::remove_file(&out);
     }
@@ -551,7 +564,9 @@ mod tests {
         let out = temp_path("progmerged", "zip");
         let seen = std::sync::Mutex::new(Vec::new());
         merge_parts(&[p1.clone(), p2.clone()], &out, &None, |done, total| {
-            seen.lock().unwrap_or_else(|e| e.into_inner()).push((done, total));
+            seen.lock()
+                .unwrap_or_else(|e| e.into_inner())
+                .push((done, total));
         })
         .await
         .expect("合并应成功");
@@ -568,6 +583,8 @@ mod tests {
     async fn merge_fails_on_missing_part() {
         let missing = temp_path("ghostpart", "bin");
         let out = temp_path("ghostmerged", "zip");
-        assert!(merge_parts(&[missing], &out, &None, |_, _| {}).await.is_err());
+        assert!(merge_parts(&[missing], &out, &None, |_, _| {})
+            .await
+            .is_err());
     }
 }

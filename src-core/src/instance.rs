@@ -96,13 +96,20 @@ pub(crate) fn open_exclusive_write(path: &Path) -> std::io::Result<std::fs::File
         std::fs::OpenOptions::new()
             .write(true)
             .create(true)
+            // 锁文件不承载内容，显式声明 truncate 把「覆盖打开」写成确定语义：
+            // clippy::suspicious_open_options 就是针对 `create` 而不交代 truncate 的组合，
+            // 将来若改成写入 pid，残留旧字节会误导排查
+            .truncate(true)
             // 0 = 不给任何共享模式：文件被别处打开时这里直接失败
             .share_mode(0)
             .open(path)
     }
     #[cfg(not(windows))]
     {
-        std::fs::OpenOptions::new().write(true).create(true).open(path)
+        std::fs::OpenOptions::new()
+            .write(true)
+            .create(true)
+            .open(path)
     }
 }
 
@@ -167,7 +174,10 @@ mod tests {
         let err = acquire(&dir, std::time::Duration::ZERO)
             .err()
             .expect("持有期间第二个实例应失败");
-        assert!(err.contains("另一个更新器实例"), "错误应说明并存实例: {err}");
+        assert!(
+            err.contains("另一个更新器实例"),
+            "错误应说明并存实例: {err}"
+        );
 
         drop(guard);
         let _ = acquire(&dir, std::time::Duration::from_secs(1)).expect("释放后应可再次取得");

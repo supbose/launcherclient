@@ -15,17 +15,19 @@
   "private": true,
   "repository": "https://github.com/qsltdupdater/qsltdupdater",
   "scripts": {
-    "build": "cd src-egui && cargo build --release",
+    "build": "cargo build --release -p qsltdupdater-egui",
     "build:egui:qsm.bak": "python scripts/pybuild.py egui --name \"聚合音乐\" --app-name qsm --manifest-url https://qsc.cdn.qcsm.ltd/update/qsm/version_2.json --manifest-url https://qsw.us.ci/update/qsm/version.json --homepage https://qsm.us.ci --template F --retry-times 5 --max-versions 3 --service QsmServer\n",
-    "dev": "cd src-egui && cargo run",
+    "dev": "cargo run -p qsltdupdater-egui",
     "dist": "python scripts/build.py",
-    "egui": "cd src-egui && cargo build --release",
+    "egui": "cargo build --release -p qsltdupdater-egui",
     "egui:build": "python scripts/pybuild.py egui",
-    "egui:dev": "cd src-egui && cargo run",
+    "egui:dev": "cargo run -p qsltdupdater-egui",
     "pkgtool": "python scripts/pybuild.py pkgtool",
     "pkgtool:dev": "cd src-pkgtool && cargo run",
-    "preview": "cd src-egui/target/release && .\\launcherclient.exe --preview --template F --stage error",
-    "qsm:release": "python scripts/pybuild.py egui --name \"聚合音乐\" --app-name qsm --manifest-url https://qsc.cdn.qcsm.ltd/update/qsm/version_2.json --manifest-url https://qsw.us.ci/update/qsm/version.json --homepage https://qsm.us.ci --template F --retry-times 5 --max-versions 3 --service QsmServer\n"
+    "preview": "cd target\\release && .\\launcherclient.exe --preview --template F --stage error",
+    "qsm:release": "python scripts/pybuild.py egui --name \"聚合音乐\" --app-name qsm --manifest-url https://qsc.cdn.qcsm.ltd/update/qsm/version_2.json --manifest-url https://qsw.us.ci/update/qsm/version.json --homepage https://qsm.us.ci --template F --retry-times 5 --max-versions 3 --service QsmServer\n",
+    "version:check": "python scripts/pybuild.py --check-version",
+    "version:sync": "python scripts/pybuild.py --sync-version"
   },
   "version": "0.2.1"
 }

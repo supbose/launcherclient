@@ -126,7 +126,10 @@ pub fn resolve_config(args: &CliArgs) -> ResolvedConfig {
         homepage: non_empty(settings.homepage).unwrap_or_else(|| DEFAULT_HOMEPAGE.to_string()),
         retry_times: config::resolve_retry_times(settings.retry_times),
         // 命令行 --allow-missing-sha256 > update.json require_sha256 > 默认要求
-        require_sha256: config::resolve_require_sha256(args.allow_missing_sha256, settings.require_sha256),
+        require_sha256: config::resolve_require_sha256(
+            args.allow_missing_sha256,
+            settings.require_sha256,
+        ),
         max_versions: settings
             .max_versions
             .filter(|v| *v > 0)
@@ -207,7 +210,10 @@ async fn cleanup_download_cache(app_name: &str, version: &str) {
 /// 3 = 必须更新（服务端 manifest 设了 `min_version` 门槛 / `force_update` 标记置真）。
 pub fn check_only_exit(args: &CliArgs) -> i32 {
     let cfg = resolve_config(args);
-    match tokio::runtime::Builder::new_multi_thread().enable_all().build() {
+    match tokio::runtime::Builder::new_multi_thread()
+        .enable_all()
+        .build()
+    {
         Ok(rt) => rt.block_on(run_check_only(args, &cfg)),
         Err(e) => {
             eprintln!("[更新器] 创建异步运行时失败: {}", e);
@@ -420,11 +426,20 @@ pub fn spawn_flow_with(args: CliArgs, handle: PhaseHandle, m: manifest::FlatMani
 /// 与 [`run_startup`] 的差异：本函数走完整流程（含 manifest TTL 缓存），
 /// 供「重试」与错误态重跑使用；每个阶段都推送快照到 `handle`。
 /// 拉起目标程序成功或失败后流程结束（成功时由调用方决定是否退出进程）。
-async fn run_check_flow(args: &CliArgs, cfg: &ResolvedConfig, handle: &PhaseHandle) -> Result<(), String> {
+async fn run_check_flow(
+    args: &CliArgs,
+    cfg: &ResolvedConfig,
+    handle: &PhaseHandle,
+) -> Result<(), String> {
     let current_version = resolve_current_version(args, &cfg.app_name).await;
     eprintln!("[更新器] 当前版本: {}", current_version);
 
-    handle.set(PhasePayload::new(Stage::Checking, "正在检查更新...", "", None));
+    handle.set(PhasePayload::new(
+        Stage::Checking,
+        "正在检查更新...",
+        "",
+        None,
+    ));
 
     // manifest 拉取走 TTL 缓存（5 分钟内重复启动免联网）；重试场景准确优先，
     // 与 Tauri 版一致：首跑用缓存，重试同样命中（5 分钟窗口内服务端无变化）
@@ -463,7 +478,12 @@ async fn run_check_flow(args: &CliArgs, cfg: &ResolvedConfig, handle: &PhaseHand
 
     // ---- 发现新版本：下载 → 校验 → 安装 ----
     let sub = format!("{} → {}", current_version, m.version);
-    handle.set(PhasePayload::new(Stage::Available, "发现新版本", &sub, None));
+    handle.set(PhasePayload::new(
+        Stage::Available,
+        "发现新版本",
+        &sub,
+        None,
+    ));
     run_update_flow(cfg, &m, handle).await
 }
 
@@ -532,12 +552,7 @@ pub async fn run_update_flow(
         }
         Err(e) => {
             eprintln!("[更新器] 提权前置检查失败，终止更新: {}", e);
-            handle.set(PhasePayload::new(
-                Stage::Error,
-                "需要管理员权限",
-                &e,
-                None,
-            ));
+            handle.set(PhasePayload::new(Stage::Error, "需要管理员权限", &e, None));
             return Err(e);
         }
     }
@@ -607,7 +622,12 @@ pub async fn run_update_flow(
         let svc_handle = handle.clone();
         let svc_result = tokio::task::spawn_blocking(move || {
             services::uninstall_configured(&services::SystemScRunner, &svc_names, &|msg| {
-                svc_handle.set(PhasePayload::new(Stage::Installing, "正在处理服务...", msg, None));
+                svc_handle.set(PhasePayload::new(
+                    Stage::Installing,
+                    "正在处理服务...",
+                    msg,
+                    None,
+                ));
             })
         })
         .await;
@@ -642,7 +662,12 @@ pub async fn run_update_flow(
         install_attempt += 1;
         let install_handle = handle.clone();
         let install_cb: install::StageCallback = Arc::new(move |msg, pct| {
-            install_handle.set(PhasePayload::new(Stage::Installing, "正在安装更新...", msg, pct))
+            install_handle.set(PhasePayload::new(
+                Stage::Installing,
+                "正在安装更新...",
+                msg,
+                pct,
+            ))
         });
         match install::install(&zip_path, &target_dir, install_cb).await {
             Ok(_) => break,
@@ -656,11 +681,13 @@ pub async fn run_update_flow(
             }
             Err(e) => {
                 eprintln!("[更新器] 安装失败: {}", e);
-                handle.set(PhasePayload::failure("更新安装失败", &e, false).with_attempt(
-                    "install",
-                    install_attempt,
-                    install_max,
-                ));
+                handle.set(
+                    PhasePayload::failure("更新安装失败", &e, false).with_attempt(
+                        "install",
+                        install_attempt,
+                        install_max,
+                    ),
+                );
                 return Err(e);
             }
         }
@@ -678,7 +705,12 @@ pub async fn run_update_flow(
     .await
     {
         eprintln!("[更新器] 本地版本记录写入失败: {}", e);
-        handle.set(PhasePayload::new(Stage::Error, "本地版本记录写入失败", &e, None));
+        handle.set(PhasePayload::new(
+            Stage::Error,
+            "本地版本记录写入失败",
+            &e,
+            None,
+        ));
         return Err(e);
     }
 
@@ -694,21 +726,24 @@ pub async fn run_update_flow(
     // 更新完成后拉起目标程序（launch 留空时自动定位主程序启动）
     let outcome = match &cfg.launch {
         Some(_) => launch_target(cfg, Some(&target_dir)),
-        None => {
-            match install::find_main_executable(&target_dir, &cfg.app_name) {
-                Some(exe) => spawn_detached(&exe),
-                None => Err(format!(
-                    "安装目录中未找到可执行文件: {}",
-                    target_dir.display()
-                )),
-            }
-        }
+        None => match install::find_main_executable(&target_dir, &cfg.app_name) {
+            Some(exe) => spawn_detached(&exe),
+            None => Err(format!(
+                "安装目录中未找到可执行文件: {}",
+                target_dir.display()
+            )),
+        },
     };
     if let Err(e) = outcome {
         // 安装已成功（app.json 已写入新版本），仅启动失败：保留错误态，
         // 用户可点「重试」重走检测（无更新分支会再次尝试启动）或手动启动
         eprintln!("[更新器] 更新完成但启动失败: {}", e);
-        handle.set(PhasePayload::new(Stage::Error, "更新已完成，但启动应用失败", &e, None));
+        handle.set(PhasePayload::new(
+            Stage::Error,
+            "更新已完成，但启动应用失败",
+            &e,
+            None,
+        ));
         return Err(e);
     }
     // 启动成功：对齐 Tauri 版 app.exit(0) —— 目标程序已在前台，
@@ -743,28 +778,29 @@ async fn run_download_parts(
 
     let tracker = std::sync::Mutex::new(SpeedTracker::new());
     let handle_cb = handle.clone();
-    let result = download::download_parts(urls, sha256s, &parts_dir, total_size, move |i, total, p| {
-        let mut t = tracker.lock().unwrap_or_else(|e| e.into_inner());
-        let (should, speed) = t.tick(p.downloaded, p.percent() == Some(100.0));
-        if should {
-            // 标题只描述动作，分卷进度交由右上角徽标（"分卷 x/y"）展示，
-            // 避免标题与徽标同时出现"分卷 1/28"造成冗余拥挤（与单包模式标题语义一致）
-            let msg = retry_title("download", attempt, max_attempts);
-            // 总大小未知时按卷数估算百分比
-            let percent = p
-                .percent()
-                .unwrap_or(((i + 1) as f64 / total as f64) * 100.0);
-            handle_cb.set(PhasePayload::download(
-                &msg,
-                Some(format!("分卷 {}/{}", i + 1, total)),
-                Some(percent),
-                p.downloaded,
-                p.total,
-                Some(speed),
-            ));
-        }
-    })
-    .await;
+    let result =
+        download::download_parts(urls, sha256s, &parts_dir, total_size, move |i, total, p| {
+            let mut t = tracker.lock().unwrap_or_else(|e| e.into_inner());
+            let (should, speed) = t.tick(p.downloaded, p.percent() == Some(100.0));
+            if should {
+                // 标题只描述动作，分卷进度交由右上角徽标（"分卷 x/y"）展示，
+                // 避免标题与徽标同时出现"分卷 1/28"造成冗余拥挤（与单包模式标题语义一致）
+                let msg = retry_title("download", attempt, max_attempts);
+                // 总大小未知时按卷数估算百分比
+                let percent = p
+                    .percent()
+                    .unwrap_or(((i + 1) as f64 / total as f64) * 100.0);
+                handle_cb.set(PhasePayload::download(
+                    &msg,
+                    Some(format!("分卷 {}/{}", i + 1, total)),
+                    Some(percent),
+                    p.downloaded,
+                    p.total,
+                    Some(speed),
+                ));
+            }
+        })
+        .await;
     let result = match result {
         Ok(r) => r,
         Err(e) => {
@@ -778,22 +814,32 @@ async fn run_download_parts(
         }
     };
 
-    handle.set(PhasePayload::new(Stage::Checking, "正在合并分卷...", "", Some(0.0)));
+    handle.set(PhasePayload::new(
+        Stage::Checking,
+        "正在合并分卷...",
+        "",
+        Some(0.0),
+    ));
     eprintln!("[更新器] 合并 {} 个分卷...", result.part_paths.len());
     let merge_handle = handle.clone();
-    download::merge_parts(&result.part_paths, zip_path, &m.sha256, move |done, total| {
-        let pct = if total > 0 {
-            (done as f64 / total as f64 * 100.0).min(100.0)
-        } else {
-            0.0
-        };
-        merge_handle.set(PhasePayload::new(
-            Stage::Checking,
-            "正在合并分卷...",
-            &format!("{} / {}", fmt_mb(done), fmt_mb(total)),
-            Some(pct),
-        ));
-    })
+    download::merge_parts(
+        &result.part_paths,
+        zip_path,
+        &m.sha256,
+        move |done, total| {
+            let pct = if total > 0 {
+                (done as f64 / total as f64 * 100.0).min(100.0)
+            } else {
+                0.0
+            };
+            merge_handle.set(PhasePayload::new(
+                Stage::Checking,
+                "正在合并分卷...",
+                &format!("{} / {}", fmt_mb(done), fmt_mb(total)),
+                Some(pct),
+            ));
+        },
+    )
     .await
     .map_err(|e| {
         // 合并失败多为分卷本身残缺（下载环节的锅），统一按下载环节处理
@@ -824,7 +870,10 @@ async fn run_download(
             .unwrap_or_else(|e| Err(format!("校验任务异常: {}", e)))
             .is_ok();
         if ok {
-            let size = tokio::fs::metadata(zip_path).await.map(|m| m.len()).unwrap_or(0);
+            let size = tokio::fs::metadata(zip_path)
+                .await
+                .map(|m| m.len())
+                .unwrap_or(0);
             eprintln!(
                 "[更新器] 复用已下载的更新包: {}（{}）",
                 zip_path.display(),
@@ -876,7 +925,10 @@ async fn run_download(
 
     match result {
         Ok((_, sha)) => {
-            let size = tokio::fs::metadata(zip_path).await.map(|m| m.len()).unwrap_or(0);
+            let size = tokio::fs::metadata(zip_path)
+                .await
+                .map(|m| m.len())
+                .unwrap_or(0);
             eprintln!(
                 "[更新器] 下载完成，大小 {}，SHA256: {}",
                 crate::phase::format_bytes(size),
@@ -1124,8 +1176,11 @@ fn record_download_failure(handle: &PhaseHandle, err: &str, attempt: u32, max_at
     let is_download = err.starts_with(download::DOWNLOAD_FAIL_PREFIX);
     eprintln!("[更新器] 下载失败: {}", err);
     handle.set(
-        PhasePayload::failure("更新包下载失败", err, is_download)
-            .with_attempt("download", attempt, max_attempts),
+        PhasePayload::failure("更新包下载失败", err, is_download).with_attempt(
+            "download",
+            attempt,
+            max_attempts,
+        ),
     );
 }
 
@@ -1157,8 +1212,17 @@ fn residual_is_free(path: &Path) -> bool {
 }
 
 /// 校验完整包 SHA256（期望值为空时跳过）
-async fn verify_package(handle: &PhaseHandle, zip_path: &Path, sha256: &Option<String>) -> Result<(), String> {
-    handle.set(PhasePayload::new(Stage::Checking, "正在校验更新包...", "", None));
+async fn verify_package(
+    handle: &PhaseHandle,
+    zip_path: &Path,
+    sha256: &Option<String>,
+) -> Result<(), String> {
+    handle.set(PhasePayload::new(
+        Stage::Checking,
+        "正在校验更新包...",
+        "",
+        None,
+    ));
     let zip_path = zip_path.to_path_buf();
     let sha256 = sha256.clone();
     tokio::task::spawn_blocking(move || download::verify_sha256(&zip_path, &sha256))
@@ -1177,7 +1241,13 @@ fn retry_backoff(attempt: u32) -> std::time::Duration {
 ///
 /// 走 download/install 阶段而非 error：error 是终点，这里流程还在跑，
 /// 界面标题会说清楚「第几次」，用户知道程序没死。
-fn notify_retrying(handle: &PhaseHandle, stage_name: &str, attempt: u32, max_attempts: u32, err: &str) {
+fn notify_retrying(
+    handle: &PhaseHandle,
+    stage_name: &str,
+    attempt: u32,
+    max_attempts: u32,
+    err: &str,
+) {
     let stage = if stage_name == "install" {
         Stage::Installing
     } else {
@@ -1307,11 +1377,8 @@ mod tests {
     use super::*;
 
     fn temp_dir(tag: &str) -> PathBuf {
-        let d = std::env::temp_dir().join(format!(
-            "qsltd_flow_test_{}_{}",
-            tag,
-            std::process::id()
-        ));
+        let d =
+            std::env::temp_dir().join(format!("qsltd_flow_test_{}_{}", tag, std::process::id()));
         let _ = std::fs::remove_dir_all(&d);
         std::fs::create_dir_all(&d).expect("建临时目录");
         d
@@ -1428,7 +1495,10 @@ mod tests {
     fn retry_title_marks_attempt_only_after_first() {
         // 首次尝试保持常规文案，重试才标「第 N/M 次」
         assert_eq!(retry_title("download", 1, 3), "正在下载更新包...");
-        assert_eq!(retry_title("download", 2, 3), "正在下载更新包...（第 2/3 次）");
+        assert_eq!(
+            retry_title("download", 2, 3),
+            "正在下载更新包...（第 2/3 次）"
+        );
         assert_eq!(retry_title("install", 2, 3), "正在安装更新...（第 2/3 次）");
     }
 
@@ -1550,7 +1620,8 @@ mod tests {
         let other = temp_dir("other_bin");
         std::fs::write(other.join("tool.exe"), b"x").expect("写文件");
 
-        let resolved = resolve_launch_exe(&other.join("tool.exe").to_string_lossy(), Some(&install));
+        let resolved =
+            resolve_launch_exe(&other.join("tool.exe").to_string_lossy(), Some(&install));
         assert_eq!(resolved, other.join("tool.exe"));
         let _ = std::fs::remove_dir_all(&install);
         let _ = std::fs::remove_dir_all(&other);
@@ -1577,7 +1648,11 @@ mod tests {
         std::fs::write(old.join("qsm.exe"), b"old").expect("写旧 exe");
 
         let resolved = resolve_launch_exe(&old.join("qsm.exe").to_string_lossy(), Some(&install));
-        assert_eq!(resolved, bin.join("qsm.exe"), "应递归找到嵌套目录内的新 exe");
+        assert_eq!(
+            resolved,
+            bin.join("qsm.exe"),
+            "应递归找到嵌套目录内的新 exe"
+        );
         let _ = std::fs::remove_dir_all(&install);
         let _ = std::fs::remove_dir_all(&old);
     }

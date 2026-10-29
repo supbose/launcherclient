@@ -10,9 +10,16 @@
 //! [`crate::flow`]（启动决策 + 更新全流程，阶段经 [`crate::phase::PhaseHandle`]
 //! 推给各 UI），各 UI crate 只保留视图层装配。
 
+// 单元测试里 `unwrap()/expect()` 是想要的写法：断言失败应当直接 panic 并带上原因，
+// 换成 Result 传播只会让测试更难读。生产代码仍受 [lints.clippy] 的 deny/warn 约束。
+#![cfg_attr(
+    test,
+    allow(clippy::expect_used, clippy::unwrap_used, clippy::err_expect)
+)]
+
 pub mod appdir;
-pub mod cli;
 pub mod cleanup;
+pub mod cli;
 pub mod client;
 pub mod config;
 pub mod defaults;

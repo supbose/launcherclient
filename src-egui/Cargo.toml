@@ -1,10 +1,13 @@
 [package]
 name = "qsltdupdater-egui"
-version = "0.1.8"
+# 版本与 edition/license/authors 继承根 workspace 的 [workspace.package]；
+# 构建 profile 也在根 Cargo.toml（workspace 成员不能各自定义）
+# 继承需按字段逐个声明，缺 edition 会退回 2015
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+authors.workspace = true
 description = "QsLtd 独立更新程序（egui/eframe 原生 UI 版）"
-authors = ["supbose <supbose@qq.com>"]
-edition = "2021"
-license = "MIT"
 
 [[bin]]
 name = "launcherclient"
@@ -34,14 +37,3 @@ dead_code = "allow"
 unwrap_used = "deny"
 expect_used = "warn"
 print_stdout = "warn"
-
-[profile.dev]
-debug = true
-opt-level = 0
-
-[profile.release]
-opt-level = 3
-lto = true
-# 剥离调试符号与 panic 位置信息：减小体积、降低杀软启发式误报率（对齐原 Tauri 版的既有约定）
-strip = true
-codegen-units = 1

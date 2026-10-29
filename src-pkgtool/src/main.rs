@@ -161,15 +161,21 @@ fn resolve_entry(entry: &str) -> Vec<(PathBuf, String)> {
         let base: PathBuf = if wildcard {
             p.clone()
         } else {
-            p.parent().map(|x| x.to_path_buf()).unwrap_or_else(|| p.clone())
+            p.parent()
+                .map(|x| x.to_path_buf())
+                .unwrap_or_else(|| p.clone())
         };
-        for e in walkdir::WalkDir::new(&p).sort_by_file_name() {
-            if let Ok(ent) = e {
-                if ent.file_type().is_file() {
-                    if let Ok(rel) = ent.path().strip_prefix(&base) {
-                        let arc = rel.to_string_lossy().replace('\\', "/");
-                        out.push((ent.path().to_path_buf(), arc));
-                    }
+        // sort_by_file_name() 返回 &mut WalkDir，要先 into_iter() 才是迭代器；
+        // flatten() 跳过遍历出错的路径，等价于原来的 `if let Ok(ent)`
+        for ent in walkdir::WalkDir::new(&p)
+            .sort_by_file_name()
+            .into_iter()
+            .flatten()
+        {
+            if ent.file_type().is_file() {
+                if let Ok(rel) = ent.path().strip_prefix(&base) {
+                    let arc = rel.to_string_lossy().replace('\\', "/");
+                    out.push((ent.path().to_path_buf(), arc));
                 }
             }
         }
@@ -242,10 +248,11 @@ fn clean_old_packages(output_dir: &Path, app: &str, zip_name: &str) -> Vec<Strin
             if !name.starts_with(&prefix) || !name.contains(".zip") {
                 continue;
             }
-            if name != zip_name && !name.starts_with(&format!("{}.", zip_name)) {
-                if fs::remove_file(&path).is_ok() {
-                    deleted.push(name);
-                }
+            if name != zip_name
+                && !name.starts_with(&format!("{}.", zip_name))
+                && fs::remove_file(&path).is_ok()
+            {
+                deleted.push(name);
             }
         }
     }
@@ -253,7 +260,13 @@ fn clean_old_packages(output_dir: &Path, app: &str, zip_name: &str) -> Vec<Strin
 }
 
 /// 打包阶段名（顺序即执行顺序，UI 直接按此列表渲染阶段条）
-const STAGE_NAMES: [&str; 5] = ["展开文件清单", "压缩打包", "计算校验值", "切分分卷", "生成版本清单"];
+const STAGE_NAMES: [&str; 5] = [
+    "展开文件清单",
+    "压缩打包",
+    "计算校验值",
+    "切分分卷",
+    "生成版本清单",
+];
 
 /// 打包进度快照（后台线程写、UI 线程读）
 #[derive(Clone)]
@@ -340,7 +353,11 @@ fn pack_core(
     let zip_path = output_dir.join(&zip_name);
 
     // 2. 压缩
-    logln(&format!("正在压缩 {} 个文件 -> {}", resolved.len(), zip_path.display()));
+    logln(&format!(
+        "正在压缩 {} 个文件 -> {}",
+        resolved.len(),
+        zip_path.display()
+    ));
     {
         let file = fs::File::create(&zip_path)
             .map_err(|e| format!("创建 {} 失败: {}", zip_path.display(), e))?;
@@ -357,7 +374,8 @@ fn pack_core(
             ));
             zip.start_file(arc, options)
                 .map_err(|e| format!("写入 {} 失败: {}", arc, e))?;
-            let mut f = fs::File::open(src).map_err(|e| format!("打开 {} 失败: {}", src.display(), e))?;
+            let mut f =
+                fs::File::open(src).map_err(|e| format!("打开 {} 失败: {}", src.display(), e))?;
             std::io::copy(&mut f, &mut zip).map_err(|e| e.to_string())?;
         }
         zip.finish().map_err(|e| format!("zip 收尾失败: {}", e))?;
@@ -382,10 +400,14 @@ fn pack_core(
         on_progress(Progress::new(3, 0.1, "切分中"));
         let ps = split_zip(&zip_path, volume_size)?;
         for (p, h) in &ps {
-            logln(&format!("  {} ({} 字节, sha256 {})", p.display(), p.metadata().map(|m| m.len()).unwrap_or(0), &h[..16]));
+            logln(&format!(
+                "  {} ({} 字节, sha256 {})",
+                p.display(),
+                p.metadata().map(|m| m.len()).unwrap_or(0),
+                &h[..16]
+            ));
         }
-        fs::remove_file(&zip_path)
-            .map_err(|e| format!("删除完整包失败: {}", e))?;
+        fs::remove_file(&zip_path).map_err(|e| format!("删除完整包失败: {}", e))?;
         on_progress(Progress::new(3, 1.0, format!("{} 卷", ps.len())));
         ps
     } else {
@@ -428,11 +450,19 @@ fn pack_core(
     on_progress(Progress::new(4, 0.1, "解析更新日志"));
     let release_date = Utc::now().format("%Y-%m-%dT%H:%M:%S.000Z").to_string();
     let version_files: Vec<PathBuf> = std::iter::once(output_dir.join("version.json"))
-        .chain((2..=cfg.download_prefixes.len()).map(|i| output_dir.join(format!("version_{}.json", i))))
+        .chain(
+            (2..=cfg.download_prefixes.len())
+                .map(|i| output_dir.join(format!("version_{}.json", i))),
+        )
         .collect();
 
     let npre = cfg.download_prefixes.len().max(1);
-    for (i, (prefix, vfile)) in cfg.download_prefixes.iter().zip(version_files.iter()).enumerate() {
+    for (i, (prefix, vfile)) in cfg
+        .download_prefixes
+        .iter()
+        .zip(version_files.iter())
+        .enumerate()
+    {
         check_cancel!();
         on_progress(Progress::new(
             4,
@@ -443,17 +473,14 @@ fn pack_core(
         map.insert("version".into(), serde_json::json!(version));
         map.insert("update".into(), serde_json::json!(true));
         map.insert("size_bytes".into(), serde_json::json!(size_bytes));
-        map.insert("url".into(), serde_json::json!(format!("{}{}", prefix, zip_name)));
+        map.insert(
+            "url".into(),
+            serde_json::json!(format!("{}{}", prefix, zip_name)),
+        );
         if !parts.is_empty() {
             let parts_urls: Vec<String> = parts
                 .iter()
-                .map(|(p, _)| {
-                    format!(
-                        "{}{}",
-                        prefix,
-                        p.file_name().unwrap().to_string_lossy()
-                    )
-                })
+                .map(|(p, _)| format!("{}{}", prefix, p.file_name().unwrap().to_string_lossy()))
                 .collect();
             let part_hashes: Vec<String> = parts.iter().map(|(_, h)| h.clone()).collect();
             map.insert("parts".into(), serde_json::json!(parts_urls));
@@ -465,7 +492,10 @@ fn pack_core(
         // - min_version / store_url 仅在非空时写入，留空即表示「不约束 / 不显示入口」
         map.insert("force_update".into(), serde_json::json!(cfg.force_update));
         if !cfg.min_version.trim().is_empty() {
-            map.insert("min_version".into(), serde_json::json!(cfg.min_version.trim()));
+            map.insert(
+                "min_version".into(),
+                serde_json::json!(cfg.min_version.trim()),
+            );
         }
         if !cfg.store_url.trim().is_empty() {
             map.insert("store_url".into(), serde_json::json!(cfg.store_url.trim()));
@@ -477,7 +507,11 @@ fn pack_core(
         let text = serde_json::to_string_pretty(&value).map_err(|e| e.to_string())?;
         let created = !vfile.is_file();
         fs::write(vfile, text + "\n").map_err(|e| e.to_string())?;
-        logln(&format!("{}: {}", if created { "已创建" } else { "已更新" }, vfile.display()));
+        logln(&format!(
+            "{}: {}",
+            if created { "已创建" } else { "已更新" },
+            vfile.display()
+        ));
     }
 
     // 7. 清理旧包
@@ -560,7 +594,11 @@ fn scan_history(output_dir: &str, app: &str) -> Vec<HistoryItem> {
                         dt.format("%Y-%m-%d %H:%M").to_string()
                     })
                     .unwrap_or_default();
-                items.push(HistoryItem { name, size: size_str, date });
+                items.push(HistoryItem {
+                    name,
+                    size: size_str,
+                    date,
+                });
             }
         }
     }
@@ -584,7 +622,8 @@ const SUCCESS: egui::Color32 = egui::Color32::from_rgb(0x35, 0xc2, 0x6e);
 const DANGER: egui::Color32 = egui::Color32::from_rgb(0xe8, 0x11, 0x23);
 const ACCENT_TEXT: egui::Color32 = egui::Color32::WHITE;
 /// 导航选中态：蓝色低透明叠层（rgba(74,158,255,0.16)）
-const ACCENT_SOFT: egui::Color32 = egui::Color32::from_rgba_unmultiplied_const(0x4a, 0x9e, 0xff, 40);
+const ACCENT_SOFT: egui::Color32 =
+    egui::Color32::from_rgba_unmultiplied_const(0x4a, 0x9e, 0xff, 40);
 /// 卡片/侧栏底（白色 4% 叠层）
 const CARD_BG: egui::Color32 = egui::Color32::from_rgba_unmultiplied_const(255, 255, 255, 10);
 /// 卡片描边（白色 8% 叠层）
@@ -679,8 +718,7 @@ fn draw_titlebar(ui: &mut egui::Ui, title: &str) -> TitleBarAction {
     );
     let drag = ui.interact(drag_rect, scope.with("drag"), egui::Sense::click_and_drag());
     if drag.drag_started() {
-        ui.ctx()
-            .send_viewport_cmd(egui::ViewportCommand::StartDrag);
+        ui.ctx().send_viewport_cmd(egui::ViewportCommand::StartDrag);
     }
 
     let mut action = TitleBarAction::None;
@@ -729,11 +767,17 @@ fn draw_titlebar(ui: &mut egui::Ui, title: &str) -> TitleBarAction {
     };
     let cx = close_rect.center().x;
     painter.line_segment(
-        [egui::pos2(cx - 6.0, cy - 6.0), egui::pos2(cx + 6.0, cy + 6.0)],
+        [
+            egui::pos2(cx - 6.0, cy - 6.0),
+            egui::pos2(cx + 6.0, cy + 6.0),
+        ],
         egui::Stroke::new(2.0, cc),
     );
     painter.line_segment(
-        [egui::pos2(cx - 6.0, cy + 6.0), egui::pos2(cx + 6.0, cy - 6.0)],
+        [
+            egui::pos2(cx - 6.0, cy + 6.0),
+            egui::pos2(cx + 6.0, cy - 6.0),
+        ],
         egui::Stroke::new(2.0, cc),
     );
     if close_resp.clicked() {
@@ -951,7 +995,10 @@ impl PackToolApp {
         // 版本号格式校验：x.y / x.y.z / x.y.z.w
         let re = regex::Regex::new(r"^\d+(\.\d+){1,3}$").unwrap();
         if !re.is_match(&version) {
-            push_log(&self.log, &format!("版本号格式无效: {}（示例 2.1.3）", version));
+            push_log(
+                &self.log,
+                &format!("版本号格式无效: {}（示例 2.1.3）", version),
+            );
             return;
         }
         let cfg = self.config.clone();
@@ -1021,7 +1068,7 @@ impl PackToolApp {
         };
 
         // ---- 指标条：版本号 / 配置项 / 下载前缀 / 最近耗时 ----
-        let metrics: [( &str, String, bool); 4] = [
+        let metrics: [(&str, String, bool); 4] = [
             ("版本号", self.version.clone(), true),
             ("配置项", format!("{} 项", self.config.files.len()), false),
             (
@@ -1358,7 +1405,12 @@ impl PackToolApp {
 
     /// 历史构建页：输出目录内已有产物（按名称倒序 = 版本由新到旧）
     fn page_history(&mut self, ui: &mut egui::Ui) {
-        ui.heading(egui::RichText::new("历史构建").size(18.0).strong().color(TEXT));
+        ui.heading(
+            egui::RichText::new("历史构建")
+                .size(18.0)
+                .strong()
+                .color(TEXT),
+        );
         ui.add_space(4.0);
         section(ui, "输出目录内的历史产物", |ui| {
             ui.label(
@@ -1369,7 +1421,11 @@ impl PackToolApp {
             ui.add_space(8.0);
             let history = scan_history(&self.config.output_dir, &self.config.app_name);
             if history.is_empty() {
-                ui.label(egui::RichText::new("还没有构建记录").size(13.0).color(MUTED));
+                ui.label(
+                    egui::RichText::new("还没有构建记录")
+                        .size(13.0)
+                        .color(MUTED),
+                );
                 ui.label(
                     egui::RichText::new("点右上角「打包」，产物会自动登记到这里")
                         .size(11.0)
@@ -1389,14 +1445,17 @@ impl PackToolApp {
                     );
                     ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
                         ui.allocate_ui(egui::vec2(76.0, 18.0), |ui| {
-                            ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                                ui.label(
-                                    egui::RichText::new(&h.size)
-                                        .size(12.0)
-                                        .color(MUTED)
-                                        .font(egui::FontId::monospace(12.0)),
-                                );
-                            });
+                            ui.with_layout(
+                                egui::Layout::right_to_left(egui::Align::Center),
+                                |ui| {
+                                    ui.label(
+                                        egui::RichText::new(&h.size)
+                                            .size(12.0)
+                                            .color(MUTED)
+                                            .font(egui::FontId::monospace(12.0)),
+                                    );
+                                },
+                            );
                         });
                         ui.allocate_ui(egui::vec2(118.0, 18.0), |ui| {
                             ui.label(
@@ -1425,7 +1484,12 @@ impl PackToolApp {
 
     /// 打包文件页：文件/目录列表
     fn page_files(&mut self, ui: &mut egui::Ui) {
-        ui.heading(egui::RichText::new("打包文件").size(18.0).strong().color(TEXT));
+        ui.heading(
+            egui::RichText::new("打包文件")
+                .size(18.0)
+                .strong()
+                .color(TEXT),
+        );
         ui.add_space(4.0);
         section(ui, "待打包文件 / 目录", |ui| {
             ui.label(
@@ -1454,12 +1518,16 @@ impl PackToolApp {
             ui.horizontal(|ui| {
                 if ui.button("+ 文件").clicked() {
                     if let Some(p) = rfd::FileDialog::new().pick_file() {
-                        self.config.files.push(p.to_string_lossy().replace('\\', "/"));
+                        self.config
+                            .files
+                            .push(p.to_string_lossy().replace('\\', "/"));
                     }
                 }
                 if ui.button("+ 目录").clicked() {
                     if let Some(p) = rfd::FileDialog::new().pick_folder() {
-                        self.config.files.push(p.to_string_lossy().replace('\\', "/"));
+                        self.config
+                            .files
+                            .push(p.to_string_lossy().replace('\\', "/"));
                     }
                 }
             });
@@ -1468,7 +1536,12 @@ impl PackToolApp {
 
     /// 下载与版本页：前缀 + 版本号 + 更新日志
     fn page_version(&mut self, ui: &mut egui::Ui) {
-        ui.heading(egui::RichText::new("下载与版本").size(18.0).strong().color(TEXT));
+        ui.heading(
+            egui::RichText::new("下载与版本")
+                .size(18.0)
+                .strong()
+                .color(TEXT),
+        );
         ui.add_space(4.0);
         section(ui, "下载前缀", |ui| {
             ui.label(
@@ -1518,7 +1591,12 @@ impl PackToolApp {
 
         section(ui, "打包进度", |ui| {
             ui.horizontal(|ui| {
-                ui.label(egui::RichText::new("正在打包").size(14.0).strong().color(TEXT));
+                ui.label(
+                    egui::RichText::new("正在打包")
+                        .size(14.0)
+                        .strong()
+                        .color(TEXT),
+                );
                 ui.label(egui::RichText::new(&title_desc).size(11.0).color(MUTED));
                 ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
                     let cancel_btn = egui::Button::new(egui::RichText::new("取消").color(MUTED))
@@ -1673,9 +1751,7 @@ impl PackToolApp {
                             img,
                             egui::TextureOptions::LINEAR,
                         );
-                        ui.add(
-                            egui::Image::new(&tex).max_size(egui::vec2(56.0, 56.0)),
-                        );
+                        ui.add(egui::Image::new(&tex).max_size(egui::vec2(56.0, 56.0)));
                         ui.add_space(10.0);
                     }
                     ui.vertical(|ui| {
@@ -1701,8 +1777,7 @@ impl PackToolApp {
                                 + 16.0;
                             let (rect, _) =
                                 ui.allocate_exact_size(egui::vec2(w, 20.0), egui::Sense::hover());
-                            ui.painter()
-                                .rect_filled(rect.shrink(1.0), 5.0, ACCENT_SOFT);
+                            ui.painter().rect_filled(rect.shrink(1.0), 5.0, ACCENT_SOFT);
                             ui.painter().text(
                                 rect.center(),
                                 egui::Align2::CENTER_CENTER,
@@ -1763,17 +1838,13 @@ impl PackToolApp {
                         ui.horizontal(|ui| {
                             ui.add_sized(
                                 [64.0, 20.0],
-                                egui::Label::new(
-                                    egui::RichText::new(k).size(12.5).color(MUTED),
-                                ),
+                                egui::Label::new(egui::RichText::new(k).size(12.5).color(MUTED)),
                             );
                             if k == "描述" {
                                 // 长文本自动换行，与标签顶对齐
                                 ui.vertical(|ui| {
                                     ui.add_space(2.0);
-                                    ui.label(
-                                        egui::RichText::new(v).size(12.5).color(TEXT),
-                                    );
+                                    ui.label(egui::RichText::new(v).size(12.5).color(TEXT));
                                 });
                             } else {
                                 ui.label(egui::RichText::new(v).size(12.5).color(TEXT));
@@ -1873,7 +1944,11 @@ impl eframe::App for PackToolApp {
                                 .color(if active { ACCENT } else { MUTED })
                                 .strong(),
                         )
-                        .fill(if active { ACCENT_SOFT } else { egui::Color32::TRANSPARENT })
+                        .fill(if active {
+                            ACCENT_SOFT
+                        } else {
+                            egui::Color32::TRANSPARENT
+                        })
                         .stroke(if active {
                             egui::Stroke::new(1.0, tint(ACCENT, 80))
                         } else {
@@ -1893,10 +1968,11 @@ impl eframe::App for PackToolApp {
                         ui.label(egui::RichText::new("打包中…").color(ACCENT).strong());
                         ui.add_space(8.0);
                     }
-                    let btn = egui::Button::new(egui::RichText::new("打包").strong().color(ACCENT_TEXT))
-                        .fill(ACCENT)
-                        .corner_radius(6.0)
-                        .min_size(egui::vec2(80.0, 30.0));
+                    let btn =
+                        egui::Button::new(egui::RichText::new("打包").strong().color(ACCENT_TEXT))
+                            .fill(ACCENT)
+                            .corner_radius(6.0)
+                            .min_size(egui::vec2(80.0, 30.0));
                     if ui.add_enabled(!running, btn).clicked() {
                         self.start_pack(ui.ctx().clone());
                     }
@@ -1938,7 +2014,10 @@ const FONT_CANDIDATES: [&str; 5] = [
 
 /// 安装中文字体：把系统中文字体插到 egui 字体族最前，修复中文豆腐块显示。
 fn install_fonts(ctx: &Context) {
-    let Some(path) = FONT_CANDIDATES.iter().find(|p| std::path::Path::new(p).exists()) else {
+    let Some(path) = FONT_CANDIDATES
+        .iter()
+        .find(|p| std::path::Path::new(p).exists())
+    else {
         eprintln!("[pkgtool] 未找到系统中文字体，中文将无法显示");
         return;
     };
@@ -1965,7 +2044,7 @@ fn install_fonts(ctx: &Context) {
 /// 用 `include_bytes!` 直接内嵌，避免运行时依赖外部文件；取尺寸最大的那一帧。
 fn load_window_icon() -> Option<egui::IconData> {
     const ICON_BYTES: &[u8] = include_bytes!("../assets/icon.ico");
-    let cursor = std::io::Cursor::new(&ICON_BYTES[..]);
+    let cursor = std::io::Cursor::new(ICON_BYTES);
     let icon_dir = ico::IconDir::read(cursor).ok()?;
     // 取尺寸最大的那一帧（任务栏通常用 32×32，但取最大最通用）
     let mut best: Option<&ico::IconDirEntry> = None;
@@ -2075,7 +2154,11 @@ mod tests {
         );
         assert!(res.is_ok(), "pack_core 失败: {:?}", log);
         // 进度应覆盖全部 5 个阶段，且单调不回退
-        assert!(stages.contains(&0) && stages.contains(&4), "进度应覆盖首尾阶段: {:?}", stages);
+        assert!(
+            stages.contains(&0) && stages.contains(&4),
+            "进度应覆盖首尾阶段: {:?}",
+            stages
+        );
         assert!(
             stages.windows(2).all(|w| w[0] <= w[1]),
             "阶段下标不应回退: {:?}",
@@ -2085,11 +2168,15 @@ mod tests {
         // version.json 字段校验
         let vf = out.join("version.json");
         assert!(vf.is_file(), "version.json 未生成");
-        let j: serde_json::Value = serde_json::from_str(&std::fs::read_to_string(&vf).unwrap()).unwrap();
+        let j: serde_json::Value =
+            serde_json::from_str(&std::fs::read_to_string(&vf).unwrap()).unwrap();
         assert_eq!(j["version"], "1.2.3");
         assert_eq!(j["update"], true);
         assert!(j["size_bytes"].as_u64().unwrap() > 0);
-        assert_eq!(j["url"], "https://example.com/update/testapp/testapp_1.2.3.zip");
+        assert_eq!(
+            j["url"],
+            "https://example.com/update/testapp/testapp_1.2.3.zip"
+        );
 
         let zip_name = "testapp_1.2.3.zip";
         let zip_path = out.join(zip_name);
@@ -2097,13 +2184,19 @@ mod tests {
         assert!(!zip_path.is_file(), "超限后完整包应被删除");
         let part1 = out.join(format!("{}.001", zip_name));
         let part2 = out.join(format!("{}.002", zip_name));
-        assert!(part1.is_file() && part2.is_file(), "应切分为 .001/.002 分卷");
+        assert!(
+            part1.is_file() && part2.is_file(),
+            "应切分为 .001/.002 分卷"
+        );
 
         let parts = j["parts"].as_array().unwrap();
         let phashes = j["part_sha256"].as_array().unwrap();
         assert_eq!(parts.len(), phashes.len());
         assert_eq!(parts.len(), 2);
-        assert_eq!(parts[0], "https://example.com/update/testapp/testapp_1.2.3.zip.001");
+        assert_eq!(
+            parts[0],
+            "https://example.com/update/testapp/testapp_1.2.3.zip.001"
+        );
 
         // 合并分卷还原后 sha256 应与 version.json 的 sha256 一致
         let mut merged = Vec::new();
@@ -2112,7 +2205,11 @@ mod tests {
         let mut f2 = std::fs::File::open(&part2).unwrap();
         std::io::Read::read_to_end(&mut f2, &mut merged).unwrap();
         let merged_sha = hex::encode(Sha256::digest(&merged));
-        assert_eq!(merged_sha, j["sha256"].as_str().unwrap(), "合并后 sha256 应与 version.json 一致");
+        assert_eq!(
+            merged_sha,
+            j["sha256"].as_str().unwrap(),
+            "合并后 sha256 应与 version.json 一致"
+        );
 
         // changelog 解析
         let cl = j["changelog"].as_array().unwrap();
@@ -2124,7 +2221,12 @@ mod tests {
     }
 
     /// 构造最小可打包工程并跑一次 pack_core，返回解析后的 version.json
-    fn pack_once(base_tag: &str, min_version: &str, force: bool, store_url: &str) -> serde_json::Value {
+    fn pack_once(
+        base_tag: &str,
+        min_version: &str,
+        force: bool,
+        store_url: &str,
+    ) -> serde_json::Value {
         let base = tmpdir(base_tag);
         let src = base.join("src");
         std::fs::create_dir_all(&src).unwrap();
@@ -2181,7 +2283,10 @@ mod tests {
         let out = base.join("o");
         std::fs::create_dir_all(&out).unwrap();
         std::fs::write(out.join("version.json"), r#"{"version":"3.1.9"}"#).unwrap();
-        assert_eq!(suggest_version(out.to_string_lossy().as_ref(), "qsm"), "3.1.10");
+        assert_eq!(
+            suggest_version(out.to_string_lossy().as_ref(), "qsm"),
+            "3.1.10"
+        );
         let _ = std::fs::remove_dir_all(&base);
     }
 
@@ -2286,8 +2391,10 @@ mod tests {
     fn window_icon_from_ico() {
         // 验证 icon.ico 经 include_bytes! + ico 解码得到有效的窗口/任务栏图标
         let icon = load_window_icon().expect("icon.ico 应能被解码为 IconData");
-        assert!(icon.rgba.len() == icon.width as usize * icon.height as usize * 4,
-            "rgba 字节数应等于 width*height*4");
+        assert!(
+            icon.rgba.len() == icon.width as usize * icon.height as usize * 4,
+            "rgba 字节数应等于 width*height*4"
+        );
         assert!(icon.width > 0 && icon.height > 0);
     }
 }

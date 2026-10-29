@@ -29,6 +29,7 @@ def main() -> int:
 
     try:
         version = pybuild.read_package_version()
+        segments = pybuild.version_segments(version)
         csv_version, dotted_version = pybuild.parse_version(version)
         out_dir: Path = DIST_DIR / version
         print(f"版本号：{version} -> rc {csv_version} / 字符串 {dotted_version}")
@@ -36,7 +37,12 @@ def main() -> int:
 
         for name in ("egui", "pkgtool"):
             print(f"\n===== 打包 {name} =====")
-            exe_path = pybuild.build_target(pybuild.TARGETS[name], csv_version, dotted_version)
+            # 传入 version/segments：每次打包都把版本铺开到 Cargo 清单与两个 rc，
+            # 让 dist 里的 exe 与 package.json 始终同源（不传则只同步目标 rc）
+            exe_path = pybuild.build_target(
+                pybuild.TARGETS[name], csv_version, dotted_version,
+                version=version, segments=segments,
+            )
             out_dir.mkdir(parents=True, exist_ok=True)
             dest = out_dir / exe_path.name
             shutil.copy2(exe_path, dest)
