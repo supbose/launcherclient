@@ -17,6 +17,13 @@
 
 
 
+
+## v0.2.2 (2026-10-30)
+### 📦 构建系统
+
+- [02dd0f0](/-/commit/02dd0f04b97cb650518c5da7849cbb925bd57112) 构建(src-core): 重构工作区配置，统一版本管理与构建 profile (.cnb.yml, Cargo.lock, Cargo.toml, README.md, package.json, scripts/__pycache__/pybuild.cpython-314.pyc, scripts/build.py, scripts/pybuild.py, src-core/Cargo.toml, src-core/build.rs, src-core/src/appdir.rs, src-core/src/cleanup.rs, src-core/src/cli.rs, src-core/src/config.rs, src-core/src/download.rs, src-core/src/elevation.rs, src-core/src/flow.rs, src-core/src/install.rs, src-core/src/instance.rs, src-core/src/lib.rs, src-core/src/local_manifest.rs, src-core/src/manifest.rs, src-core/src/phase.rs, src-core/src/services.rs, src-core/src/shell.rs, src-egui/Cargo.toml, src-egui/build.rs, src-egui/src/app.rs, src-egui/src/main.rs, src-egui/src/preview.rs, src-egui/src/templates.rs, src-egui/src/theme.rs, src-egui/src/widgets.rs, src-pkgtool/Cargo.lock, src-pkgtool/Cargo.toml, src-pkgtool/icon.rc, src-pkgtool/src/main.rs)
+- [e477838](/-/commit/e477838fe3d268be958a0c217560ab88180bfb76) 构建(src-egui): 更新版本号至0.2.1.0 (src-egui/version.rc)
+
 ## v0.2.1 (2026-10-30)
 ### 🚀 新增功能
 

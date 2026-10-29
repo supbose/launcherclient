@@ -29,5 +29,5 @@
     "version:check": "python scripts/pybuild.py --check-version",
     "version:sync": "python scripts/pybuild.py --sync-version"
   },
-  "version": "0.2.1"
+  "version": "0.2.2"
 }
