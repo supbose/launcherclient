@@ -8,6 +8,12 @@
 
 
 
+
+## v0.1.33 (2026-10-29)
+### 📦 构建系统
+
+- [352b905](/-/commit/352b905c47dd571c89eb87a8d541cb867d5eda9d) 构建(scripts): 统一构建脚本为 pybuild 并新增全量打包脚本 (.workbuddy/memory/2026-10-29.md, README.md, package.json, scripts/__pycache__/pybuild.cpython-314.pyc, scripts/build.py, scripts/pybuild.py, src-egui/version.rc, src-pkgtool/icon.rc)
+
 ## v0.1.32 (2026-10-29)
 ### 📝 文档更新
 
