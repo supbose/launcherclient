@@ -13,6 +13,12 @@
 
 
 
+
+## v0.1.38 (2026-10-29)
+### 🚀 新增功能
+
+- [cd146f8](/-/commit/cd146f83f270841d5fd06966c3d385ca46b678b7) 新增(src-egui): 支持编译期自定义启动器窗口标题 (README.md, scripts/__pycache__/pybuild.cpython-312.pyc, scripts/pybuild.py, src-core/build.rs, src-core/src/defaults.rs, src-egui/src/app.rs, src-egui/src/theme.rs, src-egui/src/widgets.rs)
+
 ## v0.1.37-beta.0 (2026-10-29)
 ### 🔧 工具变更
 
