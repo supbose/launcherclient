@@ -25,9 +25,9 @@ use qsltd_updater_core::flow::{self, StartupDecision};
 use qsltd_updater_core::phase::PhaseHandle;
 
 fn main() {
-    // --preview 模板预览模式（复刻 preview.html，仅本地验证五套布局，
+    // --preview 模板预览模式（复刻 preview.html，仅本地验证八套布局，
     // 不属于核心 CLI 参数——先摘除再交给 core 解析，避免「未知参数」告警）
-    // 预览初始阶段：--stage <0-7|名称>（检测中/下载中/校验中/安装中/发现新版本/已是最新/更新完成/错误）
+    // 预览初始阶段：--stage <0-10|名称>（检测中/下载中/校验中/安装中/发现新版本/已是最新/更新完成/错误/重试中/强制更新×2）
     let raw_argv: Vec<String> = std::env::args().skip(1).collect();
     let preview_mode = raw_argv.iter().any(|a| a == "--preview");
     let mut preview_stage = 1usize;
@@ -53,7 +53,7 @@ fn main() {
     // 登记原始参数供错误态「重试」使用（retry 重新解析，保证重试与首次完全同参）
     flow::register_cli_argv(argv.clone());
 
-    // --check-only 纯检测：不建窗，输出结果后按退出码结束（0=无更新 1=失败 2=有更新）
+    // --check-only 纯检测：不建窗，输出结果后按退出码结束（0=无更新 1=失败 2=有更新可跳过 3=必须更新）
     if args.check_only {
         std::process::exit(flow::check_only_exit(&args));
     }

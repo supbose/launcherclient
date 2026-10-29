@@ -13,7 +13,7 @@
 
 更新器的「检测更新」有两种触发，UI 反馈策略不同：
 
-- **重试检测**（错误态点「重试」）：`retry()` → `run_check_flow` 首行即推送 `Stage::Checking`，五套模板（A~E）均已渲染 **spinner 旋转 + "正在检查更新..." 文字**；`app.rs` 对 `Checking` 阶段做 33ms 高频重绘保证动画，加载态完整。
+- **重试检测**（错误态点「重试」）：`retry()` → `run_check_flow` 首行即推送 `Stage::Checking`，八套模板（A~H）均已渲染 **spinner 旋转 + "正在检查更新..." 文字**；`app.rs` 对 `Checking` 阶段做 33ms 高频重绘保证动画，加载态完整。
 - **首次检测**（双击启动器后的 manifest 拉取）：原本在窗口创建前同步 await 完成、UI 不可见。**现改为后台线程异步检测 + 懒加载窗口**（`main.rs` 起后台线程跑 `run_startup`，`app.rs` 据 300ms 阈值决定是否 `ViewportCommand::Visible`）：
   - 检测 **≤300ms** 完成：无更新则静默拉起目标程序退出（用户无感，保住「秒开」）、有更新则直接弹出"发现新版本"；
   - 检测 **>300ms** 未完成（弱网/慢 manifest，最坏受 `client.rs` 检测超时约束）：弹出"正在检查更新"窗口给用户反馈，完成后转入对应状态；
@@ -23,15 +23,15 @@
 
 | 文件 | 行数 | 职责 |
 | --- | --- | --- |
-| `src-egui/Cargo.toml` | — | 新 crate `qsltdupdater-egui`，依赖 eframe/egui 0.35 + tokio + 共享 core |
-| `src-egui/src/main.rs` | 144 | 命令行预处理（`--preview` / `--stage`）、`--check-only` 退出码、启动决策、进入事件循环 |
-| `src-egui/src/app.rs` | 333 | `App` 实现：阶段快照轮询、标题栏动作、关闭确认模态、完成/重试派发 |
+| `src-egui/Cargo.toml` | — | 新 crate `qsltdupdater-egui`，依赖 eframe/egui 0.37 + tokio + 共享 core |
+| `src-egui/src/main.rs` | 212 | 命令行预处理（`--preview` / `--stage`）、`--check-only` 退出码、启动决策、进入事件循环 |
+| `src-egui/src/app.rs` | 505 | `App` 实现：阶段快照轮询、标题栏动作、关闭确认模态、完成/重试派发 |
 | `src-egui/src/theme.rs` | 121 | 全部色值/尺寸常量 + 中文字体注入 + item_spacing 归零 |
-| `src-egui/src/widgets.rs` | 431 | 自绘控件库：背景渐变、标题栏、进度条、环形进度、spinner、状态点、pill、日志卡、按钮 |
-| `src-egui/src/templates.rs` | 810 | 五套模板 A/B/C/D/E 布局，与 `UpdateTemplateA~E.vue` 一一对应 |
-| `src-egui/src/preview.rs` | 245 | 预览面板数据与渲染（`Preview.vue` 的 8 个阶段预设 + 模板切换） |
-| `src-core/src/phase.rs` | 459 | **新增共享模块**：阶段载荷 + 派生视图 + 跨线程快照句柄 |
-| `src-core/src/flow.rs` | 1027 | **新增共享模块**：启动决策 + 完整更新编排（下载/校验/安装/启动/重试） |
+| `src-egui/src/widgets.rs` | 563 | 自绘控件库：背景渐变、标题栏、进度条、环形进度、spinner、状态点、pill、日志卡、按钮 |
+| `src-egui/src/templates.rs` | 1474 | 八套模板 A~H 布局；A~E 与 `UpdateTemplateA~E.vue` 一一对应，F/G/H 为后续新增的三套设计方向 |
+| `src-egui/src/preview.rs` | 270 | 预览面板数据与渲染（`Preview.vue` 的 8 个阶段预设 + 模板切换） |
+| `src-core/src/phase.rs` | 768 | **新增共享模块**：阶段载荷 + 派生视图 + 跨线程快照句柄 |
+| `src-core/src/flow.rs` | 1368 | **新增共享模块**：启动决策 + 完整更新编排（下载/校验/安装/启动/重试） |
 | `src-core/src/lib.rs` | — | 追加 `pub mod flow;` / `pub mod phase;` |
 
 ## 二、复用改造：先把业务逻辑抽成共享模块
@@ -81,6 +81,7 @@
 | 预览窗口高度 | 590（`preview.html`） | 420 + `PREVIEW_EXTRA_HEIGHT(150)` | 一致 |
 | 标题栏 | `.min-title-bar` 高 32px，`padding-top:32px` | `TITLEBAR_HEIGHT = 32.0` | 一致 |
 | 标题栏按钮 | 46 × 32 | `TITLEBAR_BTN_WIDTH = 46.0`，高 32 | 一致 |
+| 标题文字排布 | Vue 侧标题栏无文字 | 左侧留 `TITLE_INSET = 12.0` 起排，`TITLE_V_NUDGE = 1.0` 补偿 CJK 字形相对基线的垂直偏移（与按钮视觉中线对齐）；可用宽度不够时由 `widgets::ellipsize_to_width` 按字体度量逐字回退补「…」，右侧预留 1px 度量余量，避免硬裁切削到笔画 | egui 自绘，无 CSS `text-overflow: ellipsis` 可用 |
 | 是否可缩放 | `resizable: false` | `.with_resizable(false)` | 一致 |
 | 边框 | `decorations: false` | `.with_decorations(false)` | 一致 |
 | 置顶 | `alwaysOnTop: true` | `.with_always_on_top()` | 一致 |
@@ -211,6 +212,10 @@
 
 ## 六、验证记录
 
+> 本节是**首次复刻交付时（2026-10-26）的记录快照**：当时只有 A~E 五套模板、`src-core` 单测 134 个；
+> 之后新增 F/G/H 三套（合计八套，默认模板改为 F），单测数量也随之增长，最新数字见 README 与
+> `cargo test --lib` 当场输出。历史行保留原样，不作为当前状态描述。
+
 | 项 | 命令 | 结果 |
 | --- | --- | --- |
 | 共享模块单测 | `cargo test --lib`（src-core） | **134 passed / 0 failed** |
@@ -228,19 +233,21 @@
 ## 七、运行方式
 
 ```bash
-# 预览五套模板（默认阶段下载中）
+# 预览八套模板（默认阶段下载中）
 cargo run -p qsltdupdater-egui -- --preview
 cargo run -p qsltdupdater-egui -- --preview --template B --stage 2
+cargo run -p qsltdupdater-egui -- --preview --template F --name 聚合音乐 --stage 4
 
-# 纯检测（不建窗，退出码 0=无更新 1=失败 2=有更新）
+# 纯检测（不建窗，退出码 0=无更新 1=失败 2=有更新可跳过 3=必须更新）
 cargo run -p qsltdupdater-egui -- --check-only --app-name qsm
 
 # 真实更新（走共享 flow 流水线）
 cargo run -p qsltdupdater-egui -- --app-name qsm
 ```
 
-`--stage` 取值：`0` 检测中 / `1` 下载中 / `2` 校验中 / `3` 安装中 / `4` 发现新版本 /
-`5` 已是最新 / `6` 更新完成 / `7` 错误；亦可传中文名称。
+`--stage` 取值（11 个预设，也可传中文名称，未知值回落 `1`）：`0` 检测中 / `1` 下载中（分卷） /
+`2` 校验中 / `3` 解压·安装中 / `4` 发现新版本 / `5` 已是最新 / `6` 更新完成 / `7` 错误 /
+`8` 重试中 / `9` 强制更新（阻断） / `10` 强制更新（可稍后升级）。
 
 ## 八、实测反馈修复记录（2026-10-26）
 

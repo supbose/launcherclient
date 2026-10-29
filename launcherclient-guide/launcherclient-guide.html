@@ -322,7 +322,7 @@ footer { border-top: 1px solid var(--rule); margin-top: 64px; padding: 28px 0 44
       <li class="card"><b>写好 update.json</b><span>至少填写 <code>manifest_url</code>（服务器版本清单地址）与 <code>app_name</code>（应用名），可选填 <code>launch</code>（更新完成后拉起的目标程序）。首次运行若找不到该文件，程序会按内置默认值自动生成一份带 <code>_说明</code> 字段的模板，不会覆盖已有文件。</span></li>
       <li class="card"><b>发布侧准备 version.json</b><span>将服务器版本清单部署到 manifest_url 指向的地址（字段见 4.3），或用 <code>pkgtool</code> 打包时自动生成（见第五章），上传到 CDN / 静态目录即可。</span></li>
     </ol>
-    <div class="callout info"><b>验证方式：</b>可先运行 <code>launcherclient.exe --check-only</code> 做纯检测——不建窗、不下载、不拉起目标程序，按退出码判断：<code>0</code> 无更新、<code>1</code> 检测失败、<code>2</code> 有更新。</div>
+    <div class="callout info"><b>验证方式：</b>可先运行 <code>launcherclient.exe --check-only</code> 做纯检测——不建窗、不下载、不拉起目标程序，按退出码判断：<code>0</code> 无更新、<code>1</code> 检测失败、<code>2</code> 有更新（可跳过）、<code>3</code> 必须更新（<code>force_update=true</code> 或低于 <code>min_version</code>）。</div>
   </section>
 
   <!-- ================= 4. 启动器使用说明 ================= -->
@@ -333,7 +333,7 @@ footer { border-top: 1px solid var(--rule); margin-top: 64px; padding: 28px 0 44
     <pre><code>launcherclient.exe [--app-name &lt;名称&gt;] [--name &lt;标题&gt;] [--launch &lt;目标程序路径&gt;]
                    [--manifest &lt;manifest地址&gt;] [--current-version &lt;版本&gt;]
                    [--template &lt;A~H&gt;] [--check-only]
-                   [--preview [--stage &lt;0-7|名称&gt;]]</code></pre>
+                   [--preview [--stage &lt;0-10|名称&gt;]]</code></pre>
     <div class="table-wrap">
       <table>
         <thead><tr><th>参数</th><th>说明</th><th>默认</th></tr></thead>
@@ -344,8 +344,8 @@ footer { border-top: 1px solid var(--rule); margin-top: 64px; padding: 28px 0 44
           <tr><td class="nowrap"><code>--manifest</code></td><td>服务器 version.json 地址，覆盖 update.json 中的配置</td><td>见内置默认地址</td></tr>
           <tr><td class="nowrap"><code>--current-version</code></td><td>强制指定当前版本，覆盖本地 app.json 的探测结果</td><td>自动探测</td></tr>
           <tr><td class="nowrap"><code>--template</code></td><td>界面模板 A~H（大小写不敏感），覆盖 update.json</td><td><code>F</code></td></tr>
-          <tr><td class="nowrap"><code>--check-only</code></td><td>纯检测模式：不建窗、不下载、不拉起目标程序，按退出码结束（0 无更新 / 1 检测失败 / 2 有更新）</td><td>关闭</td></tr>
-          <tr><td class="nowrap"><code>--preview</code> / <code>--stage</code></td><td>本地预览各套布局与阶段画面，不联网。<code>--stage</code> 取 0~7：0 检测中、1 下载中、2 校验中、3 安装中、4 发现新版本、5 已是最新、6 更新完成、7 错误</td><td>关闭</td></tr>
+          <tr><td class="nowrap"><code>--check-only</code></td><td>纯检测模式：不建窗、不下载、不拉起目标程序，按退出码结束（0 无更新 / 1 检测失败 / 2 有更新可跳过 / 3 必须更新）</td><td>关闭</td></tr>
+          <tr><td class="nowrap"><code>--preview</code> / <code>--stage</code></td><td>本地预览各套布局与阶段画面，不联网。<code>--stage</code> 取 0~10（也可传中文名称，未知值回落 1）：0 检测中、1 下载中（分卷）、2 校验中、3 解压/安装中、4 发现新版本、5 已是最新、6 更新完成、7 错误、8 重试中、9 强制更新（阻断）、10 强制更新（可稍后升级）</td><td>关闭</td></tr>
         </tbody>
       </table>
     </div>
@@ -387,27 +387,28 @@ footer { border-top: 1px solid var(--rule); margin-top: 64px; padding: 28px 0 44
 }</code></pre>
 
     <h3><span class="no">4.3</span>version.json — 服务器版本清单</h3>
-    <p>由 <code>manifest_url</code> 指向，描述最新发布版本。客户端自动识别下载模式：<mark class="key">parts 非空走分卷，否则走 url 单包</mark>，两种模式可随时切换。</p>
+    <p>由 <code>manifest_url</code> 指向，描述最新发布版本，可用 <code>pkgtool</code> 自动生成（见第五章）。客户端自动识别下载模式：<mark class="key">parts 非空走分卷，否则走 url 单包</mark>，两种模式可随时切换。除 <code>version</code> 外全部字段可选，<mark class="key">未知字段一律忽略</mark>（服务端加字段不会打断老客户端）。</p>
     <div class="table-wrap">
       <table>
         <thead><tr><th>字段</th><th>说明</th></tr></thead>
         <tbody>
-          <tr><td><code>version</code></td><td>最新版本号</td></tr>
-          <tr><td><code>update</code></td><td>是否开放更新，<code>false</code> 时强制视为无更新（缺省 true）</td></tr>
-          <tr><td><code>size_bytes</code></td><td>更新包大小（字节）</td></tr>
-          <tr><td><code>url</code></td><td>单包下载地址（分卷模式下被忽略）</td></tr>
-          <tr><td><code>parts</code></td><td>分卷地址数组（<code>.zip.001/.002/…</code>，按序排列）</td></tr>
-          <tr><td><code>part_sha256</code></td><td>各分卷 SHA256，与 parts 等长时逐卷校验，已下载合格的卷自动复用</td></tr>
-          <tr><td><code>sha256</code></td><td>完整 zip 的 SHA256，合并后整体校验（<mark class="key">强烈建议填写</mark>）</td></tr>
-          <tr><td><code>release_date</code></td><td>发布时间</td></tr>
-          <tr><td><code>changelog</code></td><td>更新日志数组，界面直接展示</td></tr>
-          <tr><td><code>min_version</code></td><td>（可选）强制更新的最低版本门槛，由服务端下发：当前版本低于它即触发<mark class="key">阻断式强制更新</mark>；缺省或留空视为无最低版本约束</td></tr>
-          <tr><td><code>force_update</code></td><td>（可选）版本级强制更新标记：<code>true</code> 时无论版本高低都要求强制更新，典型用于安全/合规紧急修复；缺省 <code>false</code>（有更新可跳过进应用）</td></tr>
-          <tr><td><code>store_url</code></td><td>（可选）应用商店地址：强制更新界面据此显示「前往应用商店」入口；缺省时回落到本地 <code>homepage</code> 前往官网，留空且无 homepage 时不显示该入口</td></tr>
+          <tr><td><code>version</code><mark class="key">必填</mark></td><td>最新版本号。双方可按 semver 解析时按 semver 比较，否则退化为「字符串不等即视为有更新」；缺失或类型不符会导致整份清单解析失败</td></tr>
+          <tr><td><code>update</code></td><td>更新总闸，<code>false</code> 时一律视为无更新（<mark class="key">force_update / min_version 同时失效</mark>），缺省 <code>true</code></td></tr>
+          <tr><td><code>url</code></td><td>单包下载地址（分卷模式下被忽略）。单包模式留空会直接报错「manifest 缺少 url 字段」，不做自动重试</td></tr>
+          <tr><td><code>parts</code></td><td>分卷地址数组（<code>.zip.001/.002/…</code>，按序拼接为完整 zip），非空即走分卷</td></tr>
+          <tr><td><code>part_sha256</code></td><td>各分卷 SHA256，与 parts <mark class="key">等长</mark>时逐卷校验（长度不符则不逐卷校验），已下载合格的卷自动复用</td></tr>
+          <tr><td><code>sha256</code></td><td>完整 zip 的 SHA256（大小写不敏感），下载结束后整体复核（<mark class="key">强烈建议填写</mark>）。留空 = 跳过整体校验，且禁用「复用已下载包」以免把中断的半包当完整包安装</td></tr>
+          <tr><td><code>size_bytes</code></td><td>更新包字节数（等于各分卷之和）。分卷模式下作为整体进度分母（单包模式用 HTTP <code>Content-Length</code>）；留空则分卷界面没有百分比与剩余时间</td></tr>
+          <tr><td><code>release_date</code></td><td>发布时间（ISO 8601，pkgtool 写入打包时刻 UTC）。客户端只解析留存，界面不展示</td></tr>
+          <tr><td><code>changelog</code></td><td>更新日志数组，逐条展示；自拉到清单起贯穿「发现新版本 → 下载 → 安装 → 完成」全程，空数组则不显示日志区</td></tr>
+          <tr><td><code>min_version</code></td><td>（可选）最低允许版本：当前版本低于它即触发<mark class="key">阻断式强制更新</mark>，与 <code>force_update</code> 任一成立即生效；缺省或留空视为无最低版本约束。强制更新界面的「要求版本号」优先取它，否则回落 <code>version</code></td></tr>
+          <tr><td><code>force_update</code></td><td>（可选）版本级强制更新标记：<code>true</code> 时进入阻断式强制更新，不给「稍后升级」出口，典型用于安全/合规紧急修复；缺省 <code>false</code>（有更新可跳过进应用）。<mark class="key">前提仍是清单版本比本地新</mark>——本地已是该版本或更高时无包可升，按「已是最新」处理</td></tr>
+          <tr><td><code>store_url</code></td><td>（可选）应用商店地址：<mark class="key">非空时</mark>强制更新界面才显示「前往应用商店」入口，点击用系统浏览器打开它；留空则不显示该入口，只留「下载升级包」</td></tr>
         </tbody>
       </table>
     </div>
-    <div class="callout"><b>强制更新三字段均由服务端下发、客户端无法本地覆盖。</b>低于 <code>min_version</code> 或 <code>force_update=true</code> 时进入 <code>force-update</code> 阶段，用户不能跳过更新直接进入应用。</div>
+    <div class="callout"><b>强制更新三字段均由服务端下发、客户端无法本地覆盖。</b>低于 <code>min_version</code> 或 <code>force_update=true</code> 时进入 <code>force-update</code> 阶段，用户不能跳过更新直接进入应用。判定顺序：<code>update</code> 开关 → 版本比较 → 是否强制更新 → 否则展示可跳过的新版本界面。</div>
+    <div class="callout info"><b>联网与缓存：</b>首检与 <code>--check-only</code> 每次直连服务器；只有界面内「重试 / 错误态重跑」走 5 分钟 TTL 缓存（<code>&lt;配置根&gt;/manifest_cache.json</code>，按 <code>app_name</code> 隔离）。刚发布新版本又命中重试路径时，最长 5 分钟内可能仍读到旧判定。</div>
 
     <h3><span class="no">4.4</span>运行流程与各阶段</h3>
     <p>启动后先在后台线程完成首检（窗口<mark class="key">隐藏创建</mark>，仅在真的需要或首检超过约 300ms 时才显示，避免无更新时窗口闪现）：</p>

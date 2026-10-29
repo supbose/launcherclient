@@ -62,7 +62,7 @@ pub struct UpdateSettings {
     /// 更新前需卸载的 Windows 服务名列表（运行中先停止；卸载后不恢复不重启；空或缺省不处理）
     #[serde(default)]
     pub services: Option<Vec<String>>,
-    /// 启动器界面模板：A/B/C/D/E（大小写不敏感），缺省或非法值用
+    /// 启动器界面模板：A~H（大小写不敏感），缺省或非法值用
     /// [`defaults::DEFAULT_LAUNCHER_TEMPLATE`]；取值校验见 [`UpdateSettings::launcher_template`]
     #[serde(default)]
     pub launcher_template: Option<String>,

@@ -69,7 +69,7 @@ impl Stage {
 /// 推送给 UI 的阶段事件载荷（字段名与 Tauri 版 serde 输出一致）
 #[derive(Debug, Clone, Serialize)]
 pub struct PhasePayload {
-    /// 阶段：checking | downloading | installing | up-to-date | available | done | error
+    /// 阶段：checking | downloading | installing | up-to-date | available | done | error | force-update
     pub stage: String,
     /// 主提示文本（中文）
     pub message: String,
@@ -89,7 +89,7 @@ pub struct PhasePayload {
     /// 更新日志（manifest.changelog，空则不序列化）
     #[serde(skip_serializing_if = "Vec::is_empty")]
     pub changelog: Vec<String>,
-    /// 生效的启动器界面模板（A/B/C/D/E），UI 据此渲染对应布局
+    /// 生效的启动器界面模板（A~H），UI 据此渲染对应布局
     #[serde(default)]
     pub template: String,
     /// 右上角小徽标文本（分卷进度等，仅下载阶段携带）

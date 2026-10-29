@@ -44,9 +44,9 @@ pub struct ResolvedConfig {
     pub launch: Option<String>,
     /// 保留的版本目录数量（含当前版本）
     pub max_versions: usize,
-    /// 更新前需停止、更新后恢复的 Windows 服务名列表
+    /// 更新前需卸载的 Windows 服务名列表（运行中先停止；卸载后不恢复不重启）
     pub services: Vec<String>,
-    /// 生效的启动器界面模板（A/B/C/D/E）
+    /// 生效的启动器界面模板（A~H）
     pub template: String,
     /// 官网首页地址：下载地址全挂时错误态「前往官网」按钮的目标
     pub homepage: String,

@@ -305,7 +305,7 @@ def make_parser() -> argparse.ArgumentParser:
             "  python scripts/pybuild.py egui                      # 默认 qsm 产品线\n"
             "  python scripts/pybuild.py egui --app-name myapp --manifest-url https://a.myapp.ltd/version.json --manifest-url https://b.myapp.ltd/version.json --homepage https://www.myapp.ltd --template B --retry-times 5 --max-versions 3 --service MySvc\n"
             "  python scripts/pybuild.py pkgtool                   # 打包工具（构建参数一般不需要）\n"
-            "  pnpm build:egui:qsm --app-name myapp                # 经 package.json 入口透传\n\n"
+            "  pnpm qsm:release --app-name myapp                   # 经 package.json 入口透传\n\n"
             "验证烘焙结果：把产物放入空目录运行一次 --check-only，自动生成的 update.json 即为烘焙后的默认值。"
         ),
         formatter_class=argparse.RawDescriptionHelpFormatter,

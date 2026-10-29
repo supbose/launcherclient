@@ -77,17 +77,20 @@ pnpm pkgtool:dev
 pnpm dist              # python scripts/build.py
 ```
 
-### 3.1 构建期产品线参数（build:egui:qsm）
+### 3.1 构建期产品线参数（qsm:release）
 
 启动器内置默认值（app_name、标题、manifest 地址、官网、模板、重试、版本目录数、服务）默认对应 qsm 产品线；
-可通过 `pnpm build:egui:qsm` 追加参数，**编译期烘焙进 exe**（未传项保持 qsm 默认，不影响原有流程）：
+可通过 `pnpm qsm:release` 追加参数，**编译期烘焙进 exe**（未传项保持 qsm 默认，不影响原有流程）：
 
 ```bash
-# 默认（等价 pnpm egui:build，qsm 配置）
-pnpm build:egui:qsm
+# 默认（不烘焙任何产品线参数，用 src-core 内置 qsm 默认）
+pnpm egui:build
+
+# qsm 产品线正式包：烘焙 标题「聚合音乐」+ qsm 双 manifest 容灾 + 模板 F + 卸载 QsmServer
+pnpm qsm:release
 
 # 自定义产品线示例：标题 MyApp + myapp + 双 manifest 容灾 + 模板 B + 卸载 MySvc/MyHelper
-pnpm build:egui:qsm --name MyApp --app-name myapp --manifest-url https://a.cdn.myapp.ltd/version.json --manifest-url https://b.cdn.myapp.ltd/version.json --homepage https://www.myapp.ltd --template B --retry-times 5 --max-versions 3 --service MySvc --service MyHelper
+pnpm qsm:release --name MyApp --app-name myapp --manifest-url https://a.cdn.myapp.ltd/version.json --manifest-url https://b.cdn.myapp.ltd/version.json --homepage https://www.myapp.ltd --template B --retry-times 5 --max-versions 3 --service MySvc --service MyHelper
 ```
 
 `--name <标题>` 指定启动器标题栏左侧显示的文字（同时作为系统窗口标题），内置默认「启动器」；
@@ -117,8 +120,8 @@ pnpm build:egui:qsm --name MyApp --app-name myapp --manifest-url https://a.cdn.m
 ```
 launcherclient.exe [--app-name <名称>] [--name <标题>] [--launch <目标程序路径>]
                    [--manifest <manifest地址>] [--current-version <版本>]
-                   [--template <A|B|C|D|E>] [--check-only]
-                   [--preview [--stage <0-7|名称>]]
+                   [--template <A~H>] [--check-only]
+                   [--preview [--stage <0-10|名称>]]
 ```
 
 | 参数 | 说明 | 默认 |
@@ -128,9 +131,9 @@ launcherclient.exe [--app-name <名称>] [--name <标题>] [--launch <目标程�
 | `--launch` | 更新完成后拉起的目标程序；相对路径按安装目录解析；留空则自动定位安装目录中的主程序 | 空 |
 | `--manifest` | 服务器 version.json 地址，覆盖 update.json | 见 `defaults::DEFAULT_MANIFEST_URLS` |
 | `--current-version` | 强制指定当前版本，覆盖本地 app.json | 自动探测 |
-| `--template` | 启动器界面模板 A/B/C/D/E（大小写不敏感） | `C` |
-| `--check-only` | 纯检测：不建窗、不下载、不拉起目标程序，按退出码结束 | 关闭 |
-| `--preview` / `--stage` | 仅 src-egui：本地预览五套布局与各阶段画面，不联网 | 关闭 |
+| `--template` | 启动器界面模板 A~H（大小写不敏感，见 4.7） | 未给时取 update.json 的 `launcher_template`，再回落编译期烘焙值（无烘焙即 `F`） |
+| `--check-only` | 纯检测：不建窗、不下载、不拉起目标程序，按退出码结束（见下表） | 关闭 |
+| `--preview` / `--stage` | 仅 src-egui：本地预览八套布局与各阶段画面，不联网 | 关闭 |
 
 未知参数只打印告警并忽略，不会中断启动。
 
@@ -138,9 +141,14 @@ launcherclient.exe [--app-name <名称>] [--name <标题>] [--launch <目标程�
 
 | 退出码 | 含义 |
 | --- | --- |
-| 0 | 无更新 |
-| 1 | 检测失败 |
-| 2 | 有更新 |
+| 0 | 无更新（已是最新，或服务端 `update: false`） |
+| 1 | 检测失败（manifest 拉取/解析失败等） |
+| 2 | 有更新，可跳过 |
+| 3 | 必须更新：服务端 `force_update: true` 或当前版本低于 `min_version` |
+
+> 判定顺序与界面版不同：`--check-only` 先查强制更新条件（命中即 `3`），界面版先看有没有可安装的升级包
+> （`need_update`）再判阻断。因此「`force_update: true` 但 `version` 已等于本地版本」这种无包可升的清单，
+> `--check-only` 返回 `3`，界面版按「已是最新」静默拉起目标程序。正常发布流程（强制更新的清单一定指向更高版本）两者一致。
 
 ### 4.3 update.json（本地配置）
 
@@ -155,8 +163,8 @@ launcherclient.exe [--app-name <名称>] [--name <标题>] [--launch <目标程�
 | `current_version` | 字符串 | 强制指定当前版本，留空自动从本地 `app.json` 探测 |
 | `max_versions` | 数字 | 保留的版本目录数量（含当前版本，旧目录即回滚资产），默认 2 |
 | `services` | 字符串数组 | 更新前需卸载的 Windows 服务名；运行中的先停止后卸载，**卸载后不恢复、不重启** |
-| `launcher_template` | 字符串 | 界面模板 A/B/C/D/E，大小写不敏感；留空或未知值回落默认 `C`（未知值会在 stderr 告警，不会白屏） |
-| `homepage` | 字符串 | 官网首页地址；下载/合并环节的自动重试用尽后，错误态出现「前往官网重新下载」按钮，点击用系统浏览器打开这里。留空则用内置默认 `https://www.qcsm.ltd` |
+| `launcher_template` | 字符串 | 界面模板 A~H，大小写不敏感；留空或未知值回落默认 `F`（未知值会在 stderr 告警，不会白屏） |
+| `homepage` | 字符串 | 官网首页地址；下载/合并环节的自动重试用尽后，错误态出现「前往官网重新下载」按钮，点击用系统浏览器打开这里。留空则用内置默认 `https://launcherclient.qsw.us.ci/`（构建期 `--homepage` 烘焙值优先） |
 | `retry_times` | 数字 | 同一环节的自动重试次数（**含首次尝试**），默认 `3` = 首次 + 自动重试 2 次。下载与解压校验各自独立计数；写 `0` 视为 `1`（只试一次），上限 `10` |
 
 示例：
@@ -181,19 +189,33 @@ launcherclient.exe [--app-name <名称>] [--name <标题>] [--launch <目标程�
 
 ### 4.4 version.json（服务器版本清单）
 
-两种模式可随时切换，客户端自动识别：`parts` 非空走分卷，`url` 走单包。
+由 `pkgtool` 打包时自动生成（见第五章），也可手写后部署到 `manifest_url` 指向的地址。
+除 `version` 外全部字段可选，**未知字段一律忽略**（服务端加字段不会打断老客户端）；
+`version` 缺失或类型不符则整份清单解析失败，按「更新检查失败」进入错误态。
 
-| 字段 | 说明 |
-| --- | --- |
-| `version` | 最新版本号 |
-| `update` | 是否开放更新，`false` 时强制视为无更新（缺省 true） |
-| `size_bytes` | 更新包大小（字节） |
-| `url` | 单包下载地址（分卷模式下被忽略） |
-| `parts` | 分卷地址数组（`.zip.001/.002/...`，按序排列） |
-| `part_sha256` | 各分卷 SHA256，与 `parts` 等长时逐卷校验，已下载合格的卷自动复用 |
-| `sha256` | 完整 zip 的 SHA256，合并后整体校验（强烈建议填写） |
-| `release_date` | 发布时间 |
-| `changelog` | 更新日志数组，界面直接展示 |
+| 字段 | 必填 | 说明 |
+| --- | --- | --- |
+| `version` | **必填** | 最新版本号。双方都能按 semver 解析时按 semver 比较（`1.0.0-alpha < 1.0.0`，预发布不会被拽回去），否则退化为「字符串不等即视为有更新」；前后空白会先 trim |
+| `update` | 否，默认 `true` | 更新总闸。`false` 时一律视为无更新——**`force_update` / `min_version` 同时失效**，启动器静默拉起目标程序 |
+| `url` | 单包模式必填 | 完整 zip 下载地址。单包模式下留空直接报错「manifest 缺少 url 字段（单包模式必填）」，不进入自动重试（重试解决不了配置问题） |
+| `parts` | 分卷模式必填 | 分卷地址数组（`.zip.001/.002/...`，按序拼接为完整 zip）。**非空即走分卷，`url` 被忽略**；两种模式随时可切，客户端自动识别 |
+| `part_sha256` | 否 | 各卷 SHA256。与 `parts` **等长**时逐卷校验，长度不符则不做逐卷校验；已下载且校验合格的卷在重跑时自动复用，不重复下载 |
+| `sha256` | 强烈建议 | 合并后完整 zip 的 SHA256（十六进制，大小写不敏感），下载结束后再整体复核一次。留空 = 跳过整体校验，**并禁用「复用已下载包」**——否则上次中断的半包会被当成完整包直接安装 |
+| `size_bytes` | 否 | 完整包字节数（等于各分卷之和）。**分卷模式**下作为整体进度的分母（单包模式用 HTTP `Content-Length`，不读此字段）；留空时分卷界面只有已下载字节、没有百分比与剩余时间 |
+| `release_date` | 否 | 发布时间（ISO 8601，`pkgtool` 写入打包时刻的 UTC 时间）。客户端只解析留存，界面不展示 |
+| `changelog` | 否 | 更新日志字符串数组，逐条展示。拉到清单后即登记，「发现新版本 → 下载 → 校验 → 安装 → 完成」全程可见；空数组则界面不出现日志区 |
+| `force_update` | 否，默认 `false` | 版本级强制更新标记。`true` 时进入**阻断式**强制更新界面，没有「稍后升级」出口。前提仍是清单 `version` 比本地新——本地已是该版本或更高时无包可升，按「已是最新」处理 |
+| `min_version` | 否 | 最低允许版本。当前版本低于它即触发阻断式强制更新，与 `force_update` **任一成立即生效**；留空/缺失 = 不设门槛。强制更新界面显示的「要求版本号」优先取它，否则回落 `version` |
+| `store_url` | 否 | 应用商店地址。**非空时**强制更新界面才出现「前往应用商店」按钮，点击用系统默认浏览器打开它；留空则不显示该入口，只留「下载升级包」 |
+
+`min_version` / `force_update` / `store_url` 三个强制更新字段**只由服务端下发**，本地 `update.json` 无法覆盖（写进去也不生效）。
+
+> 对照线上清单（`qsm 0.4.37`）：它同时写了 `url` 与 `parts` / `part_sha256`，因为 `parts` 非空，
+> 客户端实际走的是**分卷下载**，`url` 只作为手动下载/兜底入口存在——这种「双写」是允许的，不是配置冲突。
+
+**判定顺序**（`flow::run_startup`）：`update` 开关 → 版本比较 → 是否触发强制更新（`min_version` 或 `force_update`）→ 否则展示「发现新版本，可稍后升级」。
+
+**联网与缓存**：首检（`run_startup`）与 `--check-only` 每次都直连服务器；只有界面内「重试 / 错误态重跑」走 5 分钟 TTL 缓存（`<root>/manifest_cache.json`，按 `app_name` 隔离，拉取失败时不覆盖旧缓存）。刚发布新版本又恰好命中重试路径，最长 5 分钟内可能仍读到旧判定。
 
 完整示例见 [`version.json.example`](version.json.example)。
 
@@ -210,7 +232,7 @@ launcherclient.exe [--app-name <名称>] [--name <标题>] [--launch <目标程�
 7. 写本地 `app.json`、清理下载缓存与旧版本目录
 8. 更新完成 → 拉起目标程序
 
-界面阶段（`PhasePayload.stage`）：`checking` → `available` / `up-to-date` → `downloading` → `installing` → `done` / `error`。
+界面阶段（`PhasePayload.stage`）：`checking` → `force-update`（服务端要求强制更新时）/ `available` → `downloading` → `installing` → `done`，或 `up-to-date`（无更新，静默直通）/ `error`。
 
 **自动重试（默认 3 次）**：下载环节（拉包、逐卷下载、分卷合并、下载后 SHA256 校验）与解压校验环节
 失败会自动重试，节奏为 1s → 2s → 3s → …（封顶 5s），每次重试前清掉失败产物，避免把半包当完整包复用。
@@ -233,10 +255,12 @@ launcherclient.exe [--app-name <名称>] [--name <标题>] [--launch <目标程�
 ```
 <root>/
 ├── app.json              # 本地版本记录（当前版本等）
-├── downloads/            # 下载暂存：完整 zip 与分卷（安装成功后清理，失败保留以便复用）
+├── manifest_cache.json   # manifest 的 5 分钟 TTL 缓存（仅「重试」路径读取，按 app_name 隔离）
+├── downloads/            # 下载暂存：完整 zip（update_<版本>.zip）与分卷（安装成功后清理，失败保留以便复用）
 └── app/
     ├── app_2.1.2/        # 当前版本
-    └── app_2.1.1/        # 旧版本 = 回滚资产（保留 max_versions 个）
+    ├── app_2.1.1/        # 旧版本 = 回滚资产（保留 max_versions 个）
+    └── _del_app_2.1.0/   # 删除失败（目录被占用）的残留，下次启动再清
 ```
 
 - **回滚**：旧版本目录按 `max_versions` 保留（含当前版本），需要回滚时把启动目标指回旧目录即可。
@@ -249,16 +273,23 @@ launcherclient.exe [--app-name <名称>] [--name <标题>] [--launch <目标程�
 | --- | --- |
 | A | 信息密度 |
 | B | 环形居中 |
-| C | 顶部步骤条（**默认**） |
+| C | 顶部步骤条 |
 | D | 极简留白 |
 | E | 日志为主 |
+| F | 环形步骤（**默认**，深色工具风） |
+| G | 品牌沉浸 |
+| H | 极简轻量 |
 
 本地预览不需要联网：
 
 ```bash
 cd src-egui && cargo run -- --preview
-cd src-egui && cargo run -- --preview --stage 4   # 0检测中 1下载中 2校验中 3安装中 4发现新版本 5已是最新 6更新完成 7错误
+cd src-egui && cargo run -- --preview --template F --stage 9   # 强制更新（阻断）
 ```
+
+`--stage` 取值（也可传中文名称，未知值回落 1 下载中）：
+`0` 检测中 / `1` 下载中（分卷） / `2` 校验中 / `3` 解压·安装中 / `4` 发现新版本 /
+`5` 已是最新 / `6` 更新完成 / `7` 错误 / `8` 重试中 / `9` 强制更新（阻断） / `10` 强制更新（可稍后升级）。
 
 ---
 
@@ -276,15 +307,16 @@ pnpm pkgtool:dev          # 开发运行
 pnpm pkgtool              # 构建 release：src-pkgtool/target/release/pkgtool.exe
 ```
 
-窗口居中启动，左侧导航分两组：
+窗口居中启动，顶部一排页面标签（无分组），右侧常驻「打包」按钮（打包中显示 spinner +「打包中…」并禁用按钮）：
 
-| 分组 | 页面 | 内容 |
-| --- | --- | --- |
-| 工作区 | **配置** | 应用名、输出目录、下载前缀列表、单卷大小上限；「保存配置」写回 `packtool.json` |
-| 工作区 | **打包文件** | 待打包文件/目录列表，可新增、删除、用系统对话框「浏览…」选取 |
-| 工作区 | **历史构建** | 只读扫描输出目录下的 `{app}_*.zip`（名称 / 体积 / 日期） |
-| 分发 | **下载与版本** | 版本号（可「取默认（末位+1）」）、更新日志、开始打包 |
-| 分发 | **日志** | 打包全过程日志；打包中顶部显示进度卡片 |
+| 页面 | 内容 |
+| --- | --- |
+| **配置** | 仪表盘主屏（两栏）：应用名、输出目录、下载前缀列表、单卷大小上限；「保存配置」写回 `packtool.json` |
+| **打包文件** | 待打包文件/目录列表，可新增、删除、用系统对话框「浏览…」选取 |
+| **历史构建** | 只读扫描输出目录下的 `{app}_*.zip`（名称 / 体积 / 日期） |
+| **下载与版本** | 版本号（可「取默认（末位+1）」）、更新日志、强制更新策略（`min_version` / `force_update` / `store_url`，写进 version.json）、开始打包 |
+| **日志** | 打包全过程日志；打包中顶部显示进度卡片 |
+| **关于** | 图标 + 版本号 + 元信息与主页链接 |
 
 ### 5.2 packtool.json（工具配置，与 exe 同目录）
 
@@ -297,6 +329,9 @@ pnpm pkgtool              # 构建 release：src-pkgtool/target/release/pkgtool.
 | `download_prefixes` | 下载地址前缀数组，最终地址 = 前缀 + 包名；**每个前缀各生成一份 version 文件** |
 | `volume_size_mb` | 单卷大小上限（MB），包体超过则切分为分卷 |
 | `output_dir` | 打包输出目录，包体与 version 文件都落在这里 |
+| `min_version` | 写入 manifest 的最低允许版本；留空 = 不约束（低于它的客户端触发阻断式强制更新） |
+| `force_update` | 写入 manifest 的版本级强制更新标记；勾选后本版本对所有客户端不给「稍后升级」出口，默认 `false` |
+| `store_url` | 写入 manifest 的应用商店地址；留空则强制更新界面不显示「前往应用商店」入口 |
 
 `files` 项规则：
 
@@ -359,6 +394,6 @@ cd src-pkgtool && cargo test
 | [`CHANGELOG.md`](CHANGELOG.md) | 版本变更记录 |
 | [`docs/选型决策记录.md`](docs/选型决策记录.md) | 为什么选 egui 而非 Tauri |
 | [`docs/Tauri-vs-egui性能对比.md`](docs/Tauri-vs-egui性能对比.md) | 两版体积/启动/内存对比 |
-| [`docs/egui界面复刻说明.md`](docs/egui界面复刻说明.md) | 五套模板与阶段画面的复刻说明 |
+| [`docs/egui界面复刻说明.md`](docs/egui界面复刻说明.md) | 八套模板与阶段画面的复刻说明 |
 | [`docs/更新包打包工具-界面重设计.html`](docs/更新包打包工具-界面重设计.html) | pkgtool 界面设计稿（浏览器打开） |
 | [`docs/ui-drafts-下载校验解压.html`](docs/ui-drafts-下载校验解压.html) | 下载/校验/解压阶段界面草稿 |

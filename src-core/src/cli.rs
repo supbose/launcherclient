@@ -1,14 +1,14 @@
 //! 命令行参数解析
 //!
 //! 用法：
-//! `QsLtdUpdater.exe --app-name <名称> [--name <标题>] [--launch <目标程序路径>] [--manifest <manifest地址>]`
+//! `QsLtdUpdater.exe --app-name <名称> [--name <标题>] [--launch <目标程序路径>] [--manifest <manifest地址>] [--template <A~H>] [--check-only]`
 //!
 //! `--app-name` 与 `--name` 是两件事：前者决定配置/下载/安装目录，
 //! 后者只是界面标题栏（含系统窗口标题）显示的文字。
 
 /// 解析后的命令行参数
 pub struct CliArgs {
-    /// 应用名称，决定配置/下载/安装目录（默认 QsLtd）
+    /// 应用名称，决定配置/下载/安装目录（默认取 `defaults::DEFAULT_APP_NAME`）
     pub app_name: String,
     /// 启动器标题（标题栏左侧文字 + 系统窗口标题，可选，覆盖 update.json 与烘焙默认）
     pub launcher_name: Option<String>,
@@ -18,10 +18,10 @@ pub struct CliArgs {
     pub manifest_url: Option<String>,
     /// 当前已安装版本（可选，覆盖本地 app.json 记录）
     pub current_version: Option<String>,
-    /// 启动器界面模板（可选，覆盖 update.json 与默认模板；A/B/C/D/E）
+    /// 启动器界面模板（可选，覆盖 update.json 与默认模板；A~H）
     pub template: Option<String>,
     /// 纯检测模式：只检查是否有更新，不建窗、不下载、不拉回目标程序。
-    /// 退出码：0=无更新 1=检测失败 2=有更新（供客户端快速分支）
+    /// 退出码：0=无更新 1=检测失败 2=有更新（可跳过） 3=必须更新（供客户端快速分支）
     pub check_only: bool,
 }
 
