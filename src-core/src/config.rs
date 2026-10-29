@@ -98,8 +98,11 @@ pub fn resolve_retry_times(specified: Option<u32>) -> u32 {
     }
 }
 
-/// max_versions 默认值：当前版本 + 1 个旧版本（回滚资产）
-pub const DEFAULT_MAX_VERSIONS: usize = 2;
+/// max_versions 默认值：当前版本 + 1 个旧版本（回滚资产）；构建期可经 QSLTD_MAX_VERSIONS 覆盖
+pub const DEFAULT_MAX_VERSIONS: usize = match defaults::BUILD_MAX_VERSIONS {
+    Some(n) => n as usize,
+    None => 2,
+};
 
 /// 合法启动器界面模板键（与 `src-egui/src/templates.rs` 下的八套布局一一对应）
 pub const VALID_LAUNCHER_TEMPLATES: &[&str] = &["A", "B", "C", "D", "E", "F", "G", "H"];
@@ -175,10 +178,10 @@ fn generate_default_template(dir: &std::path::Path) -> bool {
         },
         "manifest_url": defaults::DEFAULT_MANIFEST_URLS,
         "app_name": defaults::DEFAULT_APP_NAME,
-        "launch": "qsm.exe",
+        "launch": format!("{}.exe", defaults::DEFAULT_APP_NAME),
         "current_version": "",
         "max_versions": DEFAULT_MAX_VERSIONS,
-        "services": ["QsmServer"],
+        "services": defaults::DEFAULT_SERVICES,
         "launcher_template": defaults::DEFAULT_LAUNCHER_TEMPLATE,
         "homepage": defaults::DEFAULT_HOMEPAGE,
         "retry_times": defaults::DEFAULT_RETRY_TIMES

@@ -16,7 +16,7 @@
   "repository": "https://github.com/qsltdupdater/qsltdupdater",
   "scripts": {
     "build": "cd src-egui && cargo build --release",
-    "build:egui:qsm": "python scripts/pybuild.py qsm",
+    "build:egui:qsm": "python scripts/pybuild.py egui",
     "dev": "cd src-egui && cargo run",
     "dist": "python scripts/build.py",
     "egui": "cd src-egui && cargo build --release",
