@@ -68,22 +68,22 @@ pub fn find_main_executable(install_dir: &Path, app_name: &str) -> Option<PathBu
 /// 安装更新包
 ///
 /// - `zip_path`: 已下载并通过校验的更新包
-/// - `install_dir`: 版本安装目录（如 .../app_2.1.2，已存在则先删除重装）
+/// - `install_dir`: 版本安装目录（如 .../app_2.1.2）
 /// - `on_stage`: 安装阶段回调（中文消息 + 进度百分比，解压阶段按条目实时推进）
 ///
-/// 返回安装目录路径
+/// 返回安装目录路径。
+///
+/// 顺序是「先解压、后替换」：解压成功前不动旧目录，同版本修复重装失败时
+/// 仍保留可运行的旧版本。替换时先把旧目录改名为 `_bak_` 备份，再把临时
+/// 目录改名为正式目录，成功后才删除备份；中途崩溃留下的备份会在下次
+/// 安装时自动恢复或清理。
 pub async fn install(
     zip_path: &Path,
     install_dir: &Path,
     on_stage: StageCallback,
 ) -> Result<PathBuf, String> {
-    // 安装目录已存在则先删除（同版本重装场景）
-    if install_dir.exists() {
-        on_stage(&format!("清理旧目录: {}", install_dir.display()), None);
-        tokio::fs::remove_dir_all(install_dir)
-            .await
-            .map_err(|e| format!("删除旧安装目录失败 {}: {}", install_dir.display(), e))?;
-    }
+    let backup_dir = backup_dir_for(install_dir);
+    recover_interrupted_swap(install_dir, &backup_dir).await;
 
     // 解压到临时目录，避免半成品直接进入安装目录
     let temp_dir = temp_dir_for(install_dir);
@@ -109,6 +109,26 @@ pub async fn install(
         return Err(e);
     }
 
+    // ---- 交换：旧目录 → 备份，临时目录 → 正式目录 ----
+    let had_existing = install_dir.exists();
+    if had_existing {
+        on_stage("正在备份旧版本...", None);
+        if backup_dir.exists() {
+            tokio::fs::remove_dir_all(&backup_dir)
+                .await
+                .map_err(|e| format!("清理旧版本备份失败 {}: {}", backup_dir.display(), e))?;
+        }
+        if let Err(e) = tokio::fs::rename(install_dir, &backup_dir).await {
+            let _ = tokio::fs::remove_dir_all(&temp_dir).await;
+            return Err(format!(
+                "备份旧安装目录失败（{} -> {}）: {}",
+                install_dir.display(),
+                backup_dir.display(),
+                e
+            ));
+        }
+    }
+
     // 临时目录重命名为正式安装目录
     on_stage("正在应用新版本...", Some(100.0));
     if let Some(parent) = install_dir.parent() {
@@ -116,18 +136,41 @@ pub async fn install(
             .await
             .map_err(|e| format!("创建安装父目录失败 {}: {}", parent.display(), e))?;
     }
-    tokio::fs::rename(&temp_dir, install_dir)
-        .await
-        .map_err(|e| {
-            format!(
+    match tokio::fs::rename(&temp_dir, install_dir).await {
+        Ok(()) => {
+            if had_existing {
+                if let Err(e) = tokio::fs::remove_dir_all(&backup_dir).await {
+                    // 备份清不掉不影响新版本可用，下次安装/启动会再处理
+                    eprintln!(
+                        "[更新器] 清理旧版本备份失败（忽略）: {}（{}）",
+                        backup_dir.display(),
+                        e
+                    );
+                }
+            }
+            Ok(install_dir.to_path_buf())
+        }
+        Err(e) => {
+            // 回滚：把备份改回正式目录，尽量恢复可运行的旧版本
+            if had_existing {
+                if let Err(re) = tokio::fs::rename(&backup_dir, install_dir).await {
+                    eprintln!(
+                        "[更新器] 回滚旧版本失败（{} -> {}）: {}",
+                        backup_dir.display(),
+                        install_dir.display(),
+                        re
+                    );
+                }
+            }
+            let _ = tokio::fs::remove_dir_all(&temp_dir).await;
+            Err(format!(
                 "应用新版本失败（{} -> {}）: {}",
                 temp_dir.display(),
                 install_dir.display(),
                 e
-            )
-        })?;
-
-    Ok(install_dir.to_path_buf())
+            ))
+        }
+    }
 }
 
 /// 安装临时目录：`<安装目录名>_tmp`（如 `app_2.1.2` → `app_2.1.2_tmp`）
@@ -141,6 +184,52 @@ fn temp_dir_for(install_dir: &Path) -> PathBuf {
         .map(|n| n.to_string_lossy().into_owned())
         .unwrap_or_default();
     install_dir.with_file_name(format!("{}_tmp", name))
+}
+
+/// 交换安装时旧目录的备份前缀。
+///
+/// 刻意不用 `app_` 开头：`cleanup_old_versions` 只扫 `app_*` 版本目录，
+/// `cleanup_pending` 只清 `_del_*`，备份不会被误当成版本或待删残留。
+const SWAP_BACKUP_PREFIX: &str = "_bak_";
+
+/// 旧目录备份路径：`app_2.1.2` → `_bak_app_2.1.2`
+fn backup_dir_for(install_dir: &Path) -> PathBuf {
+    let name = install_dir
+        .file_name()
+        .map(|n| n.to_string_lossy().into_owned())
+        .unwrap_or_default();
+    install_dir.with_file_name(format!("{}{}", SWAP_BACKUP_PREFIX, name))
+}
+
+/// 处理上次交换中断留下的备份：
+/// - 正式目录不在（崩溃发生在改名之后、新目录就位之前）→ 还原备份
+/// - 正式目录在（崩溃发生在删除备份之前）→ 备份是残留，删除
+async fn recover_interrupted_swap(install_dir: &Path, backup_dir: &Path) {
+    if !backup_dir.exists() {
+        return;
+    }
+    if install_dir.exists() {
+        if let Err(e) = tokio::fs::remove_dir_all(backup_dir).await {
+            eprintln!(
+                "[更新器] 清理上次安装残留备份失败（忽略）: {}（{}）",
+                backup_dir.display(),
+                e
+            );
+        }
+    } else {
+        match tokio::fs::rename(backup_dir, install_dir).await {
+            Ok(()) => eprintln!(
+                "[更新器] 已恢复上次中断安装的旧版本: {}",
+                install_dir.display()
+            ),
+            Err(e) => eprintln!(
+                "[更新器] 恢复上次中断安装的旧版本失败（{} -> {}）: {}",
+                backup_dir.display(),
+                install_dir.display(),
+                e
+            ),
+        }
+    }
 }
 
 /// 保存本地版本记录 app.json
@@ -204,7 +293,8 @@ fn extract_zip(zip_path: &Path, dest: &Path, on_stage: &StageCallback) -> Result
 ///    实际数据超出上限即被截断，写出量判定后报错
 /// 3. **写后累计**：每条目写完后复核总量，超出立即中止
 ///
-/// 路径穿越防护不变：`enclosed_name` 拒绝 `../` 等非法条目（跳过）。
+/// 路径穿越防护：`enclosed_name` 拒绝 `../` 等非法条目，命中即整包失败
+/// （不再静默跳过，避免装出缺文件却标记成功的版本）。
 fn extract_zip_with_limits(
     zip_path: &Path,
     dest: &Path,
@@ -218,15 +308,20 @@ fn extract_zip_with_limits(
         zip::ZipArchive::new(file).map_err(|e| format!("读取更新包结构失败: {}", e))?;
     let total = archive.len() as f64;
     let mut written: u64 = 0;
+    let mut file_count: u64 = 0;
 
     for i in 0..archive.len() {
         let entry = archive
             .by_index(i)
             .map_err(|e| format!("读取更新包条目 {} 失败: {}", i, e))?;
 
-        // 跳过非法路径（防路径穿越）
+        // 非法路径（防路径穿越）直接判整包失败：静默跳过会装出「缺文件但成功」
+        // 的半套版本，启动时才暴露，比当场报错更难排查
         let Some(name) = entry.enclosed_name() else {
-            continue;
+            return Err(format!(
+                "更新包包含非法路径条目，已中止安装: {}",
+                entry.name()
+            ));
         };
         let out_path = dest.join(name);
 
@@ -270,6 +365,7 @@ fn extract_zip_with_limits(
             let copied = std::io::copy(&mut limited, &mut out_file)
                 .map_err(|e| format!("解压文件失败 {}: {}", out_path.display(), e))?;
             written += copied;
+            file_count += 1;
 
             // 闸 2 判定：读满 max_entry+1 说明实际数据超出单条目上限
             if copied > max_entry {
@@ -312,6 +408,12 @@ fn extract_zip_with_limits(
             ),
             Some(pct),
         );
+    }
+
+    // 空包/只有目录的包不能算安装成功：否则会得到一个空版本目录，
+    // 更新器随后找不到主程序，用户看到的是「更新完成但启动失败」
+    if file_count == 0 {
+        return Err("更新包为空或没有可解压的文件，已中止安装".to_string());
     }
     Ok(())
 }
@@ -582,17 +684,124 @@ mod tests {
     }
 
     #[test]
-    fn extract_skips_path_traversal_entry() -> io::Result<()> {
-        // 路径穿越条目被 enclosed_name 拒绝（跳过），dest 外不落盘
+    fn extract_rejects_path_traversal_entry() -> io::Result<()> {
+        // 路径穿越条目被 enclosed_name 拒绝时必须整包失败，而不是跳过后续条目
         let dir = temp_install_dir("extract_traversal")?;
         let zip = dir.join("update.zip");
         make_test_zip(&zip, &[("../evil.txt", b"evil"), ("ok.txt", b"fine")])?;
         let out = dir.join("out");
         std::fs::create_dir_all(&out)?;
-        extract_zip(&zip, &out, &noop_stage()).map_err(io::Error::other)?;
-        assert!(out.join("ok.txt").exists(), "正常条目应解压");
+        let err = extract_zip(&zip, &out, &noop_stage()).expect_err("含穿越条目的包必须解压失败");
+        assert!(
+            err.contains("非法路径条目"),
+            "错误信息应说明非法路径: {err}"
+        );
         assert!(!out.join("evil.txt").exists(), "穿越条目不应写入 dest");
         assert!(!dir.join("evil.txt").exists(), "穿越条目不应写入 dest 之外");
+        let _ = std::fs::remove_dir_all(&dir);
+        Ok(())
+    }
+
+    #[test]
+    fn extract_rejects_empty_archive() -> io::Result<()> {
+        // 空包不能算安装成功：否则会留下一个没有主程序的版本目录
+        let dir = temp_install_dir("extract_empty")?;
+        let zip = dir.join("update.zip");
+        make_test_zip(&zip, &[])?;
+        let out = dir.join("out");
+        std::fs::create_dir_all(&out)?;
+        let err = extract_zip(&zip, &out, &noop_stage()).expect_err("空包必须解压失败");
+        assert!(err.contains("为空"), "错误信息应说明空包: {err}");
+        let _ = std::fs::remove_dir_all(&dir);
+        Ok(())
+    }
+
+    // ---------- 交换安装 ----------
+
+    #[test]
+    fn backup_dir_uses_non_version_prefix() {
+        // 备份目录不能以 app_ 开头，否则会被 cleanup_old_versions 当成版本目录
+        let b = backup_dir_for(Path::new("/apps/qsm/app/app_2.1.2"));
+        assert_eq!(b, Path::new("/apps/qsm/app/_bak_app_2.1.2"));
+    }
+
+    #[tokio::test]
+    async fn install_failure_keeps_existing_version() -> io::Result<()> {
+        // 回归：解压失败时不得动旧目录（旧实现会先删掉同版本目录）
+        let dir = temp_install_dir("install_keep_old")?;
+        let install_dir = dir.join("app_9.9.9");
+        std::fs::create_dir_all(&install_dir)?;
+        std::fs::write(install_dir.join("old.exe"), b"old")?;
+        let bad_zip = dir.join("bad.zip");
+        std::fs::write(&bad_zip, b"not a zip")?;
+
+        let err = install(&bad_zip, &install_dir, noop_stage())
+            .await
+            .expect_err("损坏包必须安装失败");
+        assert!(!err.is_empty());
+        assert_eq!(
+            std::fs::read(install_dir.join("old.exe"))?,
+            b"old",
+            "解压失败后旧版本必须原样保留"
+        );
+        assert!(!temp_dir_for(&install_dir).exists(), "临时目录应清理");
+        let _ = std::fs::remove_dir_all(&dir);
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn install_replaces_existing_version_and_removes_backup() -> io::Result<()> {
+        let dir = temp_install_dir("install_swap")?;
+        let install_dir = dir.join("app_9.9.9");
+        std::fs::create_dir_all(&install_dir)?;
+        std::fs::write(install_dir.join("old.exe"), b"old")?;
+        let zip = dir.join("update.zip");
+        make_test_zip(&zip, &[("new.exe", b"new")])?;
+
+        install(&zip, &install_dir, noop_stage())
+            .await
+            .expect("正常包应安装成功");
+        assert_eq!(std::fs::read(install_dir.join("new.exe"))?, b"new");
+        assert!(!install_dir.join("old.exe").exists(), "旧目录内容不应残留");
+        assert!(!backup_dir_for(&install_dir).exists(), "成功后备份应删除");
+        assert!(
+            !temp_dir_for(&install_dir).exists(),
+            "临时目录应改名为正式目录"
+        );
+        let _ = std::fs::remove_dir_all(&dir);
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn recover_interrupted_swap_restores_missing_install() -> io::Result<()> {
+        // 模拟「旧目录已改名、新目录尚未就位」时崩溃：下次安装前应还原
+        let dir = temp_install_dir("recover_swap")?;
+        let install_dir = dir.join("app_9.9.9");
+        let backup = backup_dir_for(&install_dir);
+        std::fs::create_dir_all(&backup)?;
+        std::fs::write(backup.join("old.exe"), b"old")?;
+
+        recover_interrupted_swap(&install_dir, &backup).await;
+        assert_eq!(std::fs::read(install_dir.join("old.exe"))?, b"old");
+        assert!(!backup.exists(), "还原后备份目录应消失");
+        let _ = std::fs::remove_dir_all(&dir);
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn recover_interrupted_swap_removes_stale_backup() -> io::Result<()> {
+        // 正式目录已就位、备份残留：直接清理备份，不影响新版本
+        let dir = temp_install_dir("recover_stale")?;
+        let install_dir = dir.join("app_9.9.9");
+        std::fs::create_dir_all(&install_dir)?;
+        std::fs::write(install_dir.join("new.exe"), b"new")?;
+        let backup = backup_dir_for(&install_dir);
+        std::fs::create_dir_all(&backup)?;
+        std::fs::write(backup.join("old.exe"), b"old")?;
+
+        recover_interrupted_swap(&install_dir, &backup).await;
+        assert_eq!(std::fs::read(install_dir.join("new.exe"))?, b"new");
+        assert!(!backup.exists(), "残留备份应被删除");
         let _ = std::fs::remove_dir_all(&dir);
         Ok(())
     }
