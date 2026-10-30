@@ -31,5 +31,5 @@
     "version:check": "python scripts/pybuild.py --check-version",
     "version:sync": "python scripts/pybuild.py --sync-version"
   },
-  "version": "0.2.6-beta.0"
+  "version": "1.0.0"
 }
