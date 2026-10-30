@@ -18,6 +18,16 @@
 
 
 
+
+## v0.2.3 (2026-10-30)
+### 🚀 新增功能
+
+- [87b7f1a](/-/commit/87b7f1a94e34be78beae69a6c163cc9028e7ce2b) 新增(src-egui): 新增共享 UI 原语 crate qsltd-ui，供 launcherclient 与 pkgtool 共用 (.cnb.yml, .gitignore, Cargo.lock, Cargo.toml, README.md, launcherclient-guide/launcherclient-guide.html, package.json, src-core/examples/gen_cli_docs.rs, src-core/src/cli.rs, src-egui/Cargo.toml, src-egui/src/templates.rs, src-egui/src/theme.rs, src-egui/src/widgets.rs, src-egui/version.rc, src-pkgtool/Cargo.lock, src-pkgtool/Cargo.toml, src-pkgtool/icon.rc, src-pkgtool/src/main.rs, src-ui/Cargo.toml, src-ui/src/lib.rs, src-ui/src/theme.rs, src-ui/src/widgets.rs)
+
+### 🔧 工具变更
+
+- [4154bbd](/-/commit/4154bbd8affc4875d1f7eff1cd4acf2c32e2d638) 工具(scripts): 删除编译缓存和崩溃日志文件 (scripts/__pycache__/build_egui.cpython-314.pyc, scripts/__pycache__/pybuild.cpython-312.pyc, scripts/__pycache__/pybuild.cpython-314.pyc, src-core/Cargo.lock, src-egui/Cargo.lock, src-pkgtool/bt.log, src-pkgtool/crash.log)
+
 ## v0.2.2 (2026-10-30)
 ### 📦 构建系统
 
