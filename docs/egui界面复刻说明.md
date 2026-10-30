@@ -161,13 +161,15 @@
    `conic-gradient` 无原生支持，改为分段折线 + `PathShape` 描边（64 段），并叠 `#1a2029` 内盘
    形成圆环；视觉宽度对齐 CSS 的 ring + inner 组合（96px / 78px）。
 
-4. **字体必须手工注入。**
-   launcherclient 关闭了 eframe 的 `default_fonts`（不再打包内置字体），egui 自身没有 CJK 字形，
-   不注入会直接豆腐块、甚至因字族为空而 panic。`theme::install_fonts` 按
-   `msyh.ttc → msyhl.ttc → simhei.ttf → Deng.ttf → simsun.ttc → segoeui.ttf → arial.ttf`
-   顺序加载第一个可读的系统字体，并**显式创建** Proportional / Monospace 家族后插入首位
-   （关闭 default_fonts 后 `FontDefinitions::default()` 是空的，`get_mut` 会静默失败）。
-   pkgtool 仍启用默认字体，同一函数只是把系统字体插到原字体链最前面。
+4. **字体必须手工注入，优先华为鸿蒙字体。**
+   launcherclient 关闭了 eframe 的 `default_fonts`（不再打包 egui 内置字体），egui 自身没有 CJK 字形，
+   不注入会直接豆腐块、甚至因字族为空而 panic。`src-ui/src/fonts.rs` 的 `fonts::install` 优先加载项目内置的
+   `HarmonyOSSansSC-{Regular,Medium,Bold}.ttf`（`src-egui/assets/font/`，发布态在 exe 同级 `fonts/`）；
+   缺失时逐字重回退系统字体：常规按平台为 Windows `msyh → msyhl → simhei → simsun → Deng → segoeui → arial`、
+   macOS `PingFang → Hiragino Sans GB → STHeiti → Songti`、Linux `NotoSansCJK → SourceHanSans → wqy → DejaVu/Liberation`；
+   粗体同理（`msyhbd` / `STHeiti Medium` / `NotoSansCJK-Bold` 等）。Medium/Bold 各自注册为独立字族
+   （`harmony-medium` / `harmony-bold`），因为 egui 的 `FontId` 没有字重字段。
+   pkgtool 仍启用默认字体，同一函数只是把字体插到原字体链里，行为不变。
 
 5. **控件全部自绘，而非使用 egui 默认 `Button`/`ProgressBar`。**
    egui 默认控件的圆角、padding、hover 动效与 CSS 不一致，因此用 `Painter` 直接画。
@@ -200,9 +202,9 @@
    实际不受影响。
 2. **无 DPI 感知的自适应弹性布局。** 窗口固定 440×420 且不缩放，因此与 Tauri 版一致地不具备响应式；
    在高 DPI 缩放下egui 会整体缩放而非重排，某些模板的长文本可能出现轻微换行差异。
-3. **中文字体依赖系统字体存在。** 需 `C:/Windows/Fonts/msyh.ttc`（或兜底链中任一字体）；
-   由于已关闭 eframe 内置字体，全部候选都读不到时界面无法渲染文字（标准 Windows 上
-   末尾的 segoeui/arial 兜底恒存在）。
+3. **字体依赖内置目录或系统字体。** 默认使用 `src-egui/assets/font/`（发布态 `fonts/`）里的
+   华为 HarmonyOS Sans SC；目录被删除时回退系统字体，末尾的 segoeui/arial 兜底在标准 Windows 上恒存在。
+   woff2 是 Brotli 容器，egui（skrifa）不认，必须使用 ttf/otf/ttc。
 4. **渐变/环形为近似实现。** 160deg 斜向渐变 → 纵向近似；`conic-gradient` → 64 段描边近似；
    spinner 的 `animation-timing-function` 复刻为匀速旋转。
 5. **仅 Windows 验证。** 与已删除的 Tauri 版相同，服务端操作（`sc`、`services`）、路径规则、

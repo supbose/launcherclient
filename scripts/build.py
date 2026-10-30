@@ -7,6 +7,7 @@
 
 产物：
     dist/<版本号>/launcherclient.exe
+    dist/<版本号>/fonts/            # 华为 HarmonyOS Sans SC（含 LICENSE.txt）
     dist/<版本号>/pkgtool.exe
 """
 
@@ -47,6 +48,19 @@ def main() -> int:
             dest = out_dir / exe_path.name
             shutil.copy2(exe_path, dest)
             print(f"      产物已复制到：{dest}")
+
+            # 启动器附带华为字体目录（缺失时运行期回退系统字体）；pkgtool 不需要
+            if name == "egui":
+                fonts_src = exe_path.parent / "fonts"
+                if fonts_src.is_dir():
+                    fonts_dest = out_dir / "fonts"
+                    shutil.copytree(fonts_src, fonts_dest, dirs_exist_ok=True)
+                    print(f"      字体目录已复制到：{fonts_dest}")
+                else:
+                    print(
+                        f"      警告：未找到 {fonts_src}，发布包将回退系统字体",
+                        file=sys.stderr,
+                    )
 
         print(f"\n全部打包完成（版本 {version}）")
         return 0

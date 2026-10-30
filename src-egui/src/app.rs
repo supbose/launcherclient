@@ -100,7 +100,7 @@ impl UpdaterApp {
         preview_stage: usize,
         title: String,
     ) -> Self {
-        theme::install_fonts(&cc.egui_ctx);
+        qsltd_ui::fonts::install(&cc.egui_ctx);
         theme::zero_item_spacing(&cc.egui_ctx);
         Self {
             title,
