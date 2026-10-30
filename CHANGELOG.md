@@ -20,6 +20,23 @@
 
 
 
+
+## v0.2.5 (2026-10-30)
+### 🚀 新增功能
+
+- [9cdb081](/-/commit/9cdb081d04f453a5fbcf61c2c4ef94dac40fd15b) 新增(README.md): 新增首次安装的更新处理逻辑 (README.md, src-core/src/flow.rs)
+
+### 🩹 修复 Bug
+
+- [feb3e1f](/-/commit/feb3e1fbc95de405df555d7fe379b3b248b64e96) 修复(core): 校验 app_name/version 可作单级路径分量，杜绝路径穿越 (src-core/src/appdir.rs, src-core/src/client.rs, src-core/src/flow.rs, src-core/src/manifest.rs, src-egui/src/main.rs)
+- [c3b8da2](/-/commit/c3b8da24e87e3be12587130dc7738f9adcc55845) 修复(core): 安装改为先解压到临时目录再交换，避免解压失败毁掉现有版本 (src-core/src/install.rs)
+- [fe583ca](/-/commit/fe583ca34359f7fe7c0d26342f7b10f89d4f4dd0) 修复(egui): 修复隐藏启动的显示门闩，避免首检结果晚到后窗口永不显示 (src-egui/src/app.rs)
+- [6102c79](/-/commit/6102c79714ef9046b0ef5219509d7d7b67a49253) 修复(core): 校验失败归入下载环节并复用已算出的 SHA256 (src-core/src/download.rs, src-core/src/flow.rs)
+
+### 🔧 工具变更
+
+- [5a87d69](/-/commit/5a87d6952c9caec3b847bb17d15572b5f2acdcdf) 工具(src-pkgtool): 将 0.2.4 版本铺开到 Cargo 清单与 rc 资源 (Cargo.lock, Cargo.toml, src-egui/version.rc, src-pkgtool/Cargo.lock, src-pkgtool/Cargo.toml, src-pkgtool/icon.rc)
+
 ## v0.2.4 (2026-10-30)
 ### 📦 构建系统
 
