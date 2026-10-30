@@ -1,5 +1,5 @@
 {
-  "_说明": "QsLtdUpdater 本地配置文件，与 QsLtdUpdater.exe 同目录部署。所有字段可省略，省略或留空时使用默认值。优先级：命令行参数 > 本文件 > 内置默认值。manifest_url 支持单个字符串或地址数组（数组时并发竞速，多个地址同时发起、先成功者胜出，全部失败才算检查失败）。launcher_template 为启动器界面模板：留空（推荐）= 自动判定，双击直启用主模板 F，被其他应用带命令行参数调用用副模板 H；也可显式填 F/H 强制指定，旧版 A~E/G 等值回落到 F。name 为启动器标题（标题栏左侧文字与系统窗口标题），单行、最长 64 字符，留空则跟随 exe 内置标题（打包时 --name 烘焙，默认「启动器」）。homepage 为官网首页地址，下载地址全部失败时错误态的「前往官网重新下载」按钮跳这里。retry_times 为同一环节（下载 / 解压校验）的自动重试次数（含首次尝试，默认 3），重试用尽仍失败才提示前往官网。require_sha256 为包完整性校验闸（默认 true）：服务器清单既没给整包 sha256、分卷的 part_sha256 也没与 parts 一一对齐时直接拒绝安装，避免装来路不明的包；内网或自建源这类链路可信的环境可置 false（或用命令行 --allow-missing-sha256）放行，但请注意这只在「服务器内容不会被第三方改写」的前提下成立。parts_concurrency 为分卷并发下载数（默认 3，可选 1~8），CDN 单连接限速时并发能明显提速。fail_open 为检查更新失败时是否直接启动已安装版本（默认 false），仅当本地安装有效时生效。",
+  "_说明": "QsLtdUpdater 本地配置文件，与 QsLtdUpdater.exe 同目录部署。所有字段可省略，省略或留空时使用默认值。优先级：命令行参数 > 本文件 > 内置默认值。manifest_url 支持单个字符串或地址数组（数组时并发竞速，多个地址同时发起、先成功者胜出，全部失败才算检查失败）。launcher_template 为启动器界面模板：留空（推荐）= 自动判定，双击直启用主模板 F，被其他应用带命令行参数调用用副模板 H；也可显式填 F/H 强制指定，旧版 A~E/G 等值回落到 F。name 为启动器标题（标题栏左侧文字与系统窗口标题），单行、最长 64 字符，留空则跟随 exe 内置标题（打包时 --name 烘焙，默认「启动器」）。homepage 为官网首页地址，下载地址全部失败时错误态的「前往官网重新下载」按钮跳这里。retry_times 为同一环节（下载 / 解压校验）的自动重试次数（含首次尝试，默认 3），重试用尽仍失败才提示前往官网。require_sha256 为包完整性校验闸（默认 true）：服务器清单既没给整包 sha256、分卷的 part_sha256 也没与 parts 一一对齐时直接拒绝安装，避免装来路不明的包；内网或自建源这类链路可信的环境可置 false（或用命令行 --allow-missing-sha256）放行，但请注意这只在「服务器内容不会被第三方改写」的前提下成立。parts_concurrency 为分卷并发下载数（默认 3，可选 1~8），CDN 单连接限速时并发能明显提速。max_extract_total_mb 为解压产物总量上限（MiB，默认 8192 即 8 GiB，允许 64~1048576），max_extract_entry_mb 为单个文件解压上限（MiB，默认 512，允许 1~65536，且不得超过总量上限）：两者共同构成防 zip bomb 闸，游戏/离线素材等解压后超过 8 GiB 的包按实际大小调大即可。fail_open 为检查更新失败时是否直接启动已安装版本（默认 false），仅当本地安装有效时生效。",
   "manifest_url": [
     "https://qsw.us.ci/update/qsm/version.json",
     "https://down.cdn.qcsm.ltd/manifest.json",
@@ -13,6 +13,8 @@
   "launcher_template": "",
   "homepage": "https://www.qcsm.ltd",
   "retry_times": 3,
+  "max_extract_total_mb": 8192,
+  "max_extract_entry_mb": 512,
   "require_sha256": true,
   "parts_concurrency": 3,
   "fail_open": false

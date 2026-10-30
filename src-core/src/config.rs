@@ -75,6 +75,14 @@ pub struct UpdateSettings {
     /// 缺省用 [`defaults::DEFAULT_RETRY_TIMES`]，0 或 1 视为只试一次
     #[serde(default)]
     pub retry_times: Option<u32>,
+    /// 解压产物总量上限（MiB）。缺省用 [`defaults::DEFAULT_EXTRACT_TOTAL_MB`]；
+    /// 超范围回落默认，见 [`resolve_extract_limits`]。
+    #[serde(default)]
+    pub max_extract_total_mb: Option<u64>,
+    /// 单个文件解压上限（MiB）。缺省用 [`defaults::DEFAULT_EXTRACT_ENTRY_MB`]；
+    /// 不允许超过总量上限，见 [`resolve_extract_limits`]。
+    #[serde(default)]
+    pub max_extract_entry_mb: Option<u64>,
     /// 是否要求服务端清单提供包完整性校验值（缺省 = true = 要求）。
     /// 显式 `false` 才放行「没给 SHA256 的包」，命令行 `--allow-missing-sha256`
     /// 是同义出口；判定见 [`resolve_require_sha256`]。
@@ -127,6 +135,62 @@ pub fn resolve_retry_times(specified: Option<u32>) -> u32 {
         None => defaults::DEFAULT_RETRY_TIMES,
         Some(0) => 1,
         Some(n) => n.min(10),
+    }
+}
+
+/// 解压总量上限允许范围（MiB）：64 MiB ~ 1 TiB
+pub const MIN_EXTRACT_TOTAL_MB: u64 = 64;
+/// 解压总量上限允许范围上限（MiB）
+pub const MAX_EXTRACT_TOTAL_MB: u64 = 1024 * 1024;
+/// 单文件解压上限允许范围（MiB）
+pub const MIN_EXTRACT_ENTRY_MB: u64 = 1;
+/// 单文件解压上限允许范围上限（MiB）
+pub const MAX_EXTRACT_ENTRY_MB: u64 = 64 * 1024;
+
+/// 解析解压限额（返回 `(total_mb, entry_mb)`）
+///
+/// - 缺省用 [`defaults::DEFAULT_EXTRACT_TOTAL_MB`] / [`defaults::DEFAULT_EXTRACT_ENTRY_MB`]
+/// - 超范围（过小或过大）视为配置错误：告警并回落默认，避免手滑写出 1 MB 总量
+///   让所有包都装不上，或写出天文数字把 zip bomb 闸变成摆设
+/// - 单文件上限永远不超过总量上限：超出时按总量截断并告警
+pub fn resolve_extract_limits(total: Option<u64>, entry: Option<u64>) -> (u64, u64) {
+    let total = match total {
+        None => defaults::DEFAULT_EXTRACT_TOTAL_MB,
+        Some(v) if (MIN_EXTRACT_TOTAL_MB..=MAX_EXTRACT_TOTAL_MB).contains(&v) => v,
+        Some(v) => {
+            crate::qlog!(
+                "[配置] max_extract_total_mb={} 超出允许范围 {}~{}，回落到默认 {}",
+                v,
+                MIN_EXTRACT_TOTAL_MB,
+                MAX_EXTRACT_TOTAL_MB,
+                defaults::DEFAULT_EXTRACT_TOTAL_MB
+            );
+            defaults::DEFAULT_EXTRACT_TOTAL_MB
+        }
+    };
+    let entry = match entry {
+        None => defaults::DEFAULT_EXTRACT_ENTRY_MB,
+        Some(v) if (MIN_EXTRACT_ENTRY_MB..=MAX_EXTRACT_ENTRY_MB).contains(&v) => v,
+        Some(v) => {
+            crate::qlog!(
+                "[配置] max_extract_entry_mb={} 超出允许范围 {}~{}，回落到默认 {}",
+                v,
+                MIN_EXTRACT_ENTRY_MB,
+                MAX_EXTRACT_ENTRY_MB,
+                defaults::DEFAULT_EXTRACT_ENTRY_MB
+            );
+            defaults::DEFAULT_EXTRACT_ENTRY_MB
+        }
+    };
+    if entry > total {
+        crate::qlog!(
+            "[配置] 单文件解压上限 {} MB 大于总量上限 {} MB，按总量截断",
+            entry,
+            total
+        );
+        (total, total)
+    } else {
+        (total, entry)
     }
 }
 
@@ -306,6 +370,8 @@ fn generate_default_template(dir: &std::path::Path) -> bool {
             "launcher_template": "启动器界面模板：留空 = 自动（双击直启用主模板 F，被其他应用带参数调用用副模板 H）；也可填 F/H 强制指定，旧版 A~E/G 等值回落到 F",
             "homepage": "官网首页地址；更新检查（manifest 全部地址失效）或下载地址全部失败时，界面上的「前往官网重新下载」按钮跳这里，留空用内置默认",
             "retry_times": "同一环节（下载 / 解压校验）的自动重试次数（含首次尝试），默认 3：失败后自动再试 2 次，仍失败才提示前往官网重新下载",
+            "max_extract_total_mb": "解压产物总量上限（MiB），默认 8192（8 GiB），允许 64~1048576（1 TiB）：防 zip bomb 的硬顶。解压后超过 8 GiB 的大包（游戏 / 离线素材）按实际大小调大",
+            "max_extract_entry_mb": "单个文件解压上限（MiB），默认 512，允许 1~65536，且不得超过总量上限（超出按总量截断）：单个大资源文件（视频 / 资源包）被误判为异常包时调大",
             "require_sha256": "是否要求服务器清单提供包完整性校验值，默认 true：整包 sha256 缺失且分卷 part_sha256 也没给齐时拒绝自动安装。自建/内网等可信环境确需放行时设为 false（等价于命令行 --allow-missing-sha256）",
             "parts_concurrency": "分卷并发下载数（同时下载的卷数），默认 3，可选 1~8：CDN 对单连接限速时并发能明显提速；服务端限制连接数或小带宽环境可调小到 1",
             "fail_open": "检查更新失败（网络/服务器不可达）时是否直接启动已安装版本，默认 false：仅当本地安装目录有效时生效，适合弱网下不希望启动被检查卡住的启动器；强制更新语义不受影响（能拿到清单时仍按清单执行）"
@@ -324,6 +390,9 @@ fn generate_default_template(dir: &std::path::Path) -> bool {
         "launcher_template": "",
         "homepage": defaults::DEFAULT_HOMEPAGE,
         "retry_times": defaults::DEFAULT_RETRY_TIMES,
+        // 解压限额显式写出：大包部署方需要知道这两个闸存在、以及怎么调
+        "max_extract_total_mb": defaults::DEFAULT_EXTRACT_TOTAL_MB,
+        "max_extract_entry_mb": defaults::DEFAULT_EXTRACT_ENTRY_MB,
         // 显式写出默认值：这条开关关掉就是放弃包完整性校验，写在配置里比
         // 藏在「缺省即 true」里更容易被接手的人看见
         "require_sha256": true,
@@ -404,6 +473,8 @@ mod tests {
         assert!(s.launcher_template.is_none());
         assert!(s.parts_concurrency.is_none());
         assert!(s.fail_open.is_none());
+        assert!(s.max_extract_total_mb.is_none());
+        assert!(s.max_extract_entry_mb.is_none());
     }
 
     #[test]
@@ -416,7 +487,9 @@ mod tests {
                 "current_version": "1.2.3",
                 "max_versions": 3,
                 "services": ["QsmServer", "QsmHelper"],
-                "launcher_template": "H"
+                "launcher_template": "H",
+                "max_extract_total_mb": 16384,
+                "max_extract_entry_mb": 2048
             }"#,
         )
         .expect("完整配置应可解析");
@@ -425,6 +498,8 @@ mod tests {
         assert_eq!(s.current_version.as_deref(), Some("1.2.3"));
         assert_eq!(s.max_versions, Some(3));
         assert_eq!(s.launcher_template.as_deref(), Some("H"));
+        assert_eq!(s.max_extract_total_mb, Some(16384));
+        assert_eq!(s.max_extract_entry_mb, Some(2048));
         assert_eq!(
             s.services,
             Some(vec!["QsmServer".to_string(), "QsmHelper".to_string()])
@@ -725,6 +800,41 @@ mod tests {
     #[test]
     fn default_max_versions_constant() {
         assert_eq!(DEFAULT_MAX_VERSIONS, 2, "当前版本 + 1 个回滚资产");
+    }
+
+    #[test]
+    fn extract_limits_resolution() {
+        // 未配置：回落到 defaults 中的 8 GiB / 512 MiB
+        assert_eq!(
+            resolve_extract_limits(None, None),
+            (
+                defaults::DEFAULT_EXTRACT_TOTAL_MB,
+                defaults::DEFAULT_EXTRACT_ENTRY_MB
+            )
+        );
+        // 合法配置原样生效
+        assert_eq!(
+            resolve_extract_limits(Some(16384), Some(2048)),
+            (16384, 2048)
+        );
+        // 超范围回落默认：0 / 过小 / 过大都不该让包永远装不上
+        assert_eq!(
+            resolve_extract_limits(Some(0), Some(0)),
+            (
+                defaults::DEFAULT_EXTRACT_TOTAL_MB,
+                defaults::DEFAULT_EXTRACT_ENTRY_MB
+            )
+        );
+        assert_eq!(
+            resolve_extract_limits(Some(MIN_EXTRACT_TOTAL_MB - 1), None).0,
+            defaults::DEFAULT_EXTRACT_TOTAL_MB
+        );
+        assert_eq!(
+            resolve_extract_limits(Some(MAX_EXTRACT_TOTAL_MB + 1), None).0,
+            defaults::DEFAULT_EXTRACT_TOTAL_MB
+        );
+        // 单文件上限大于总量：按总量截断
+        assert_eq!(resolve_extract_limits(Some(1024), Some(4096)), (1024, 1024));
     }
 
     #[test]

@@ -151,10 +151,42 @@ pub fn is_retryable_error(err: &str) -> bool {
     !PERMANENT.iter().any(|m| err.contains(m))
 }
 
+/// 解压限额（字节）。默认值见 [`crate::defaults`]，可由 update.json 覆盖。
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct ExtractLimits {
+    /// 解压产物总量上限
+    pub max_total_bytes: u64,
+    /// 单个条目解压上限
+    pub max_entry_bytes: u64,
+}
+
+impl ExtractLimits {
+    /// 从 MiB 构造；单文件上限不会超过总量上限（调用方已校验范围，这里再兜一层）
+    pub fn from_mb(total_mb: u64, entry_mb: u64) -> Self {
+        const MIB: u64 = 1024 * 1024;
+        let max_total_bytes = total_mb.saturating_mul(MIB).max(1);
+        let max_entry_bytes = entry_mb.saturating_mul(MIB).clamp(1, max_total_bytes);
+        Self {
+            max_total_bytes,
+            max_entry_bytes,
+        }
+    }
+}
+
+impl Default for ExtractLimits {
+    fn default() -> Self {
+        Self::from_mb(
+            crate::defaults::DEFAULT_EXTRACT_TOTAL_MB,
+            crate::defaults::DEFAULT_EXTRACT_ENTRY_MB,
+        )
+    }
+}
+
 /// 安装更新包
 ///
 /// - `zip_path`: 已下载并通过校验的更新包
 /// - `install_dir`: 版本安装目录（如 .../app_2.1.2）
+/// - `limits`: 解压限额（防 zip bomb；大包部署可在 update.json 调大）
 /// - `on_stage`: 安装阶段回调（中文消息 + 进度百分比，解压阶段按条目实时推进）
 ///
 /// 返回安装目录路径。
@@ -166,6 +198,7 @@ pub fn is_retryable_error(err: &str) -> bool {
 pub async fn install(
     zip_path: &Path,
     install_dir: &Path,
+    limits: ExtractLimits,
     on_stage: StageCallback,
 ) -> Result<PathBuf, String> {
     let backup_dir = backup_dir_for(install_dir);
@@ -183,12 +216,18 @@ pub async fn install(
         .map_err(|e| format!("创建临时目录失败 {}: {}", temp_dir.display(), e))?;
 
     on_stage("正在解压更新包...", Some(0.0));
+    crate::qlog!(
+        "[安装] 解压上限：总量 {}、单文件 {}",
+        crate::phase::format_bytes(limits.max_total_bytes),
+        crate::phase::format_bytes(limits.max_entry_bytes)
+    );
     let zip_path = zip_path.to_path_buf();
     let temp = temp_dir.clone();
     let cb = on_stage.clone();
-    let extract_result = tokio::task::spawn_blocking(move || extract_zip(&zip_path, &temp, &cb))
-        .await
-        .map_err(|e| format!("解压任务异常: {}", e))?;
+    let extract_result =
+        tokio::task::spawn_blocking(move || extract_zip(&zip_path, &temp, limits, &cb))
+            .await
+            .map_err(|e| format!("解压任务异常: {}", e))?;
 
     if let Err(e) = extract_result {
         let _ = tokio::fs::remove_dir_all(&temp_dir).await;
@@ -345,31 +384,24 @@ pub async fn save_local_manifest(
     manifest.save(path).await
 }
 
-/// 解压总量硬顶：8GB。
-///
-/// 超出即判定为异常包（zip bomb 或 manifest 指错地址），立即中止，
-/// 防止解压写满用户磁盘。正常更新包（主 exe + 资源）远低于此限。
-const MAX_EXTRACT_TOTAL_BYTES: u64 = 8 * 1024 * 1024 * 1024;
-
-/// 单条目硬顶：512MB。
-///
-/// 流式截断的兜底额度：条目头部声明的未压缩大小可造假，按声明值放行后
-/// 实际最多写出「上限 + 1」字节即被截断判定。
-const MAX_EXTRACT_ENTRY_BYTES: u64 = 512 * 1024 * 1024;
-
 /// 解压分块大小：与下载/合并一致，兼顾进度粒度与系统调用次数
 const EXTRACT_CHUNK_BYTES: usize = 256 * 1024;
 
 /// 解压 zip 到目标目录（阻塞函数，请在 spawn_blocking 中调用）
 ///
 /// 通过 `on_stage` 按条目推送解压进度（第 N/M 项 + 百分比）
-fn extract_zip(zip_path: &Path, dest: &Path, on_stage: &StageCallback) -> Result<(), String> {
+fn extract_zip(
+    zip_path: &Path,
+    dest: &Path,
+    limits: ExtractLimits,
+    on_stage: &StageCallback,
+) -> Result<(), String> {
     extract_zip_with_limits(
         zip_path,
         dest,
         on_stage,
-        MAX_EXTRACT_TOTAL_BYTES,
-        MAX_EXTRACT_ENTRY_BYTES,
+        limits.max_total_bytes,
+        limits.max_entry_bytes,
     )
 }
 
@@ -406,6 +438,14 @@ fn extract_zip_with_limits(
         .filter_map(|i| archive.by_index(i).ok().map(|e| e.size()))
         .sum();
 
+    // 声明总量已超上限：整包必然装不下，在写盘/磁盘预检前直接拒绝，
+    // 既不用按虚高的声明值去要求磁盘空间，也让错误指向「上限」而不是「磁盘不足」。
+    if declared_total > max_total {
+        return Err(format!(
+            "更新包解压总量超限已中止: 包内声明 {} 字节，上限 {} 字节（可调大 update.json 的 max_extract_total_mb）",
+            declared_total, max_total
+        ));
+    }
     // 解压前的磁盘预检：更新包已经在盘上，额外需要的是解压产物 + 余量。
     // 在写第一个文件前拒绝，比写到一半磁盘满好得多（后者还会被重试两轮）。
     if declared_total > 0 {
@@ -837,7 +877,7 @@ mod tests {
                 sink.lock().unwrap_or_else(|e| e.into_inner()).push(p);
             }
         });
-        extract_zip(&zip, &out, &cb).map_err(io::Error::other)?;
+        extract_zip(&zip, &out, ExtractLimits::default(), &cb).map_err(io::Error::other)?;
         let seen = seen.lock().unwrap_or_else(|e| e.into_inner()).clone();
         assert_eq!(
             seen.last().copied(),
@@ -902,13 +942,26 @@ mod tests {
     }
 
     #[test]
+    fn extract_limits_from_mb_clamps_entry_to_total() {
+        let limits = ExtractLimits::from_mb(1024, 4096);
+        assert_eq!(limits.max_total_bytes, 1024 * 1024 * 1024);
+        assert_eq!(
+            limits.max_entry_bytes, limits.max_total_bytes,
+            "单文件上限不得超过总量上限"
+        );
+        // 溢出防护：极大配置不得回绕成小值
+        assert!(ExtractLimits::from_mb(u64::MAX, u64::MAX).max_total_bytes > 0);
+    }
+
+    #[test]
     fn extract_normal_within_limits() -> io::Result<()> {
         let dir = temp_install_dir("extract_ok")?;
         let zip = dir.join("update.zip");
         make_test_zip(&zip, &[("a.txt", b"hello"), ("sub/b.bin", &[0u8; 64])])?;
         let out = dir.join("out");
         std::fs::create_dir_all(&out)?;
-        extract_zip(&zip, &out, &noop_stage()).map_err(io::Error::other)?;
+        extract_zip(&zip, &out, ExtractLimits::default(), &noop_stage())
+            .map_err(io::Error::other)?;
         assert_eq!(std::fs::read(out.join("a.txt"))?, b"hello");
         assert_eq!(std::fs::read(out.join("sub/b.bin"))?.len(), 64);
         let _ = std::fs::remove_dir_all(&dir);
@@ -972,7 +1025,8 @@ mod tests {
         make_test_zip(&zip, &[("../evil.txt", b"evil"), ("ok.txt", b"fine")])?;
         let out = dir.join("out");
         std::fs::create_dir_all(&out)?;
-        let err = extract_zip(&zip, &out, &noop_stage()).expect_err("含穿越条目的包必须解压失败");
+        let err = extract_zip(&zip, &out, ExtractLimits::default(), &noop_stage())
+            .expect_err("含穿越条目的包必须解压失败");
         assert!(
             err.contains("非法路径条目"),
             "错误信息应说明非法路径: {err}"
@@ -991,7 +1045,8 @@ mod tests {
         make_test_zip(&zip, &[])?;
         let out = dir.join("out");
         std::fs::create_dir_all(&out)?;
-        let err = extract_zip(&zip, &out, &noop_stage()).expect_err("空包必须解压失败");
+        let err = extract_zip(&zip, &out, ExtractLimits::default(), &noop_stage())
+            .expect_err("空包必须解压失败");
         assert!(err.contains("为空"), "错误信息应说明空包: {err}");
         let _ = std::fs::remove_dir_all(&dir);
         Ok(())
@@ -1016,9 +1071,14 @@ mod tests {
         let bad_zip = dir.join("bad.zip");
         std::fs::write(&bad_zip, b"not a zip")?;
 
-        let err = install(&bad_zip, &install_dir, noop_stage())
-            .await
-            .expect_err("损坏包必须安装失败");
+        let err = install(
+            &bad_zip,
+            &install_dir,
+            ExtractLimits::default(),
+            noop_stage(),
+        )
+        .await
+        .expect_err("损坏包必须安装失败");
         assert!(!err.is_empty());
         assert_eq!(
             std::fs::read(install_dir.join("old.exe"))?,
@@ -1039,7 +1099,7 @@ mod tests {
         let zip = dir.join("update.zip");
         make_test_zip(&zip, &[("new.exe", b"new")])?;
 
-        install(&zip, &install_dir, noop_stage())
+        install(&zip, &install_dir, ExtractLimits::default(), noop_stage())
             .await
             .expect("正常包应安装成功");
         assert_eq!(std::fs::read(install_dir.join("new.exe"))?, b"new");

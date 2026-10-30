@@ -306,6 +306,7 @@ fn run() -> Result<(), String> {
             rt.block_on(install::install(
                 &source.package,
                 &install_dir,
+                install::ExtractLimits::default(),
                 Arc::new(|_: &str, _: Option<f64>| {}),
             ))
             .map_err(|e| format!("解压安装失败: {e}"))?;

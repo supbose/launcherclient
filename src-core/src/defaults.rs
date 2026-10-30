@@ -72,6 +72,18 @@ pub const DEFAULT_RETRY_TIMES: u32 = match BUILD_RETRY_TIMES {
     None => 3,
 };
 
+/// 解压产物总量上限（MiB）：防 zip bomb 的硬顶，可由 update.json 覆盖
+///
+/// 8 GiB 对常规启动器/桌面应用足够；游戏、离线素材包这类解压后超过此值的
+/// 部署方在 update.json 里调大 `max_extract_total_mb` 即可，不必重新构建。
+pub const DEFAULT_EXTRACT_TOTAL_MB: u64 = 8 * 1024;
+
+/// 单个文件解压上限（MiB）：同样可由 update.json 覆盖。
+///
+/// 512 MiB 是「单个资源包/视频」与「误打包的整盘镜像」之间的保守分界；
+/// 调大时注意它永远不会超过总量上限（resolve 层按总量截断）。
+pub const DEFAULT_EXTRACT_ENTRY_MB: u64 = 512;
+
 /// 进度事件推送间隔（毫秒）：UI 编排层的节流参数，与后端逻辑无关，
 /// 仅两版 updater 的进度回调使用，故也集中到此处保持一致
 pub const PROGRESS_INTERVAL_MS: u64 = 300;

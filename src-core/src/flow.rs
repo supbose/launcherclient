@@ -54,6 +54,8 @@ pub struct ResolvedConfig {
     pub homepage: String,
     /// 同一环节自动重试次数（含首次尝试）：下载、解压校验各自独立计数
     pub retry_times: u32,
+    /// 解压限额（防 zip bomb；update.json 可调，见 [`config::resolve_extract_limits`]）
+    pub extract_limits: install::ExtractLimits,
     /// 是否要求清单提供包完整性校验值（默认 true）。
     /// 为真且清单既没给整包 `sha256`、分卷也没给齐 `part_sha256` 时，
     /// [`run_update_flow`] 在下载前直接拒绝自动安装；关它的两条路见
@@ -155,6 +157,13 @@ pub fn resolve_config(args: &CliArgs) -> ResolvedConfig {
         // 配置写了空串当没写：回落到内置默认，按钮点了才有地方去
         homepage: non_empty(settings.homepage).unwrap_or_else(|| DEFAULT_HOMEPAGE.to_string()),
         retry_times: config::resolve_retry_times(settings.retry_times),
+        extract_limits: {
+            let (total_mb, entry_mb) = config::resolve_extract_limits(
+                settings.max_extract_total_mb,
+                settings.max_extract_entry_mb,
+            );
+            install::ExtractLimits::from_mb(total_mb, entry_mb)
+        },
         // 命令行 --allow-missing-sha256 > update.json require_sha256 > 默认要求
         require_sha256: config::resolve_require_sha256(
             args.allow_missing_sha256,
@@ -882,7 +891,7 @@ pub async fn run_update_flow(
                 pct,
             ))
         });
-        match install::install(&zip_path, &target_dir, install_cb).await {
+        match install::install(&zip_path, &target_dir, cfg.extract_limits, install_cb).await {
             Ok(_) => break,
             // 与下载环节同一条原则：包非法 / 磁盘写不进去这类确定性失败
             // 不再陪着等两轮退避；只有改名交换阶段的瞬时占用值得重试。
@@ -1719,6 +1728,7 @@ mod tests {
             template: "F".to_string(),
             homepage: "https://example.test".to_string(),
             retry_times: 3,
+            extract_limits: install::ExtractLimits::default(),
             require_sha256: true,
             parts_concurrency: 3,
             fail_open: false,

@@ -1,0 +1,9 @@
+# Windows/x64 构建统一静态链接 CRT（等价于 MSVC 的 /MT）：
+# 消除发布 exe 对 VCRUNTIME140.dll 与 UCRT（api-ms-win-crt-*.dll）的依赖，
+# 用户机器没装 VC++ 运行库也能直接双击运行。
+#
+# 只作用于 Windows 目标，Linux CI 的 fmt/clippy/test 不受影响。
+# 代价是 exe 略大（实测约 +220 KB），与「少一个装不上的前置条件」相比值得。
+# 构建脚本与 proc-macro 在 Windows 上同为该 triple，也会静态链接，属正常现象。
+[target.x86_64-pc-windows-msvc]
+rustflags = ["-C", "target-feature=+crt-static"]

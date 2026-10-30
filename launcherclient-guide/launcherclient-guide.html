@@ -322,6 +322,7 @@ footer { border-top: 1px solid var(--rule); margin-top: 64px; padding: 28px 0 44
       <li class="card"><b>写好 update.json</b><span>至少填写 <code>manifest_url</code>（服务器版本清单地址）与 <code>app_name</code>（应用名），可选填 <code>launch</code>（更新完成后拉起的目标程序）。首次运行若找不到该文件，程序会按内置默认值自动生成一份带 <code>_说明</code> 字段的模板，不会覆盖已有文件。</span></li>
       <li class="card"><b>发布侧准备 version.json</b><span>将服务器版本清单部署到 manifest_url 指向的地址（字段见 4.3），或用 <code>pkgtool</code> 打包时自动生成（见第五章），上传到 CDN / 静态目录即可。</span></li>
     </ol>
+    <div class="callout info"><b>运行环境：</b>发布构建静态链接 CRT，目标机器<mark class="key">无需安装 VC++ 运行库</mark>；系统要求 Windows 10 及以上（图形后端决定）。</div>
     <div class="callout info"><b>验证方式：</b>可先运行 <code>launcherclient.exe --check-only</code> 做纯检测——不建窗、不下载、不拉起目标程序，按退出码判断：<code>0</code> 无更新、<code>1</code> 检测失败、<code>2</code> 有更新（可跳过）、<code>3</code> 必须更新（<code>force_update=true</code> 或低于 <code>min_version</code>）。</div>
   </section>
 
@@ -373,6 +374,8 @@ footer { border-top: 1px solid var(--rule); margin-top: 64px; padding: 28px 0 44
           <tr><td><code>launcher_template</code></td><td>字符串</td><td>界面模板，只认 <code>F</code> / <code>H</code>（大小写不敏感）：F 主模板（环形进度 + 步骤条）/ H 副模板（极简单行状态）。<strong>留空 = 自动判定</strong>：双击直启（无参数）用 F，被其他应用带参调用用 H；旧值 A~E、G 与未知值回落 F 并在 stderr 告警</td></tr>
           <tr><td><code>homepage</code></td><td>字符串</td><td>官网首页地址：<mark class="key">更新检查失败</mark>（清单全部地址失效）或<mark class="key">下载/合并环节重试用尽</mark>时，错误态出现「前往官网重新下载」按钮，点击用系统浏览器打开这里。留空用内置默认 <code>https://www.qcsm.ltd</code></td></tr>
           <tr><td><code>retry_times</code></td><td>数字</td><td>同一环节的自动重试次数（<mark class="key">含首次尝试</mark>），默认 <code>3</code> = 首次 + 重试 2 次；下载与解压校验各自独立计数；写 <code>0</code> 视为 <code>1</code>，上限 <code>10</code></td></tr>
+          <tr><td><code>max_extract_total_mb</code></td><td>数字</td><td><mark class="key">解压产物总量上限（MiB），默认 <code>8192</code>（8 GiB）</mark>，允许 <code>64</code>~<code>1048576</code>（1 TiB）。防 zip bomb 的硬顶，解压后超限即中止安装；游戏 / 离线素材包按实际解压后大小调大，超出范围回落默认并告警</td></tr>
+          <tr><td><code>max_extract_entry_mb</code></td><td>数字</td><td><mark class="key">单个文件解压上限（MiB），默认 <code>512</code></mark>，允许 <code>1</code>~<code>65536</code>，且不得超过总量上限（超出按总量截断）。单个视频 / 资源包被误判为异常包时调大</td></tr>
           <tr><td><code>require_sha256</code></td><td>布尔</td><td><mark class="key">包完整性校验闸，默认开启</mark>。开启时若清单既没有整包 <code>sha256</code>、分卷模式的 <code>part_sha256</code> 也没与 <code>parts</code> 一一对齐，则在<mark class="key">弹 UAC 之前</mark>直接拒绝安装，错误态引导去官网下载。写 <code>false</code>（或加 <code>--allow-missing-sha256</code>）可放行无校验值的包——只建议用于内网 / 自建源这类链路可信的环境；缺省即 <code>true</code>，无需显式写</td></tr>
           <tr><td><code>parts_concurrency</code></td><td>数字</td><td>分卷并发下载数（同时下载的卷数），默认 <code>3</code>，可选 <code>1</code>~<code>8</code>（超出夹到边界，写 <code>0</code> 视为 <code>1</code>）。CDN 单连接限速时并发能明显提速；服务端限制连接数或带宽很小时调到 <code>1</code> 串行下载。单包模式不涉及</td></tr>
           <tr><td><code>fail_open</code></td><td>布尔</td><td><mark class="key">检查失败时放行启动，默认关闭</mark>。开启后若 manifest 全部地址拉取/解析失败、且本地安装仍有效（有版本记录、记录的目录真实存在，首次安装 <code>0.0.0</code> 不算），则直接拉起已安装版本并静默退出，不挡错误窗口。只影响「拿不到清单」这一条路径，能拿到清单时强制更新等语义不变</td></tr>
@@ -393,6 +396,8 @@ footer { border-top: 1px solid var(--rule); margin-top: 64px; padding: 28px 0 44
   "launcher_template": "F",
   "homepage": "https://www.qcsm.ltd",
   "retry_times": 3,
+  "max_extract_total_mb": 8192,
+  "max_extract_entry_mb": 512,
   "require_sha256": true,
   "parts_concurrency": 3,
   "fail_open": false

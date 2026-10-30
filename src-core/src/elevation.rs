@@ -255,6 +255,7 @@ mod tests {
             template: "F".to_string(),
             homepage: String::new(),
             retry_times: 3,
+            extract_limits: crate::install::ExtractLimits::default(),
             require_sha256: true,
             parts_concurrency: 3,
             fail_open: false,

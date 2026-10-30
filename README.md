@@ -21,6 +21,7 @@ launcherclient/
 ├── Cargo.toml             # 根 workspace：成员 = src-core + src-egui + src-ui；src-pkgtool 刻意排除（见 §7）
 │                          # 也是版本号的 Rust 侧唯一写入点（[workspace.package]），由 pybuild 从 package.json 同步
 ├── Cargo.lock             # workspace 共享的一份锁文件（三个成员 crate 不再各编一遍依赖）
+├── .cargo/config.toml     # Windows 目标启用 +crt-static：发布 exe 不依赖 VC++ 运行库
 ├── .cnb.yml               # CNB 流水线：版本号一致性 + fmt + clippy + 单测门禁（见 §3.3）
 ├── target/                # workspace 成员的构建产物（launcherclient.exe 在这里）
 ├── src-core/              # 共享核心库（无 UI，可被任何外壳复用）
@@ -66,6 +67,7 @@ launcherclient/
 | 操作系统 | Windows（exe 图标/版本资源由 `rc.exe` 嵌入；Linux/macOS 可编译但跳过资源嵌入） |
 | Rust | ≥ 1.95（egui/eframe 0.37 的 `rust-version` 为 1.95），本机验证 1.97 |
 | 工具链 | MSVC（`x86_64-pc-windows-msvc`）+ Windows SDK，需提供 `rc.exe` |
+| 运行库 | **用户端无需安装 VC++ Redistributable**：`.cargo/config.toml` 对 Windows 目标启用 `+crt-static`，运行时（VCRUNTIME140 / UCRT）静态链接进 exe；实测产物增加约 220 KB |
 | 外部依赖 | **无仓库外依赖**。原以相对路径引用的自研能力库 `qingshu`（`../../../qingshu.work/rust/qingshu`）已于 2026-10-30 移除，其用到的两项能力复刻进本仓库：应用数据目录解析 `src-core/src/appdir.rs`、本地版本记录 `app.json` `src-core/src/local_manifest.rs`。克隆后即可直接 `cargo build`，无需再准备同级目录 |
 | 包管理器 | pnpm（仅用于运行 `package.json` 里的构建脚本，也可直接 `cargo`） |
 
@@ -198,6 +200,7 @@ python scripts/pybuild.py egui --codesign-pfx D:\certs\qsltd.pfx --codesign-tsa 
 
 把 `launcherclient.exe` 与 `update.json` 放在**同一目录**即可（配置其次会查找当前工作目录）。
 字体已内嵌进 exe，不需要再附带 `fonts/` 目录；`HarmonyOS-Sans-LICENSE.txt` 是字体许可协议，`scripts/build.py` 会把它复制进 `dist/<版本号>/`，分发时请一并保留。
+发布构建静态链接 CRT，**目标机器无需安装 VC++ 运行库**；系统要求 Windows 10 及以上（图形后端决定）。
 首次运行若找不到 `update.json`，程序会按内置默认值自动生成一份带 `_说明` 字段的模板，不覆盖已有文件。
 
 ### 4.2 命令行参数
@@ -259,6 +262,8 @@ launcherclient.exe [--app-name <名称>] [--name <标题>]
 | `launcher_template` | 字符串 | 界面模板，只认 `F` / `H`（大小写不敏感）：`F` 主模板（环形进度 + 步骤条）、`H` 副模板（极简单行状态）。**留空 = 自动判定**：双击直启（无命令行参数）用 `F`，被其他应用带参调用用 `H`；旧版本的其他模板值（A~E、G）与未知值一律回落 `F` 并在 stderr 告警 |
 | `homepage` | 字符串 | 官网首页地址。两处兜底出口都跳这里：**更新检查失败**（`manifest_url` 全部失效）与**下载/合并环节自动重试用尽**时，错误态出现「前往官网重新下载」按钮，点击用系统浏览器打开。留空则用内置默认 `https://launcherclient.qsw.us.ci/`（构建期 `--homepage` 烘焙值优先） |
 | `retry_times` | 数字 | 同一环节的自动重试次数（**含首次尝试**），默认 `3` = 首次 + 自动重试 2 次。下载与解压校验各自独立计数；写 `0` 视为 `1`（只试一次），上限 `10`。确定性错误（HTTP 4xx、本地写盘失败、包非法/超限）不重试，见 4.5 |
+| `max_extract_total_mb` | 数字 | **解压产物总量上限（MiB），默认 `8192`（8 GiB），允许 `64`~`1048576`（1 TiB）**。防 zip bomb 的硬顶：解压后超过此值即中止安装。游戏、离线素材包等解压后超过 8 GiB 的部署按实际大小调大；超出范围回落默认并告警 |
+| `max_extract_entry_mb` | 数字 | **单个文件解压上限（MiB），默认 `512`，允许 `1`~`65536`，且不得超过总量上限**（超出按总量截断）。单个视频/资源包被误判为异常包时调大；超出范围回落默认并告警 |
 | `require_sha256` | 布尔 | **包完整性校验闸，默认开启**。开启时若清单既没有整包 `sha256`、分卷模式的 `part_sha256` 也没和 `parts` 一一对齐，则在弹 UAC 之前直接拒绝安装，错误态提示改走官网下载。写 `false`（或加命令行 `--allow-missing-sha256`）可放行无校验值的包——只建议在内网/自建源这类链路可信的环境使用。缺省即 `true`，无需显式写 |
 | `parts_concurrency` | 数字 | 分卷并发下载数（同时下载的卷数），默认 `3`，可选 `1`~`8`（超出夹到边界，写 `0` 视为 `1`）。CDN 对单连接限速时并发能明显提速；服务端限制连接数或带宽很小可调到 `1`（串行下载）。单包模式不涉及 |
 | `fail_open` | 布尔 | **检查失败时放行启动，默认关闭**。开启后若 manifest 全部地址拉取/解析失败、且本地安装仍然有效（有版本记录、记录的目录真实存在，首次安装 `0.0.0` 不算），则直接拉起已安装版本并静默退出，不挡错误窗口。只影响「拿不到清单」这一条路径：能拿到清单时强制更新等语义完全不变。适合弱网环境不希望启动被检查卡住；缺省即 `false` |
@@ -280,6 +285,8 @@ launcherclient.exe [--app-name <名称>] [--name <标题>]
   "launcher_template": "",
   "homepage": "https://www.qcsm.ltd",
   "retry_times": 3,
+  "max_extract_total_mb": 8192,
+  "max_extract_entry_mb": 512,
   "require_sha256": true,
   "parts_concurrency": 3,
   "fail_open": false
@@ -337,7 +344,7 @@ URL 归一化（`"` → `%22`），环境变量写法与换行会被解析器吃
 2. 与本地版本比对 → 无更新则拉起目标程序并静默退出；首次安装（本地 `0.0.0`：`app.json` 缺失 / 记录目录丢失）直接进入下载安装，不展示「稍后升级」；其余有更新才显示窗口
 3. 磁盘空间预检 → 下载（单包支持断点续传；分卷按 `parts_concurrency` 并发；已下完或校验合格的卷自动复用，不重复下载）
 4. 校验 SHA256（分卷逐卷 + 合并后整体）
-5. 解压安装到新版本目录（解压前再预检一次空间；带 zip-slip 与超大条目防护；进度按已解压字节推进，每 300ms 刷新一次）
+5. 解压安装到新版本目录（解压前再预检一次空间；带 zip-slip 与超大条目防护，总量/单文件上限可由 `max_extract_total_mb` / `max_extract_entry_mb` 调整；进度按已解压字节推进，每 300ms 刷新一次）
 6. 卸载 `services` 配置的服务、处理占用的文件
 7. 写本地 `app.json`（临时文件 + 原子替换）、清理本次下载缓存
 8. 更新完成 → 拉起目标程序；旧版本目录与历史残留留到**下次启动**统一清理（见 4.6）
