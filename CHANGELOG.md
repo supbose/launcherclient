@@ -19,6 +19,12 @@
 
 
 
+
+## v0.2.4 (2026-10-30)
+### 📦 构建系统
+
+- [78ad7e1](/-/commit/78ad7e11097253442b074c0e24980068a8bead9c) 构建(src-pkgtool): 所有版本号更新至0.2.3 (Cargo.lock, Cargo.toml, src-egui/version.rc, src-pkgtool/Cargo.lock, src-pkgtool/Cargo.toml, src-pkgtool/icon.rc)
+
 ## v0.2.3 (2026-10-30)
 ### 🚀 新增功能
 
