@@ -3176,14 +3176,14 @@ checksum = "d55d956fa96f5ec02be2e13af0e20391a5aa83d6a074e3ad368959d0fab299ea"
 
 [[package]]
 name = "qsltd-ui"
-version = "0.2.2"
+version = "0.2.3"
 dependencies = [
  "egui",
 ]
 
 [[package]]
 name = "qsltd-updater-core"
-version = "0.2.2"
+version = "0.2.3"
 dependencies = [
  "chrono",
  "futures-util",
@@ -3199,7 +3199,7 @@ dependencies = [
 
 [[package]]
 name = "qsltdupdater-egui"
-version = "0.2.2"
+version = "0.2.3"
 dependencies = [
  "eframe",
  "egui",
