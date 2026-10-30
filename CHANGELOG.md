@@ -27,6 +27,16 @@
 
 
 
+
+## v1.0.5 (2026-10-30)
+### 📝 文档更新
+
+- [cf86f06](/-/commit/cf86f06bf5f210dbcc2c9a57e1f7d75c82fc66e7) 文档(.cnb.yml): 更新 CNB 流水线注释，明确发布可信度门禁触发方式 (.cnb.yml)
+
+### 📦 构建系统
+
+- [c5b3f2c](/-/commit/c5b3f2c714c685a4f242c7f0e55a5eb0219fa604) 构建(src-pkgtool): 升级所有版本号至1.0.4并更新CI配置 (.cnb.yml, .cnb/web_trigger.yml, Cargo.lock, Cargo.toml, src-egui/version.rc, src-pkgtool/Cargo.toml, src-pkgtool/icon.rc)
+
 ## v1.0.4 (2026-10-30)
 ### ♻️ 代码重构
 
