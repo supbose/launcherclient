@@ -1,7 +1,7 @@
 //! 命令行参数解析
 //!
 //! 用法：
-//! `QsLtdUpdater.exe --app-name <名称> [--name <标题>] [--launch <目标程序路径>] [--manifest <manifest地址>] [--template <A~H>] [--check-only] [--allow-missing-sha256]`
+//! `QsLtdUpdater.exe --app-name <名称> [--name <标题>] [--launch <目标程序路径>] [--manifest <manifest地址>] [--template <F|H>] [--check-only] [--allow-missing-sha256]`
 //!
 //! `--app-name` 与 `--name` 是两件事：前者决定配置/下载/安装目录，
 //! 后者只是界面标题栏（含系统窗口标题）显示的文字。
@@ -23,8 +23,13 @@ pub struct CliArgs {
     pub manifest_url: Option<String>,
     /// 当前已安装版本（可选，覆盖本地 app.json 记录）
     pub current_version: Option<String>,
-    /// 启动器界面模板（可选，覆盖 update.json 与默认模板；A~H）
+    /// 启动器界面模板（可选，覆盖 update.json 与自动判定；F/H）
     pub template: Option<String>,
+    /// 启动时是否带有面向用户的命令行参数（内部提权标记不算）。
+    ///
+    /// 模板自动判定的依据：双击直启（无参）用主模板 F；父进程带参调用用副模板 H。
+    /// 由 [`parse_from`] 按清洗后的 argv 记录，重试/提权副本沿用同一判定。
+    pub has_user_arguments: bool,
     /// 纯检测模式：只检查是否有更新，不建窗、不下载、不拉回目标程序。
     /// 退出码：0=无更新 1=检测失败 2=有更新（可跳过） 3=必须更新（供客户端快速分支）
     pub check_only: bool,
@@ -49,6 +54,11 @@ pub fn parse_from(argv: &[String]) -> CliArgs {
     let mut template: Option<String> = None;
     let mut check_only = false;
     let mut allow_missing_sha256 = false;
+    // 内部提权标记由 runas 副本自动追加，不代表「被其他应用调用」；
+    // 双击直启后因提权重启的副本仍需保持主模板 F。
+    let has_user_arguments = argv
+        .iter()
+        .any(|a| a != crate::elevation::ELEVATION_RETRY_FLAG);
 
     let mut i = 0;
     while i < argv.len() {
@@ -113,6 +123,7 @@ pub fn parse_from(argv: &[String]) -> CliArgs {
         manifest_url,
         current_version,
         template,
+        has_user_arguments,
         check_only,
         allow_missing_sha256,
     }
@@ -190,9 +201,9 @@ pub const CLI_SPECS: &[CliSpec] = &[
     },
     CliSpec {
         flag: "--template",
-        value: Some("A~H"),
-        desc: "界面模板 A~H（大小写不敏感）",
-        default: "未给时取 update.json 的 `launcher_template`，再回落编译期烘焙值（无烘焙即 `F`）",
+        value: Some("F|H"),
+        desc: "强制指定界面模板：F 主模板（环形进度 + 步骤条）/ H 副模板（极简单行状态），大小写不敏感",
+        default: "未给时取 update.json 的 `launcher_template`；两者都未配置则自动判定：无参直启用 F，带参（被其他应用调用）用 H",
         egui_only: false,
     },
     CliSpec {
@@ -212,7 +223,7 @@ pub const CLI_SPECS: &[CliSpec] = &[
     CliSpec {
         flag: "--preview",
         value: None,
-        desc: "仅 src-egui：本地预览八套布局与各阶段画面，不联网",
+        desc: "仅 src-egui：本地预览两套布局（F 主 / H 副）与各阶段画面，不联网",
         default: "关闭",
         egui_only: true,
     },
@@ -334,8 +345,18 @@ mod tests {
         assert!(c.manifest_url.is_none());
         assert!(c.current_version.is_none());
         assert!(c.template.is_none());
+        assert!(!c.has_user_arguments);
         assert!(!c.check_only);
         assert!(!c.allow_missing_sha256);
+    }
+
+    #[test]
+    fn internal_elevation_flag_does_not_count_as_user_arguments() {
+        // runas 副本自动追加的内部标记不代表「被其他应用调用」，避免直启被切成副模板
+        let only_internal = args(&[crate::elevation::ELEVATION_RETRY_FLAG]);
+        assert!(!parse_from(&only_internal).has_user_arguments);
+        // 真实参数仍然计数
+        assert!(parse_from(&args(&["--name", "x"])).has_user_arguments);
     }
 
     #[test]

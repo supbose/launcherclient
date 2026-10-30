@@ -62,8 +62,9 @@ pub struct UpdateSettings {
     /// 更新前需卸载的 Windows 服务名列表（运行中先停止；卸载后不恢复不重启；空或缺省不处理）
     #[serde(default)]
     pub services: Option<Vec<String>>,
-    /// 启动器界面模板：A~H（大小写不敏感），缺省或非法值用
-    /// [`defaults::DEFAULT_LAUNCHER_TEMPLATE`]；取值校验见 [`UpdateSettings::launcher_template`]
+    /// 启动器界面模板：F 主模板 / H 副模板（大小写不敏感）。
+    /// 缺省或空串 = 自动判定（无参直启 F，带参调用 H）；非法值回落到主模板 F。
+    /// 取值校验见 [`UpdateSettings::launcher_template`]
     #[serde(default)]
     pub launcher_template: Option<String>,
     /// 官网首页地址：下载地址全挂时错误态按钮「前往官网」跳这里；
@@ -84,9 +85,9 @@ pub struct UpdateSettings {
 impl UpdateSettings {
     /// 生效的启动器界面模板
     ///
-    /// 未配置（None）或空串 → 默认模板；配置了则大写归一（"a"/"A"/" a " 同义）。
-    /// 只做归一与去空，合法性由调用方（resolve 层）校验后回落，此处保留原值
-    /// 以便上层按「是否显式指定」判断优先级。
+    /// 未配置（None）或空串 → 自动判定（见 [`resolve_launcher_template`]）；
+    /// 配置了则大写归一（"f"/"F"/" f " 同义）。只做归一与去空，合法性由调用方
+    /// （resolve 层）校验后回落，此处保留原值以便上层按「是否显式指定」判断优先级。
     pub fn launcher_template(&self) -> Option<String> {
         self.launcher_template
             .as_deref()
@@ -142,8 +143,14 @@ pub const DEFAULT_MAX_VERSIONS: usize = match defaults::BUILD_MAX_VERSIONS {
     None => 2,
 };
 
-/// 合法启动器界面模板键（与 `src-egui/src/templates.rs` 下的八套布局一一对应）
-pub const VALID_LAUNCHER_TEMPLATES: &[&str] = &["A", "B", "C", "D", "E", "F", "G", "H"];
+/// 合法启动器界面模板键（与 `src-egui/src/templates.rs` 的两套布局一一对应）
+///
+/// F = 主模板（环形进度 + 步骤条），H = 副模板（极简单行状态）。
+/// 旧版 A~E/G 已删除，配置里残留这些值会告警并回落到主模板 F。
+pub const VALID_LAUNCHER_TEMPLATES: &[&str] = &["F", "H"];
+
+/// 副模板键：启动时带命令行参数（视作被其他应用调用）时的自动选择
+pub const SECONDARY_LAUNCHER_TEMPLATE: &str = "H";
 
 /// 启动器标题最长字符数（按字符计，中文算 1 个）
 ///
@@ -186,21 +193,26 @@ pub fn resolve_launcher_name(cli: Option<&str>, file: Option<&str>) -> String {
     cleaned.to_string()
 }
 
-/// 解析生效的启动器界面模板：命令行 > update.json > 内置默认
+/// 解析生效的启动器界面模板：命令行 > update.json > 自动判定
 ///
-/// - 未指定 / 空串 → [`defaults::DEFAULT_LAUNCHER_TEMPLATE`]
-/// - 指定了 → 去空白 + 大写归一（"a" 与 "A" 同义），合法则采用
-/// - 未知值 → 打印告警并回落到默认模板（配置写错不该让界面白屏）
-pub fn resolve_launcher_template(specified: Option<&str>) -> String {
+/// - 未指定 / 空串 → 自动判定：`invoked_with_args` 为真（被其他应用带参调用）用副模板 H，
+///   否则用主模板 F（[`defaults::DEFAULT_LAUNCHER_TEMPLATE`]）
+/// - 指定了 → 去空白 + 大写归一（"f" 与 "F" 同义），F/H 合法则采用
+/// - 旧版键（A~E/G）或未知值 → 打印告警并回落到主模板 F（配置写错不该让界面白屏）
+pub fn resolve_launcher_template(specified: Option<&str>, invoked_with_args: bool) -> String {
     let Some(raw) = specified.map(str::trim).filter(|v| !v.is_empty()) else {
-        return defaults::DEFAULT_LAUNCHER_TEMPLATE.to_string();
+        return if invoked_with_args {
+            SECONDARY_LAUNCHER_TEMPLATE.to_string()
+        } else {
+            defaults::DEFAULT_LAUNCHER_TEMPLATE.to_string()
+        };
     };
     let normalized = raw.to_ascii_uppercase();
     if VALID_LAUNCHER_TEMPLATES.contains(&normalized.as_str()) {
         return normalized;
     }
     eprintln!(
-        "[配置] 未知启动器模板 '{}'（可选 {}），回落到默认 {}",
+        "[配置] 不支持的启动器模板 '{}'（可选 {}），回落到主模板 {}",
         raw,
         VALID_LAUNCHER_TEMPLATES.join("/"),
         defaults::DEFAULT_LAUNCHER_TEMPLATE
@@ -252,7 +264,7 @@ fn generate_default_template(dir: &std::path::Path) -> bool {
             "current_version": "强制指定当前版本；留空自动从本地 app.json 探测",
             "max_versions": "保留的版本目录数量（含当前版本，旧目录即回滚资产），默认 2",
             "services": "更新前需卸载的 Windows 服务名数组；运行中的先停止后卸载，卸载后不恢复不重启",
-            "launcher_template": "启动器界面模板，可选 A~H（大小写不敏感）：A 信息密度 · B 环形居中 · C 顶部步骤条 · D 极简留白 · E 日志为主 · F 环形步骤 · G 品牌沉浸 · H 极简轻量；留空或未知值用默认 F",
+            "launcher_template": "启动器界面模板：留空 = 自动（双击直启用主模板 F，被其他应用带参数调用用副模板 H）；也可填 F/H 强制指定，旧版 A~E/G 等值回落到 F",
             "homepage": "官网首页地址；更新检查（manifest 全部地址失效）或下载地址全部失败时，界面上的「前往官网重新下载」按钮跳这里，留空用内置默认",
             "retry_times": "同一环节（下载 / 解压校验）的自动重试次数（含首次尝试），默认 3：失败后自动再试 2 次，仍失败才提示前往官网重新下载",
             "require_sha256": "是否要求服务器清单提供包完整性校验值，默认 true：整包 sha256 缺失且分卷 part_sha256 也没给齐时拒绝自动安装。自建/内网等可信环境确需放行时设为 false（等价于命令行 --allow-missing-sha256）"
@@ -266,7 +278,9 @@ fn generate_default_template(dir: &std::path::Path) -> bool {
         "current_version": "",
         "max_versions": DEFAULT_MAX_VERSIONS,
         "services": defaults::DEFAULT_SERVICES,
-        "launcher_template": defaults::DEFAULT_LAUNCHER_TEMPLATE,
+        // 留空 = 自动判定：双击直启 F、被其他应用带参调用 H；
+        // 想固定某一套再显式填 F/H（与 name 的留空跟随语义一致）
+        "launcher_template": "",
         "homepage": defaults::DEFAULT_HOMEPAGE,
         "retry_times": defaults::DEFAULT_RETRY_TIMES,
         // 显式写出默认值：这条开关关掉就是放弃包完整性校验，写在配置里比
@@ -356,7 +370,7 @@ mod tests {
                 "current_version": "1.2.3",
                 "max_versions": 3,
                 "services": ["QsmServer", "QsmHelper"],
-                "launcher_template": "B"
+                "launcher_template": "H"
             }"#,
         )
         .expect("完整配置应可解析");
@@ -364,7 +378,7 @@ mod tests {
         assert_eq!(s.launch.as_deref(), Some("qsm.exe"));
         assert_eq!(s.current_version.as_deref(), Some("1.2.3"));
         assert_eq!(s.max_versions, Some(3));
-        assert_eq!(s.launcher_template.as_deref(), Some("B"));
+        assert_eq!(s.launcher_template.as_deref(), Some("H"));
         assert_eq!(
             s.services,
             Some(vec!["QsmServer".to_string(), "QsmHelper".to_string()])
@@ -392,13 +406,17 @@ mod tests {
     }
 
     #[test]
-    fn launcher_template_absent_falls_back_to_default() {
-        // 未配置 → 默认模板 F
+    fn launcher_template_absent_uses_auto_detection() {
+        // 未配置 → 自动：无参直启 F，带参（被其他应用调用）H
         let s: UpdateSettings = serde_json::from_str("{}").expect("空配置应可解析");
         assert!(s.launcher_template().is_none());
         assert_eq!(
-            resolve_launcher_template(s.launcher_template().as_deref()),
+            resolve_launcher_template(s.launcher_template().as_deref(), false),
             "F"
+        );
+        assert_eq!(
+            resolve_launcher_template(s.launcher_template().as_deref(), true),
+            "H"
         );
     }
 
@@ -430,45 +448,55 @@ mod tests {
     }
 
     #[test]
-    fn launcher_template_explicit_overrides_default() {
-        // 显式指定优先于默认：八套模板都应能被正确选中
-        for key in ["A", "B", "C", "D", "E", "F", "G", "H"] {
+    fn launcher_template_explicit_overrides_auto_detection() {
+        // 显式指定优先于自动判定：即使带参调用，配置 H/F 也照用
+        for key in ["F", "H"] {
             let json = format!(r#"{{"launcher_template": "{key}"}}"#);
             let s: UpdateSettings = serde_json::from_str(&json).expect("配置应可解析");
-            assert_eq!(
-                resolve_launcher_template(s.launcher_template().as_deref()),
-                key
-            );
+            for invoked in [false, true] {
+                assert_eq!(
+                    resolve_launcher_template(s.launcher_template().as_deref(), invoked),
+                    key
+                );
+            }
         }
     }
 
     #[test]
     fn launcher_template_case_and_space_insensitive() {
-        // 大小写与首尾空白归一："a" / " A " 都视为 A
+        // 大小写与首尾空白归一：" f " / "h" 都按 F/H 处理
         let s: UpdateSettings =
-            serde_json::from_str(r#"{"launcher_template": " a "}"#).expect("应可解析");
-        assert_eq!(s.launcher_template().as_deref(), Some("A"));
-        assert_eq!(resolve_launcher_template(Some("d")), "D");
+            serde_json::from_str(r#"{"launcher_template": " f "}"#).expect("应可解析");
+        assert_eq!(s.launcher_template().as_deref(), Some("F"));
+        assert_eq!(resolve_launcher_template(Some("h"), false), "H");
     }
 
     #[test]
-    fn launcher_template_empty_string_uses_default() {
+    fn launcher_template_empty_string_uses_auto_detection() {
         // 配置留空视为未指定（与 launch/current_version 的 "" 语义一致）
         let s: UpdateSettings =
             serde_json::from_str(r#"{"launcher_template": ""}"#).expect("应可解析");
         assert!(s.launcher_template().is_none());
         assert_eq!(
-            resolve_launcher_template(s.launcher_template().as_deref()),
+            resolve_launcher_template(s.launcher_template().as_deref(), false),
             "F"
+        );
+        assert_eq!(
+            resolve_launcher_template(s.launcher_template().as_deref(), true),
+            "H"
         );
     }
 
     #[test]
-    fn launcher_template_unknown_value_falls_back_to_default() {
-        // 未知模板不得让界面白屏：回落到默认 F
-        assert_eq!(resolve_launcher_template(Some("Z")), "F");
-        assert_eq!(resolve_launcher_template(Some("")), "F");
-        assert_eq!(resolve_launcher_template(None), "F");
+    fn legacy_or_unknown_template_falls_back_to_main() {
+        // 旧版 A~E/G 与未知值不得让界面白屏：一律回落到主模板 F，
+        // 且显式旧值不再参与「带参用 H」的自动判定
+        for old in ["A", "B", "C", "D", "E", "G", "Z"] {
+            assert_eq!(resolve_launcher_template(Some(old), false), "F");
+            assert_eq!(resolve_launcher_template(Some(old), true), "F");
+        }
+        assert_eq!(resolve_launcher_template(Some(""), true), "H");
+        assert_eq!(resolve_launcher_template(None, true), "H");
     }
 
     #[test]
@@ -476,6 +504,10 @@ mod tests {
         assert!(
             VALID_LAUNCHER_TEMPLATES.contains(&defaults::DEFAULT_LAUNCHER_TEMPLATE),
             "默认模板必须是合法键之一"
+        );
+        assert!(
+            VALID_LAUNCHER_TEMPLATES.contains(&SECONDARY_LAUNCHER_TEMPLATE),
+            "副模板必须是合法键之一"
         );
     }
 
@@ -490,9 +522,14 @@ mod tests {
         let content = std::fs::read_to_string(&path).expect("读取 update.json");
         let s: UpdateSettings = serde_json::from_str(&content).expect("update.json 应可解析");
         assert_eq!(
-            resolve_launcher_template(s.launcher_template().as_deref()),
+            resolve_launcher_template(s.launcher_template().as_deref(), false),
             "F",
-            "仓库默认配置应落到默认模板 F"
+            "仓库默认配置应落到主模板 F"
+        );
+        // 仓库配置留空模板，带参调用应自动切副模板
+        assert_eq!(
+            resolve_launcher_template(s.launcher_template().as_deref(), true),
+            "H"
         );
     }
 

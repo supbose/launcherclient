@@ -1,5 +1,5 @@
 {
-  "_说明": "QsLtdUpdater 本地配置文件，与 QsLtdUpdater.exe 同目录部署。所有字段可省略，省略或留空时使用默认值。优先级：命令行参数 > 本文件 > 内置默认值。manifest_url 支持单个字符串或地址数组（数组时按序故障转移，第一个失败自动切换下一个）。launcher_template 为启动器界面模板，可选 A~H（大小写不敏感），留空或未知值使用默认模板 F。name 为启动器标题（标题栏左侧文字与系统窗口标题），单行、最长 64 字符，留空则跟随 exe 内置标题（打包时 --name 烘焙，默认「启动器」）。homepage 为官网首页地址，下载地址全部失败时错误态的「前往官网重新下载」按钮跳这里。retry_times 为同一环节（下载 / 解压校验）的自动重试次数（含首次尝试，默认 3），重试用尽仍失败才提示前往官网。require_sha256 为包完整性校验闸（默认 true）：服务器清单既没给整包 sha256、分卷的 part_sha256 也没与 parts 一一对齐时直接拒绝安装，避免装来路不明的包；内网或自建源这类链路可信的环境可置 false（或用命令行 --allow-missing-sha256）放行，但请注意这只在「服务器内容不会被第三方改写」的前提下成立。",
+  "_说明": "QsLtdUpdater 本地配置文件，与 QsLtdUpdater.exe 同目录部署。所有字段可省略，省略或留空时使用默认值。优先级：命令行参数 > 本文件 > 内置默认值。manifest_url 支持单个字符串或地址数组（数组时按序故障转移，第一个失败自动切换下一个）。launcher_template 为启动器界面模板：留空（推荐）= 自动判定，双击直启用主模板 F，被其他应用带命令行参数调用用副模板 H；也可显式填 F/H 强制指定，旧版 A~E/G 等值回落到 F。name 为启动器标题（标题栏左侧文字与系统窗口标题），单行、最长 64 字符，留空则跟随 exe 内置标题（打包时 --name 烘焙，默认「启动器」）。homepage 为官网首页地址，下载地址全部失败时错误态的「前往官网重新下载」按钮跳这里。retry_times 为同一环节（下载 / 解压校验）的自动重试次数（含首次尝试，默认 3），重试用尽仍失败才提示前往官网。require_sha256 为包完整性校验闸（默认 true）：服务器清单既没给整包 sha256、分卷的 part_sha256 也没与 parts 一一对齐时直接拒绝安装，避免装来路不明的包；内网或自建源这类链路可信的环境可置 false（或用命令行 --allow-missing-sha256）放行，但请注意这只在「服务器内容不会被第三方改写」的前提下成立。",
   "manifest_url": [
     "https://qsw.us.ci/update/qsm/version.json",
     "https://down.cdn.qcsm.ltd/manifest.json",
@@ -10,7 +10,7 @@
   "launch": "",
   "current_version": "",
   "max_versions": 2,
-  "launcher_template": "F",
+  "launcher_template": "",
   "homepage": "https://www.qcsm.ltd",
   "retry_times": 3,
   "require_sha256": true

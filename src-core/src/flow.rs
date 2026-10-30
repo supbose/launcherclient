@@ -47,7 +47,7 @@ pub struct ResolvedConfig {
     pub max_versions: usize,
     /// 更新前需卸载的 Windows 服务名列表（运行中先停止；卸载后不恢复不重启）
     pub services: Vec<String>,
-    /// 生效的启动器界面模板（A~H）
+    /// 生效的启动器界面模板（F 主 / H 副）
     pub template: String,
     /// 官网首页地址：下载地址全挂时错误态「前往官网」按钮的目标
     pub homepage: String,
@@ -115,11 +115,13 @@ pub fn resolve_config(args: &CliArgs) -> ResolvedConfig {
     // 建目录/解压时才出现难以理解的行为。
     let app_name = normalize_app_name(app_name);
 
-    // 界面模板优先级：命令行 --template > update.json launcher_template > 内置默认（F）。
-    // 未配置或写了未知值时 resolve 内部回落默认，界面不会因配置笔误白屏。
+    // 界面模板优先级：命令行 --template > update.json launcher_template > 自动判定。
+    // 自动判定按启动方式：带参（视作被其他应用调用）用副模板 H，无参直启用主模板 F；
+    // 未配置或写了旧版 A~E/G 等值时 resolve 内部回落主模板 F，界面不会白屏。
     let settings_template = settings.launcher_template();
     let template = config::resolve_launcher_template(
         args.template.as_deref().or(settings_template.as_deref()),
+        args.has_user_arguments,
     );
 
     // 标题优先级同上：命令行 --name > update.json name > 编译期烘焙默认

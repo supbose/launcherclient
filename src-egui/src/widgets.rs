@@ -1,4 +1,4 @@
-//! 启动器专用控件：更新日志卡 / 内联日志 / 动作行 / 错误提示 / 强制更新动作行。
+//! 启动器专用控件：更新日志卡 / 动作行 / 错误提示 / 强制更新动作行。
 //!
 //! 通用原语（背景渐变、标题栏、spinner、进度条、状态点、徽标、按钮、居中文本、
 //! 环形进度）已迁到共享 crate `qsltd-ui`，这里原样转出，调用方仍写
@@ -14,7 +14,6 @@ use qsltd_ui::theme;
 ///
 /// - `body_h`: 正文区固定高度（卡片总高 = body_h + 42）。条目超出时在
 ///   卡片内部出竖向滚动条，卡片自身高度恒定，不会撑动整体布局
-/// - D 模板走 [`inline_log`]（无卡片容器，同样固定高度内部滚动）
 pub fn log_card(ui: &mut Ui, items: &[&str], body_h: f32) {
     let full_width = ui.available_width();
     // 固定高度：标题+内边距约 42px，正文区恒为 body_h，多行内部滚动
@@ -74,40 +73,133 @@ fn log_list(ui: &mut Ui, items: &[&str], body_h: f32) {
         .show(ui, body);
 }
 
-/// D 模板内联日志（.tpl-d__log：无卡片，细分割线分隔）
-///
-/// 正文固定高度 96px，多行时内部滚动，避免撑破窗口布局。
-pub fn inline_log(ui: &mut Ui, items: &[&str]) {
-    ui.label(
-        RichText::new("更新日志")
-            .size(12.0)
-            .color(theme::text_alpha(115)), // 0.45
-    );
-    egui::ScrollArea::vertical()
-        .max_height(96.0)
-        .auto_shrink(false)
-        .show(ui, |ui| {
-            for (i, line) in items.iter().enumerate() {
-                if i > 0 {
-                    let w = ui.available_width();
-                    let (r, _) = ui.allocate_exact_size(Vec2::new(w, 1.0), Sense::hover());
-                    ui.painter_at(r).rect_filled(r, 0.0, theme::W08);
-                }
-                ui.label(
-                    RichText::new(*line)
-                        .size(13.0)
-                        .color(theme::text_alpha(204)), // 0.8
-                );
-            }
-        });
+/// 动作行按钮间距（.tpl-x__actions 的 gap）
+const ACTIONS_GAP: f32 = 10.0;
+
+/// 动作行里的一个按钮：文案 / 主按钮 / 可用态 / 点击后派发的动作
+struct ActionButton {
+    label: &'static str,
+    primary: bool,
+    enabled: bool,
+    action: Action,
 }
 
-/// 底部动作行（.tpl-x__actions：gap 10）
+/// 常规动作行的按钮清单
 ///
 /// - 错误态：重试 + 关闭；若失败出在下载链路（重试用尽）或 manifest
 ///   所有地址都失效（`show_homepage`），再加一枚「前往官网」——这两类
 ///   失败重试未必有解，得给条能直接拿到完整包的路
 /// - 完成态：完成
+fn action_buttons(
+    retrying: bool,
+    show_retry: bool,
+    show_finish: bool,
+    show_homepage: bool,
+) -> Vec<ActionButton> {
+    let mut buttons = Vec::new();
+    if show_retry {
+        buttons.push(ActionButton {
+            label: if retrying {
+                "正在重试..."
+            } else {
+                "重试"
+            },
+            primary: true,
+            enabled: !retrying,
+            action: Action::Retry,
+        });
+        if show_homepage {
+            buttons.push(ActionButton {
+                label: "前往官网重新下载",
+                primary: false,
+                enabled: true,
+                action: Action::Homepage,
+            });
+        }
+        buttons.push(ActionButton {
+            label: "关闭",
+            primary: false,
+            enabled: true,
+            action: Action::Close,
+        });
+    } else if show_finish {
+        buttons.push(ActionButton {
+            label: "完成",
+            primary: true,
+            enabled: true,
+            action: Action::Finish,
+        });
+    }
+    buttons
+}
+
+/// 强制更新动作行的按钮清单
+///
+/// - 有商店地址（`has_store`）：展示「前往应用商店」
+/// - 始终展示「下载升级包」（primary，走更新流程）
+/// - 非阻断（`blocking=false`）：额外展示「稍后升级」，允许应用照常启动
+fn force_update_buttons(blocking: bool, has_store: bool) -> Vec<ActionButton> {
+    let mut buttons = Vec::new();
+    if has_store {
+        buttons.push(ActionButton {
+            label: "前往应用商店",
+            primary: false,
+            enabled: true,
+            action: Action::Store,
+        });
+    }
+    buttons.push(ActionButton {
+        label: "下载升级包",
+        primary: true,
+        enabled: true,
+        action: Action::ForceDownload,
+    });
+    if !blocking {
+        buttons.push(ActionButton {
+            label: "稍后升级",
+            primary: false,
+            enabled: true,
+            action: Action::ForceLater,
+        });
+    }
+    buttons
+}
+
+/// 量出整行按钮的占位尺寸（宽 = 各按钮宽 + 间距，高 = 最高按钮）
+///
+/// 居中布局要先知道宽度才能把整行放进居中的子区域；这里与 [`draw_action_row`]
+/// 共用同一份按钮清单与 `button_size` 度量，不会出现「量出来 300、画出来 310」。
+fn action_row_size(ui: &Ui, buttons: &[ActionButton]) -> Vec2 {
+    let mut size = Vec2::ZERO;
+    for (i, b) in buttons.iter().enumerate() {
+        let s = button_size(ui, b.label);
+        if i > 0 {
+            size.x += ACTIONS_GAP;
+        }
+        size.x += s.x;
+        size.y = size.y.max(s.y);
+    }
+    size
+}
+
+/// 按清单排布一行按钮（左对齐；居中由调用方包一层子区域完成）
+fn draw_action_row(ui: &mut Ui, buttons: &[ActionButton]) -> Option<Action> {
+    let mut act = None;
+    ui.horizontal(|ui| {
+        ui.add_space(0.0);
+        for (i, b) in buttons.iter().enumerate() {
+            if i > 0 {
+                ui.add_space(ACTIONS_GAP);
+            }
+            if button(ui, b.label, b.primary, b.enabled) {
+                act = Some(b.action);
+            }
+        }
+    });
+    act
+}
+
+/// 底部动作行（.tpl-x__actions：gap 10）
 pub fn actions_row(
     ui: &mut Ui,
     retrying: bool,
@@ -115,37 +207,20 @@ pub fn actions_row(
     show_finish: bool,
     show_homepage: bool,
 ) -> Option<Action> {
-    let mut act = None;
-    ui.horizontal(|ui| {
-        ui.add_space(0.0);
-        if show_retry {
-            if button(
-                ui,
-                if retrying {
-                    "正在重试..."
-                } else {
-                    "重试"
-                },
-                true,
-                !retrying,
-            ) {
-                act = Some(Action::Retry);
-            }
-            ui.add_space(10.0);
-            if show_homepage && button(ui, "前往官网重新下载", false, true) {
-                act = Some(Action::Homepage);
-            }
-            if show_homepage {
-                ui.add_space(10.0);
-            }
-            if button(ui, "关闭", false, true) {
-                act = Some(Action::Close);
-            }
-        } else if show_finish && button(ui, "完成", true, true) {
-            act = Some(Action::Finish);
-        }
-    });
-    act
+    let buttons = action_buttons(retrying, show_retry, show_finish, show_homepage);
+    draw_action_row(ui, &buttons)
+}
+
+/// 动作行占位尺寸（居中排布用）
+pub fn actions_row_size(
+    ui: &Ui,
+    retrying: bool,
+    show_retry: bool,
+    show_finish: bool,
+    show_homepage: bool,
+) -> Vec2 {
+    let buttons = action_buttons(retrying, show_retry, show_finish, show_homepage);
+    action_row_size(ui, &buttons)
 }
 
 /// 错误态一句话说明（接在错误详情下方）
@@ -201,36 +276,20 @@ pub enum Action {
 }
 
 /// 强制更新界面底部动作行
-///
-/// - 有商店地址（`has_store`）：展示「前往应用商店」
-/// - 始终展示「下载升级包」（primary，走更新流程）
-/// - 非阻断（`blocking=false`）：额外展示「稍后升级」，允许应用照常启动
 pub fn force_update_actions_row(ui: &mut Ui, blocking: bool, has_store: bool) -> Option<Action> {
-    let mut act = None;
-    ui.horizontal(|ui| {
-        ui.add_space(0.0);
-        if has_store {
-            if button(ui, "前往应用商店", false, true) {
-                act = Some(Action::Store);
-            }
-            ui.add_space(10.0);
-        }
-        if button(ui, "下载升级包", true, true) {
-            act = Some(Action::ForceDownload);
-        }
-        if !blocking {
-            ui.add_space(10.0);
-            if button(ui, "稍后升级", false, true) {
-                act = Some(Action::ForceLater);
-            }
-        }
-    });
-    act
+    let buttons = force_update_buttons(blocking, has_store);
+    draw_action_row(ui, &buttons)
+}
+
+/// 强制更新动作行占位尺寸（居中排布用）
+pub fn force_update_actions_row_size(ui: &Ui, blocking: bool, has_store: bool) -> Vec2 {
+    let buttons = force_update_buttons(blocking, has_store);
+    action_row_size(ui, &buttons)
 }
 
 #[cfg(test)]
 mod tests {
-    use super::error_hint;
+    use super::{action_buttons, error_hint, force_update_buttons, Action};
 
     #[test]
     fn check_failure_hint_points_to_homepage_without_repeating_title() {
@@ -256,5 +315,52 @@ mod tests {
         let hint = error_hint("已尝试 1 次", "解压校验", false);
         assert!(hint.contains("请检查网络或磁盘后点「重试」"));
         assert!(!hint.contains("前往官网"));
+    }
+
+    #[test]
+    fn error_actions_put_homepage_between_retry_and_close() {
+        // 顺序即视觉顺序：重试（primary）→ 前往官网 → 关闭。
+        // 居中是按这份清单量宽后整体平移，顺序错了画面就对不上设计稿。
+        let buttons = action_buttons(false, true, false, true);
+        let labels: Vec<_> = buttons.iter().map(|b| b.label).collect();
+        assert_eq!(labels, ["重试", "前往官网重新下载", "关闭"]);
+        assert!(buttons[0].primary, "重试应是主按钮");
+        assert!(!buttons[1].primary && !buttons[2].primary);
+        assert_eq!(buttons[0].action, Action::Retry);
+        assert_eq!(buttons[1].action, Action::Homepage);
+        assert_eq!(buttons[2].action, Action::Close);
+    }
+
+    #[test]
+    fn retrying_action_is_disabled_and_says_so() {
+        let buttons = action_buttons(true, true, false, false);
+        assert_eq!(buttons[0].label, "正在重试...");
+        assert!(!buttons[0].enabled, "重试进行中不应可再次点击");
+        assert_eq!(buttons[0].action, Action::Retry);
+    }
+
+    #[test]
+    fn done_actions_only_show_finish() {
+        let buttons = action_buttons(false, false, true, false);
+        assert_eq!(buttons.len(), 1);
+        assert_eq!(buttons[0].label, "完成");
+        assert_eq!(buttons[0].action, Action::Finish);
+    }
+
+    #[test]
+    fn force_actions_follow_store_and_blocking_flags() {
+        // 阻断 + 有商店：商店 / 下载升级包（primary），没有「稍后升级」
+        let buttons = force_update_buttons(true, true);
+        let labels: Vec<_> = buttons.iter().map(|b| b.label).collect();
+        assert_eq!(labels, ["前往应用商店", "下载升级包"]);
+        assert_eq!(buttons[0].action, Action::Store);
+        assert!(buttons[1].primary, "下载升级包应是主按钮");
+        assert_eq!(buttons[1].action, Action::ForceDownload);
+
+        // 非阻断且无商店：只剩下载升级包 + 稍后升级
+        let buttons = force_update_buttons(false, false);
+        let labels: Vec<_> = buttons.iter().map(|b| b.label).collect();
+        assert_eq!(labels, ["下载升级包", "稍后升级"]);
+        assert_eq!(buttons[1].action, Action::ForceLater);
     }
 }

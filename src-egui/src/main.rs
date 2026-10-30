@@ -7,8 +7,9 @@
 //! 需要时进入 eframe 事件循环，后台线程执行下载/安装并经共享快照
 //! （`qsltd_updater_core::phase::PhaseHandle`）驱动视图刷新。
 //!
-//! 界面复刻 Tauri + Vue 版（`src/App.vue` + `src/components/templates/`）：
-//! 八套模板 A~H 与后端 `launcher_template` 配置一一对应，默认 F。
+//! 界面为两套模板：主模板 F（环形进度 + 步骤条，双击直启）与副模板 H
+//! （极简单行状态，被其他应用带参调用）。`--template F|H` 与 update.json
+//! 的 `launcher_template` 可显式覆盖。
 //! 后端模块与 UI 编排层已抽离至共享 crate `qsltd-updater-core`
 //! （src-core 的 phase/flow 模块），本 crate 只保留视图层。
 
@@ -25,7 +26,7 @@ use qsltd_updater_core::flow::{self, StartupContext, StartupDecision};
 use qsltd_updater_core::phase::{PhaseHandle, PhasePayload, Stage};
 
 fn main() {
-    // --preview 模板预览模式（复刻 preview.html，仅本地验证八套布局，
+    // --preview 模板预览模式（复刻 preview.html，仅本地验证 F 主 / H 副两套布局，
     // 不属于核心 CLI 参数——先摘除再交给 core 解析，避免「未知参数」告警）
     // 预览初始阶段：--stage <0-10|名称>（检测中/下载中/校验中/安装中/发现新版本/已是最新/更新完成/错误/重试中/强制更新×2）
     let raw_argv: Vec<String> = std::env::args().skip(1).collect();
@@ -63,16 +64,27 @@ fn main() {
 
     if preview_mode {
         // 预览模式不读 update.json（避免在预览目录里生成配置模板），
-        // 标题只走「命令行 --name > 编译期烘焙默认」两级
+        // 标题只走「命令行 --name > 编译期烘焙默认」两级；
+        // 模板默认 F，可用 --template H 预览副模板
         let title =
             qsltd_updater_core::config::resolve_launcher_name(args.launcher_name.as_deref(), None);
+        let template = {
+            let key = qsltd_updater_core::phase::resolve_template_key(
+                args.template.as_deref().unwrap_or(""),
+            );
+            if key.is_empty() {
+                "F".to_string()
+            } else {
+                key
+            }
+        };
         run_ui(
-            &args,
             phase,
             Arc::new(Mutex::new(None)),
             true,
             preview_stage,
             &title,
+            &template,
         );
         return;
     }
@@ -157,7 +169,7 @@ fn main() {
         }
     }
 
-    run_ui(&args, phase, startup, false, 0, &cfg.launcher_name);
+    run_ui(phase, startup, false, 0, &cfg.launcher_name, &cfg.template);
 }
 
 /// 进入 eframe 事件循环
@@ -166,17 +178,16 @@ fn main() {
 /// - `preview`: true 时渲染模板/阶段切换面板（复刻 Preview.vue）
 /// - `title`: 生效标题（`--name` > update.json `name` > 编译期烘焙默认），
 ///   同时用于系统窗口标题与自绘标题栏左侧文字
+/// - `template`: 生效界面模板（F 主 / H 副），真实模式由启动方式与配置决定
 fn run_ui(
-    args: &CliArgs,
     phase: PhaseHandle,
     startup: Arc<Mutex<Option<StartupDecision>>>,
     preview: bool,
     preview_stage: usize,
     title: &str,
+    template: &str,
 ) {
-    // 生效模板：命令行 --template > 默认（F）；预览模式可在面板里切换
-    let template =
-        qsltd_updater_core::phase::resolve_template_key(args.template.as_deref().unwrap_or(""));
+    let template = template.to_string();
 
     let window_h = if preview {
         app::WINDOW_SIZE.1 + app::PREVIEW_EXTRA_HEIGHT

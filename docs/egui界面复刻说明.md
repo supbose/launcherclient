@@ -13,7 +13,7 @@
 
 更新器的「检测更新」有两种触发，UI 反馈策略不同：
 
-- **重试检测**（错误态点「重试」）：`retry()` → `run_check_flow` 首行即推送 `Stage::Checking`，八套模板（A~H）均已渲染 **spinner 旋转 + "正在检查更新..." 文字**；`app.rs` 对 `Checking` 阶段做 33ms 高频重绘保证动画，加载态完整。
+- **重试检测**（错误态点「重试」）：`retry()` → `run_check_flow` 首行即推送 `Stage::Checking`，两套模板（F 主 / H 副）均已渲染 **spinner 旋转 + "正在检查更新..." 文字**；`app.rs` 对 `Checking` 阶段做 33ms 高频重绘保证动画，加载态完整。
 - **首次检测**（双击启动器后的 manifest 拉取）：原本在窗口创建前同步 await 完成、UI 不可见。**现改为后台线程异步检测 + 懒加载窗口**（`main.rs` 起后台线程跑 `run_startup`，`app.rs` 据 300ms 阈值决定是否 `ViewportCommand::Visible`）：
   - 检测 **≤300ms** 完成：无更新则静默拉起目标程序退出（用户无感，保住「秒开」）、有更新则直接弹出"发现新版本"；
   - 检测 **>300ms** 未完成（弱网/慢 manifest，最坏受 `client.rs` 检测超时约束）：弹出"正在检查更新"窗口给用户反馈，完成后转入对应状态；
@@ -28,8 +28,8 @@
 | `src-egui/src/app.rs` | 505 | `App` 实现：阶段快照轮询、标题栏动作、关闭确认模态、完成/重试派发 |
 | `src-egui/src/theme.rs` | 121 | 对 `qsltd-ui` 色板/字体工具的转出层 |
 | `src-egui/src/widgets.rs` | 563 | 自绘控件库：背景渐变、标题栏、进度条、环形进度、spinner、状态点、pill、日志卡、按钮 |
-| `src-egui/src/templates.rs` | 1474 | 八套模板 A~H 布局；A~E 与 `UpdateTemplateA~E.vue` 一一对应，F/G/H 为后续新增的三套设计方向 |
-| `src-egui/src/preview.rs` | 270 | 预览面板数据与渲染（`Preview.vue` 的 8 个阶段预设 + 模板切换） |
+| `src-egui/src/templates.rs` | 811 | 两套模板：F 主模板（环形进度 + 步骤条）/ H 副模板（单行状态 + 3px 进度）。A~E、G 已于 2026-10-30 按简化决策删除 |
+| `src-egui/src/preview.rs` | 293 | 预览面板数据与渲染（`Preview.vue` 的 8 个阶段预设 + F/H 模板切换） |
 | `src-core/src/phase.rs` | 768 | **新增共享模块**：阶段载荷 + 派生视图 + 跨线程快照句柄 |
 | `src-core/src/flow.rs` | 1368 | **新增共享模块**：启动决策 + 完整更新编排（下载/校验/安装/启动/重试） |
 | `src-core/src/lib.rs` | — | 追加 `pub mod flow;` / `pub mod phase;` |
@@ -55,17 +55,22 @@
 
 ### 3.1 文件 / 模块级
 
+> 下表记录首轮复刻时的对应关系。A~E 五套模板（连同 `UpdateTemplateA~E.vue` 的映射）已于 2026-10-30
+> 按「只保留 F 主 / H 副」的简化决策删除，`templates::template_a` ~ `template_e`、`template_g` 不再存在；
+> 表内对应行保留作历史溯源。
+
 | Tauri + Vue 侧 | egui 侧 | 说明 |
 | --- | --- | --- |
 | `src/App.vue` | `src-egui/src/app.rs` | 阶段状态归一维护（`applyPhase` ↔ `apply_phase`）、完成/重试/关闭派发、窗口兜底兜数据 |
 | `src/components/MinTitleBar.vue` | `widgets::draw_titlebar` | 32px 标题栏、最小化/关闭 46×32、拖拽区（排除按钮）、关闭 hover 变红 |
-| `src/components/templates/UpdateTemplateA.vue` | `templates::template_a` | 信息密集型：标题行 + spinner 状态行 + 进度 + meta + 日志卡 |
-| `…/UpdateTemplateB.vue` | `templates::template_b` | 96px 环形进度居左 + 右侧信息列 + 日志卡（96px 上限） |
-| `…/UpdateTemplateC.vue` | `templates::template_c` | 默认模板：顶部四步步骤条（下载→校验→解压→完成）+ 大号百分比 + 渐变进度条 |
-| `…/UpdateTemplateD.vue` | `templates::template_d` | 极简居中：4px 细进度条 + 无边框内联日志（带分隔线） |
-| `…/UpdateTemplateE.vue` | `templates::template_e` | 日志优先：顶部状态条（LED + 百分比）+ 主日志区 + 底部分隔行 + 空态 |
+| `src/components/templates/UpdateTemplateA.vue` | ~~`templates::template_a`~~（已删除） | 信息密集型：标题行 + spinner 状态行 + 进度 + meta + 日志卡 |
+| `…/UpdateTemplateB.vue` | ~~`templates::template_b`~~（已删除） | 96px 环形进度居左 + 右侧信息列 + 日志卡（96px 上限） |
+| `…/UpdateTemplateC.vue` | ~~`templates::template_c`~~（已删除） | 默认模板：顶部四步步骤条（下载→校验→解压→完成）+ 大号百分比 + 渐变进度条 |
+| `…/UpdateTemplateD.vue` | ~~`templates::template_d`~~（已删除） | 极简居中：4px 细进度条 + 无边框内联日志（带分隔线） |
+| `…/UpdateTemplateE.vue` | ~~`templates::template_e`~~（已删除） | 日志优先：顶部状态条（LED + 百分比）+ 主日志区 + 底部分隔行 + 空态 |
+| （新增设计方向，无 Vue 对应） | `templates::template_f` / `template_h` | F 主模板：环形进度 + 步骤条；H 副模板：单行状态 + 3px 进度 + 折叠日志 |
 | `src/composables/usePhase.js` | `src-core/src/phase.rs` | `STAGE` 常量、格式化函数、步骤/进度/子标题派生 |
-| `src/components/templates/index.js` | `phase::resolve_template_key` + `preview::TEMPLATE_META` | `DEFAULT_TEMPLATE='C'`、A~E 键名归一化、模板元信息 |
+| `src/components/templates/index.js` | `phase::resolve_template_key` + `preview::TEMPLATE_META` | 键名归一化（现仅认 F/H）、模板元信息 |
 | `src/Preview.vue` / `preview.html` / `preview.js` | `src-egui/src/preview.rs` + `--preview` | 模板 chips、阶段 chips、8 个阶段预设载荷数值完全相同 |
 | `src/main.js` | `src-egui/src/main.rs` | 应用装配：预览模式 vs 真实模式 |
 | `src-tauri/src/lib.rs`（CloseRequested 拦截 + 确认对话框） | `app::draw_close_confirm` + `logic()` 中的 `CancelClose` | 关键阶段关闭确认，文案与按钮一致（中断更新？/ 取消 / 确定） |
@@ -106,13 +111,13 @@
 
 | Vue 控件 / CSS 类 | egui 实现 | 关键参数 |
 | --- | --- | --- |
-| `.tpl-c__steps`（步骤条） | `templates::draw_steps` | 首尾对称内缩（`margin = dot_r+8`，不再贴右边界被裁剪）；三段连接线从圆点右缘贯穿到下一圆点左缘（完成段=绿、当前=蓝+光晕+外环描边、未达=灰） |
-| `.tpl-c__pct` 大号百分比 | `templates::metrics_row` | 数字 26px + `%` 14px |
-| `.tpl-c__bar` 进度条 | `widgets::progress_track` | 轨道 8px / 圆角 4 / `W10` 底 + 蓝→绿渐变填充 |
+| `.tpl-c__steps`（步骤条） | `templates::draw_steps` | 首尾对称内缩（`margin = dot_r+8`，不再贴右边界被裁剪）；三段连接线从圆点右缘贯穿到下一圆点左缘（完成段=绿、当前=蓝+光晕+外环描边、未达=灰）。现由主模板 F 使用 |
+| ~~`.tpl-c__pct` 大号百分比~~ | ~~`templates::metrics_row`~~（已删除） | A/C 模板随模板简化一并移除 |
+| `.tpl-c__bar` 进度条 | `widgets::progress_track` | 轨道 8px / 圆角 4 / `W10` 底 + 蓝→绿渐变填充（副模板改用 3px 的 `TrackStyle::THIN`） |
 | `.tpl-b__ring` 环形进度 | `widgets::progress_ring` | 外径 96px、描边 9px、内盘 `#1a2029`、中心百分比 + 副标题 |
 | `.tpl-x__spin` spinner | `widgets::spinner` | 灰环 + 90° 彩色弧，0.9s/圈；安装态用绿色 |
 | `.tpl-c__log` 日志卡 | `widgets::log_card` + `log_list` | 圆角 8、`W04` 底 + `W08` 描边、蓝点 + 12.5px 文本（行高 1.9） |
-| 模板 D 内联日志 | `widgets::inline_log` | 无卡片容器，条目间 1px 分隔线 |
+| ~~模板 D 内联日志~~ | ~~`widgets::inline_log`~~（已删除） | D 模板移除后无调用方；副模板 H 用 `templates::bullet_log`（无卡片、限高 64px 滚动） |
 | `.tpl-x__pill` 标签 | `widgets::pill` | 圆角 999、`W10` 底、`W20` 描边 |
 | `.tpl-x__btn` 按钮 | `widgets::button` | padding 7/26、圆角 6、主按钮蓝底白字、次按钮描边、禁用降低透明度 |
 | 操作行 | `widgets::actions_row` → `Action{Retry,Close,Finish}` | 右对齐，含间距 8px |
@@ -181,10 +186,11 @@
    检测阶段（`checking`）依赖 `sub` 是否非空。这样 `--stage` 预览中「检测中（带下载进度）」
    才会与 Vue 预览页行为一致。
 
-7. **布局系统差异导致两处高度硬预留。**
-   egui 是即时模式布局，没有 flexbox 的 `flex:1 + min-height:0`。模板 A/C 底部的日志卡若直接占满
-   剩余高度，会把操作按钮挤出窗口；因此按「是否有操作行」预留 89px / 42px（`log_card(Some(h))`
-   自身还有约 42px 卡片装饰）。同理 metrics/meta 行用固定右对齐宽度而非 `space-between`。
+7. **布局系统差异导致高度硬预留。**
+   egui 是即时模式布局，没有 flexbox 的 `flex:1 + min-height:0`。A/C 模板（已删除）底部的日志卡若直接占满
+   剩余高度，会把操作按钮挤出窗口；因此当时按「是否有操作行」预留 89px / 42px（`log_card(Some(h))`
+   自身还有约 42px 卡片装饰）。现存的 F 模板改用固定 96px 日志卡，H 模板用限高 64px 的折叠列表，
+   都不再依赖高度硬预留；metrics/meta 行同样已随 A~E 删除。
 
 8. **预览模式做了工程化增强：`--stage <0-7|名称>`。**
    WebView 预览页靠点击 chips 切换；原生窗口需要自动化验证，故新增该参数，可在启动时直接进入
@@ -220,8 +226,8 @@
 ## 六、验证记录
 
 > 本节是**首次复刻交付时（2026-10-26）的记录快照**：当时只有 A~E 五套模板、`src-core` 单测 134 个；
-> 之后新增 F/G/H 三套（合计八套，默认模板改为 F），单测数量也随之增长，最新数字见 README 与
-> `cargo test --lib` 当场输出。历史行保留原样，不作为当前状态描述。
+> 之后曾新增 F/G/H 三套（合计八套，默认模板改为 F），2026-10-30 又按简化决策只保留 F/H 两套。
+> 最新数字见 README 与 `cargo test --lib` 当场输出。历史行保留原样，不作为当前状态描述。
 
 | 项 | 命令 | 结果 |
 | --- | --- | --- |
@@ -240,9 +246,9 @@
 ## 七、运行方式
 
 ```bash
-# 预览八套模板（默认阶段下载中）
+# 预览两套模板（默认阶段下载中）
 cargo run -p qsltdupdater-egui -- --preview
-cargo run -p qsltdupdater-egui -- --preview --template B --stage 2
+cargo run -p qsltdupdater-egui -- --preview --template H --stage 2
 cargo run -p qsltdupdater-egui -- --preview --template F --name 聚合音乐 --stage 4
 
 # 纯检测（不建窗，退出码 0=无更新 1=失败 2=有更新可跳过 3=必须更新）

@@ -89,7 +89,7 @@ pub struct PhasePayload {
     /// 更新日志（manifest.changelog，空则不序列化）
     #[serde(skip_serializing_if = "Vec::is_empty")]
     pub changelog: Vec<String>,
-    /// 生效的启动器界面模板（A~H），UI 据此渲染对应布局
+    /// 生效的启动器界面模板（F 主 / H 副），UI 据此渲染对应布局
     #[serde(default)]
     pub template: String,
     /// 右上角小徽标文本（分卷进度等，仅下载阶段携带）
@@ -582,14 +582,17 @@ pub fn fmt_mb(bytes: u64) -> String {
     format!("{:.1} MB", bytes as f64 / 1024.0 / 1024.0)
 }
 
-/// 归一化模板键：去空白 + 大写，非法值回落默认模板（与前端 resolveTemplateKey 一致）
+/// 归一化模板键：去空白 + 大写，只认 F/H；其余返回空串表示「沿用当前模板」
+///
+/// 与前端 `resolveTemplateKey` 不同：这里不做默认回落，因为服务端载荷里的
+/// 模板是「可选的强制覆盖」，未知/旧版键（A~E/G）应当忽略而不是把界面切走。
 pub fn resolve_template_key(value: &str) -> String {
-    const KEYS: [&str; 8] = ["A", "B", "C", "D", "E", "F", "G", "H"];
+    const KEYS: [&str; 2] = ["F", "H"];
     let normalized = value.trim().to_uppercase();
     if KEYS.contains(&normalized.as_str()) {
         normalized
     } else {
-        crate::defaults::DEFAULT_LAUNCHER_TEMPLATE.to_string()
+        String::new()
     }
 }
 
@@ -708,12 +711,13 @@ mod tests {
     }
 
     #[test]
-    fn template_key_normalized_with_fallback() {
-        assert_eq!(resolve_template_key(" b "), "B");
-        assert_eq!(resolve_template_key("e"), "E");
-        // 非法值回落默认模板（与后端 DEFAULT_LAUNCHER_TEMPLATE 一致）
-        assert_eq!(resolve_template_key("x"), "F");
-        assert_eq!(resolve_template_key(""), "F");
+    fn template_key_only_accepts_f_and_h() {
+        assert_eq!(resolve_template_key(" h "), "H");
+        assert_eq!(resolve_template_key("f"), "F");
+        // 旧版/未知键返回空串 = 不覆盖当前模板（避免服务端旧配置把直启界面切走）
+        assert_eq!(resolve_template_key("b"), "");
+        assert_eq!(resolve_template_key("x"), "");
+        assert_eq!(resolve_template_key(""), "");
     }
 
     #[test]

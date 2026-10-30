@@ -277,7 +277,7 @@ footer { border-top: 1px solid var(--rule); margin-top: 64px; padding: 28px 0 44
       <div class="card prod">
         <span class="tag">主程序</span>
         <h3>launcherclient.exe — 启动器 / 更新器</h3>
-        <p>放在目标应用入口处运行。静默首检版本清单，无更新时用户完全无感知；有更新时弹出界面完成下载、校验、安装、清理，再拉起目标程序。内置 8 套界面模板与 8 个运行阶段画面。</p>
+        <p>放在目标应用入口处运行。静默首检版本清单，无更新时用户完全无感知；有更新时弹出界面完成下载、校验、安装、清理，再拉起目标程序。内置两套界面模板（F 主 / H 副）与 8 个运行阶段画面。</p>
       </div>
       <div class="card prod">
         <span class="tag">配套工具</span>
@@ -291,7 +291,7 @@ footer { border-top: 1px solid var(--rule); margin-top: 64px; padding: 28px 0 44
 
     <div class="kpis">
       <div class="card kpi"><div class="num">0 弹窗</div><div class="lbl">无更新时完全静默</div></div>
-      <div class="card kpi"><div class="num">8 套</div><div class="lbl">界面模板 A~H</div></div>
+      <div class="card kpi"><div class="num">2 套</div><div class="lbl">界面模板 F / H</div></div>
       <div class="card kpi"><div class="num">N 路</div><div class="lbl">下载地址按序故障转移</div></div>
       <div class="card kpi"><div class="num">1 个 exe</div><div class="lbl">单文件即可部署</div></div>
     </div>
@@ -334,7 +334,7 @@ footer { border-top: 1px solid var(--rule); margin-top: 64px; padding: 28px 0 44
     <!-- cli-doc:begin -->
 <pre><code>launcherclient.exe [--app-name &lt;名称&gt;] [--name &lt;标题&gt;]
                    [--launch &lt;目标程序路径&gt;] [--manifest &lt;manifest地址&gt;]
-                   [--current-version &lt;版本&gt;] [--template &lt;A~H&gt;]
+                   [--current-version &lt;版本&gt;] [--template &lt;F|H&gt;]
                    [--check-only] [--allow-missing-sha256] [--preview]
                    [--stage &lt;0-10|名称&gt;]</code></pre>
     <div class="table-wrap">
@@ -346,10 +346,10 @@ footer { border-top: 1px solid var(--rule); margin-top: 64px; padding: 28px 0 44
           <tr><td class="nowrap"><code>--launch &lt;目标程序路径&gt;</code></td><td>更新完成后拉起的目标程序；相对路径按安装目录解析</td><td>空 = 自动定位安装目录中的主程序</td></tr>
           <tr><td class="nowrap"><code>--manifest &lt;manifest地址&gt;</code></td><td>服务器 version.json 地址，覆盖 update.json 中的配置</td><td>见 <code>defaults::DEFAULT_MANIFEST_URLS</code></td></tr>
           <tr><td class="nowrap"><code>--current-version &lt;版本&gt;</code></td><td>强制指定当前版本，覆盖本地 app.json 的探测结果</td><td>自动探测</td></tr>
-          <tr><td class="nowrap"><code>--template &lt;A~H&gt;</code></td><td>界面模板 A~H（大小写不敏感）</td><td>未给时取 update.json 的 <code>launcher_template</code>，再回落编译期烘焙值（无烘焙即 <code>F</code>）</td></tr>
+          <tr><td class="nowrap"><code>--template &lt;F|H&gt;</code></td><td>强制指定界面模板：F 主模板（环形进度 + 步骤条）/ H 副模板（极简单行状态），大小写不敏感</td><td>未给时取 update.json 的 <code>launcher_template</code>；两者都未配置则自动判定：无参直启用 F，带参（被其他应用调用）用 H</td></tr>
           <tr><td class="nowrap"><code>--check-only</code></td><td>纯检测模式：不建窗、不下载、不拉起目标程序，按退出码结束（0 无更新 / 1 检测失败 / 2 有更新可跳过 / 3 必须更新）</td><td>关闭</td></tr>
           <tr><td class="nowrap"><code>--allow-missing-sha256</code></td><td>放行「清单没给 SHA256」的更新包，关闭 <code>require_sha256</code> 校验闸。仅在服务端确实无法提供校验值时临时使用；只能关不能开</td><td>关闭（即校验闸开启）</td></tr>
-          <tr><td class="nowrap"><code>--preview</code></td><td>仅 src-egui：本地预览八套布局与各阶段画面，不联网</td><td>关闭</td></tr>
+          <tr><td class="nowrap"><code>--preview</code></td><td>仅 src-egui：本地预览两套布局（F 主 / H 副）与各阶段画面，不联网</td><td>关闭</td></tr>
           <tr><td class="nowrap"><code>--stage &lt;0-10|名称&gt;</code></td><td>仅 src-egui：<code>--preview</code> 的阶段。0 检测中、1 下载中（分卷）、2 校验中、3 解压/安装中、4 发现新版本、5 已是最新、6 更新完成、7 错误、8 重试中、9 强制更新（阻断）、10 强制更新（可稍后升级）；也可传中文名称，未知值回落 1</td><td>1</td></tr>
         </tbody>
       </table>
@@ -370,7 +370,7 @@ footer { border-top: 1px solid var(--rule); margin-top: 64px; padding: 28px 0 44
           <tr><td><code>current_version</code></td><td>字符串</td><td>强制指定当前版本；留空自动从本地 <code>app.json</code> 探测</td></tr>
           <tr><td><code>max_versions</code></td><td>数字</td><td>保留的版本目录数量（含当前版本，旧目录即回滚资产），默认 <code>2</code></td></tr>
           <tr><td><code>services</code></td><td>字符串数组</td><td>更新前需卸载的 Windows 服务名；运行中的先停止后卸载，<mark class="key">卸载后不恢复、不重启</mark>；单个失败不中断流程</td></tr>
-          <tr><td><code>launcher_template</code></td><td>字符串</td><td>界面模板 A~H（大小写不敏感）；留空或未知值回落默认 <code>F</code>（未知值在 stderr 告警，不会白屏）</td></tr>
+          <tr><td><code>launcher_template</code></td><td>字符串</td><td>界面模板，只认 <code>F</code> / <code>H</code>（大小写不敏感）：F 主模板（环形进度 + 步骤条）/ H 副模板（极简单行状态）。<strong>留空 = 自动判定</strong>：双击直启（无参数）用 F，被其他应用带参调用用 H；旧值 A~E、G 与未知值回落 F 并在 stderr 告警</td></tr>
           <tr><td><code>homepage</code></td><td>字符串</td><td>官网首页地址：<mark class="key">更新检查失败</mark>（清单全部地址失效）或<mark class="key">下载/合并环节重试用尽</mark>时，错误态出现「前往官网重新下载」按钮，点击用系统浏览器打开这里。留空用内置默认 <code>https://www.qcsm.ltd</code></td></tr>
           <tr><td><code>retry_times</code></td><td>数字</td><td>同一环节的自动重试次数（<mark class="key">含首次尝试</mark>），默认 <code>3</code> = 首次 + 重试 2 次；下载与解压校验各自独立计数；写 <code>0</code> 视为 <code>1</code>，上限 <code>10</code></td></tr>
           <tr><td><code>require_sha256</code></td><td>布尔</td><td><mark class="key">包完整性校验闸，默认开启</mark>。开启时若清单既没有整包 <code>sha256</code>、分卷模式的 <code>part_sha256</code> 也没与 <code>parts</code> 一一对齐，则在<mark class="key">弹 UAC 之前</mark>直接拒绝安装，错误态引导去官网下载。写 <code>false</code>（或加 <code>--allow-missing-sha256</code>）可放行无校验值的包——只建议用于内网 / 自建源这类链路可信的环境；缺省即 <code>true</code>，无需显式写</td></tr>
@@ -490,26 +490,21 @@ flowchart TD
     </div>
 
     <h3><span class="no">4.6</span>界面模板</h3>
-    <p>通过 <code>--template</code> 参数或 update.json 的 <code>launcher_template</code> 选择，大小写不敏感，未知值回落默认 <strong>F</strong>。</p>
+    <p>只保留两套，按<strong>启动方式自动选</strong>：双击直启（没有任何命令行参数）用主模板 <code>F</code>，被其他应用带参调用用副模板 <code>H</code>。也可通过 <code>--template</code> 或 update.json 的 <code>launcher_template</code> 显式指定（只认 F / H，大小写不敏感）；旧值 A~E、G 与未知值回落主模板 <strong>F</strong> 并在 stderr 告警。</p>
     <div class="table-wrap">
       <table>
-        <thead><tr><th>键</th><th>布局风格</th></tr></thead>
+        <thead><tr><th>键</th><th>布局风格</th><th>何时使用</th></tr></thead>
         <tbody>
-          <tr><td><code>A</code></td><td>信息密度</td></tr>
-          <tr><td><code>B</code></td><td>环形居中</td></tr>
-          <tr><td><code>C</code></td><td>顶部步骤条</td></tr>
-          <tr><td><code>D</code></td><td>极简留白</td></tr>
-          <tr><td><code>E</code></td><td>日志为主</td></tr>
-          <tr><td><code>F</code></td><td>深色工具风 · 环形进度 + 步骤条（<mark class="key">默认</mark>）</td></tr>
-          <tr><td><code>G</code></td><td>品牌沉浸</td></tr>
-          <tr><td><code>H</code></td><td>极简轻量</td></tr>
+          <tr><td><code>F</code></td><td>深色工具风 · 环形进度 + 步骤条</td><td><mark class="key">主模板</mark> · 双击直启（无参数）</td></tr>
+          <tr><td><code>H</code></td><td>极简轻量 · 单行状态 + 3px 进度 + 折叠日志</td><td>副模板 · 被其他应用带参调用</td></tr>
         </tbody>
       </table>
     </div>
-    <p>所有模板与阶段画面均可本地预览（不联网）：</p>
-    <pre><code>launcherclient.exe --preview              <span class="cm"># 浏览全部模板</span>
+    <p>「带参」指任何面向用户的命令行参数（如 <code>--name</code> / <code>--launch</code>）；内部提权标记 <code>--__elevated-retry</code> 不算，提权副本沿用原启动方式选出的模板。</p>
+    <p>两套模板与阶段画面均可本地预览（不联网）：</p>
+    <pre><code>launcherclient.exe --preview              <span class="cm"># 浏览两套模板</span>
 launcherclient.exe --preview --stage 4    <span class="cm"># 直接看「发现新版本」画面</span>
-launcherclient.exe --preview --template F --stage error</code></pre>
+launcherclient.exe --preview --template H --stage error</code></pre>
   </section>
 
   <!-- ================= 5. pkgtool ================= -->

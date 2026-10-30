@@ -155,7 +155,11 @@ impl UpdaterApp {
 
         // 界面模板：跟随载荷（预览模式由面板控制）
         if !self.preview && !p.template.is_empty() {
-            self.template = resolve_template_key(&p.template);
+            // 服务端载荷里的模板只认 F/H；旧版键返回空串，保持启动方式选定的模板
+            let forced = resolve_template_key(&p.template);
+            if !forced.is_empty() {
+                self.template = forced;
+            }
         }
 
         // 收到任何非 error 阶段即视为重试已被受理，复位按钮禁用态

@@ -46,8 +46,8 @@ pub const DEFAULT_LAUNCHER_NAME: &str = match BUILD_NAME {
 
 /// 默认启动器界面模板（launcher template）
 ///
-/// 可选值 A~H，对应 `src-egui/src/templates.rs` 下八套独立布局
-/// （A 信息密度 · B 环形居中 · C 顶部步骤条 · D 极简留白 · E 日志为主 · F 环形步骤 · G 品牌沉浸 · H 极简轻量）。
+/// 主模板 `F`（环形进度 + 步骤条），对应 `src-egui/src/templates.rs` 的 `template_f`。
+/// 带参调用时由 `config::resolve_launcher_template` 自动改用副模板 `H`；
 /// 与 DEFAULT_MANIFEST_URLS 等一样：配置模板生成与两套实现的最终回退
 /// 都引用此处，改一处即全局生效。
 pub const DEFAULT_LAUNCHER_TEMPLATE: &str = match BUILD_LAUNCHER_TEMPLATE {

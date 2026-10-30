@@ -2,8 +2,8 @@
 #include "winres.h"
 
 VS_VERSION_INFO VERSIONINFO
-FILEVERSION 0,2,5,0
-PRODUCTVERSION 0,2,5,0
+FILEVERSION 1,0,3,0
+PRODUCTVERSION 1,0,3,0
 FILEFLAGSMASK 0x3fL
 #ifdef _DEBUG
 FILEFLAGS 0x1L
@@ -20,12 +20,12 @@ BEGIN
         BEGIN
             VALUE "CompanyName", "QingShu Ltd"
             VALUE "FileDescription", "通用启动器更新包打包工具"
-            VALUE "FileVersion", "0.2.5.0"
+            VALUE "FileVersion", "1.0.3.0"
             VALUE "InternalName", "pkgtool"
             VALUE "LegalCopyright", "Copyright (C) QingShu Ltd. All rights reserved."
             VALUE "OriginalFilename", "pkgtool.exe"
             VALUE "ProductName", "通用启动器更新包打包工具"
-            VALUE "ProductVersion", "0.2.5.0"
+            VALUE "ProductVersion", "1.0.3.0"
         END
     END
     BLOCK "VarFileInfo"

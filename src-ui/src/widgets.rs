@@ -212,7 +212,7 @@ pub fn spinner(painter: &Painter, center: Pos2, radius: f32, width: f32, color: 
     painter.add(PathShape::line(arc, Stroke::new(width, color)));
 }
 
-/// 进度条样式（八套模板的进度差异全部收敛到这四个数）
+/// 进度条样式（各界面用到的几种规格收敛到这几个常量）
 ///
 /// `gradient` 为 true 时填充走「蓝→绿」gouraud 近似，false 时是纯蓝实色。
 #[derive(Debug, Clone, Copy)]
@@ -228,28 +228,14 @@ pub struct TrackStyle {
 }
 
 impl TrackStyle {
-    /// 标准条：8px 圆角轨道 + 渐变填充（A/C 模板）
+    /// 标准条：8px 圆角轨道 + 渐变填充（pkgtool 打包进度用）
     pub const STD: TrackStyle = TrackStyle {
         height: 8.0,
         radius: 4.0,
         min_fill: 6.0,
         gradient: true,
     };
-    /// E 模板：6px 渐变
-    pub const E: TrackStyle = TrackStyle {
-        height: 6.0,
-        radius: 3.0,
-        min_fill: 4.0,
-        gradient: true,
-    };
-    /// D 模板：4px 纯蓝
-    pub const D: TrackStyle = TrackStyle {
-        height: 4.0,
-        radius: 2.0,
-        min_fill: 3.0,
-        gradient: false,
-    };
-    /// G/H 模板：3px 纯蓝，比 D 更收敛
+    /// 3px 纯蓝细条（启动器副模板 H 用）
     pub const THIN: TrackStyle = TrackStyle {
         height: 3.0,
         radius: 1.5,
@@ -321,17 +307,29 @@ pub fn pill(ui: &mut Ui, text: &str) -> Rect {
     rect
 }
 
+/// 按钮占位尺寸（含内边距）
+///
+/// 与 [`button`] 共用同一份字体/内边距度量：动作行需要先把整行宽度量出来
+/// 才能居中，两边各算一套迟早会漂。
+pub fn button_size(ui: &Ui, text: &str) -> Vec2 {
+    let font = FontId::proportional(13.0);
+    let pad = Vec2::new(26.0, 7.0);
+    ui.painter()
+        .layout_no_wrap(text.to_owned(), font, Color32::WHITE)
+        .size()
+        + pad * 2.0
+}
+
 /// 按钮（.tpl-x__btn：padding 7/26 圆角 6；primary 蓝底白字）
 ///
 /// 返回是否被点击（disabled 时不响应）。
 pub fn button(ui: &mut Ui, text: &str, primary: bool, enabled: bool) -> bool {
     let font = FontId::proportional(13.0);
-    let pad = Vec2::new(26.0, 7.0);
     let text_color = if primary { Color32::WHITE } else { theme::TEXT };
     let galley = ui
         .painter()
         .layout_no_wrap(text.to_owned(), font, text_color);
-    let size = galley.size() + pad * 2.0;
+    let size = button_size(ui, text);
     let (rect, resp) = ui.allocate_exact_size(size, Sense::click());
     let painter = ui.painter_at(rect);
 

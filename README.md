@@ -37,7 +37,7 @@ launcherclient/
 │                # widgets：标题栏、进度条、圆环、状态点、胶囊、按钮、背景绘制
 ├── src-egui/              # 启动器主程序（egui 0.37）
 │   ├── src/    main.rs app.rs templates.rs widgets.rs theme.rs preview.rs
-│   │            # templates：A~H 八套布局（共用 EndStyle/TailStyle/BulletLogStyle 骨架）
+│   │            # templates：F 主 / H 副两套布局（共用同一套文案与状态判定）
 │   │            # widgets/theme：启动器专属控件 + 对 qsltd-ui 的转出层
 │   ├── assets/icon.ico  icon.png
 │   ├── assets/font/                # 华为 HarmonyOS Sans SC（Regular/Medium/Bold）+ LICENSE.txt，编译时内嵌
@@ -118,8 +118,8 @@ pnpm egui:build
 # qsm 产品线正式包：烘焙 标题「聚合音乐」+ qsm 双 manifest 容灾 + 模板 F + 卸载 QsmServer
 pnpm qsm:release
 
-# 自定义产品线示例：标题 MyApp + myapp + 双 manifest 容灾 + 模板 B + 卸载 MySvc/MyHelper
-pnpm qsm:release --name MyApp --app-name myapp --manifest-url https://a.cdn.myapp.ltd/version.json --manifest-url https://b.cdn.myapp.ltd/version.json --homepage https://www.myapp.ltd --template B --retry-times 5 --max-versions 3 --service MySvc --service MyHelper
+# 自定义产品线示例：标题 MyApp + myapp + 双 manifest 容灾 + 模板 H + 卸载 MySvc/MyHelper
+pnpm qsm:release --name MyApp --app-name myapp --manifest-url https://a.cdn.myapp.ltd/version.json --manifest-url https://b.cdn.myapp.ltd/version.json --homepage https://www.myapp.ltd --template H --retry-times 5 --max-versions 3 --service MySvc --service MyHelper
 ```
 
 `--name <标题>` 指定启动器标题栏左侧显示的文字（同时作为系统窗口标题），内置默认「启动器」；
@@ -209,7 +209,7 @@ python scripts/pybuild.py egui --codesign-pfx D:\certs\qsltd.pfx --codesign-tsa 
 ```
 launcherclient.exe [--app-name <名称>] [--name <标题>]
                    [--launch <目标程序路径>] [--manifest <manifest地址>]
-                   [--current-version <版本>] [--template <A~H>]
+                   [--current-version <版本>] [--template <F|H>]
                    [--check-only] [--allow-missing-sha256] [--preview]
                    [--stage <0-10|名称>]
 ```
@@ -221,10 +221,10 @@ launcherclient.exe [--app-name <名称>] [--name <标题>]
 | `--launch <目标程序路径>` | 更新完成后拉起的目标程序；相对路径按安装目录解析 | 空 = 自动定位安装目录中的主程序 |
 | `--manifest <manifest地址>` | 服务器 version.json 地址，覆盖 update.json 中的配置 | 见 `defaults::DEFAULT_MANIFEST_URLS` |
 | `--current-version <版本>` | 强制指定当前版本，覆盖本地 app.json 的探测结果 | 自动探测 |
-| `--template <A~H>` | 界面模板 A~H（大小写不敏感） | 未给时取 update.json 的 `launcher_template`，再回落编译期烘焙值（无烘焙即 `F`） |
+| `--template <F\|H>` | 强制指定界面模板：F 主模板（环形进度 + 步骤条）/ H 副模板（极简单行状态），大小写不敏感 | 未给时取 update.json 的 `launcher_template`；两者都未配置则自动判定：无参直启用 F，带参（被其他应用调用）用 H |
 | `--check-only` | 纯检测模式：不建窗、不下载、不拉起目标程序，按退出码结束（0 无更新 / 1 检测失败 / 2 有更新可跳过 / 3 必须更新） | 关闭 |
 | `--allow-missing-sha256` | 放行「清单没给 SHA256」的更新包，关闭 `require_sha256` 校验闸。仅在服务端确实无法提供校验值时临时使用；只能关不能开 | 关闭（即校验闸开启） |
-| `--preview` | 仅 src-egui：本地预览八套布局与各阶段画面，不联网 | 关闭 |
+| `--preview` | 仅 src-egui：本地预览两套布局（F 主 / H 副）与各阶段画面，不联网 | 关闭 |
 | `--stage <0-10\|名称>` | 仅 src-egui：`--preview` 的阶段。0 检测中、1 下载中（分卷）、2 校验中、3 解压/安装中、4 发现新版本、5 已是最新、6 更新完成、7 错误、8 重试中、9 强制更新（阻断）、10 强制更新（可稍后升级）；也可传中文名称，未知值回落 1 | 1 |
 <!-- cli-doc:end -->
 
@@ -256,7 +256,7 @@ launcherclient.exe [--app-name <名称>] [--name <标题>]
 | `current_version` | 字符串 | 强制指定当前版本，留空自动从本地 `app.json` 探测 |
 | `max_versions` | 数字 | 保留的版本目录数量（含当前版本，旧目录即回滚资产），默认 2 |
 | `services` | 字符串数组 | 更新前需卸载的 Windows 服务名；运行中的先停止后卸载，**卸载后不恢复、不重启** |
-| `launcher_template` | 字符串 | 界面模板 A~H，大小写不敏感；留空或未知值回落默认 `F`（未知值会在 stderr 告警，不会白屏） |
+| `launcher_template` | 字符串 | 界面模板，只认 `F` / `H`（大小写不敏感）：`F` 主模板（环形进度 + 步骤条）、`H` 副模板（极简单行状态）。**留空 = 自动判定**：双击直启（无命令行参数）用 `F`，被其他应用带参调用用 `H`；旧版本的其他模板值（A~E、G）与未知值一律回落 `F` 并在 stderr 告警 |
 | `homepage` | 字符串 | 官网首页地址。两处兜底出口都跳这里：**更新检查失败**（`manifest_url` 全部失效）与**下载/合并环节自动重试用尽**时，错误态出现「前往官网重新下载」按钮，点击用系统浏览器打开。留空则用内置默认 `https://launcherclient.qsw.us.ci/`（构建期 `--homepage` 烘焙值优先） |
 | `retry_times` | 数字 | 同一环节的自动重试次数（**含首次尝试**），默认 `3` = 首次 + 自动重试 2 次。下载与解压校验各自独立计数；写 `0` 视为 `1`（只试一次），上限 `10` |
 | `require_sha256` | 布尔 | **包完整性校验闸，默认开启**。开启时若清单既没有整包 `sha256`、分卷模式的 `part_sha256` 也没和 `parts` 一一对齐，则在弹 UAC 之前直接拒绝安装，错误态提示改走官网下载。写 `false`（或加命令行 `--allow-missing-sha256`）可放行无校验值的包——只建议在内网/自建源这类链路可信的环境使用。缺省即 `true`，无需显式写 |
@@ -275,7 +275,7 @@ launcherclient.exe [--app-name <名称>] [--name <标题>]
   "current_version": "",
   "max_versions": 2,
   "services": ["QsmServer"],
-  "launcher_template": "C",
+  "launcher_template": "",
   "homepage": "https://www.qcsm.ltd",
   "retry_times": 3,
   "require_sha256": true
@@ -383,22 +383,24 @@ URL 归一化（`"` → `%22`），环境变量写法与换行会被解析器吃
 
 ### 4.7 界面模板
 
-| 键 | 布局 |
-| --- | --- |
-| A | 信息密度 |
-| B | 环形居中 |
-| C | 顶部步骤条 |
-| D | 极简留白 |
-| E | 日志为主 |
-| F | 环形步骤（**默认**，深色工具风） |
-| G | 品牌沉浸 |
-| H | 极简轻量 |
+只保留两套，按**启动方式自动选**：
+
+| 键 | 布局 | 何时使用 |
+| --- | --- | --- |
+| F | 环形进度 + 步骤条（深色工具风） | **主模板**：双击直启，没有任何命令行参数 |
+| H | 极简单行状态 + 3px 进度 + 折叠日志 | **副模板**：被其他应用带参调用，不抢主程序的视觉 |
+
+判定规则细节：
+
+- 「带参」指**任何面向用户的命令行参数**（如 `--app-name` / `--launch` / `--check-only`）；`--check-only` 不建窗，所以实际看到副模板的典型场景是父进程传了 `--name`、`--launch` 之类的参数。内部提权标记 `--__elevated-retry` **不算**，提权副本仍沿用原启动方式选出的模板。
+- `launcher_template` 或命令行 `--template` 显式写了 `F` / `H` 时以配置为准，不再自动判定（`--template H` 可强制副模板，`--template F` 可强制主模板）。
+- 旧配置里的 `A`~`E` / `G` 与任何未知值都会回落主模板 `F`，并在 stderr 打印一行告警，不会白屏。
 
 本地预览不需要联网：
 
 ```bash
 cargo run -p qsltdupdater-egui -- --preview
-cargo run -p qsltdupdater-egui -- --preview --template F --stage 9   # 强制更新（阻断）
+cargo run -p qsltdupdater-egui -- --preview --template H --stage 9   # 副模板 + 强制更新（阻断）
 
 # 或直接跑已构建的 release 产物（workspace 化后在根 target/ 下）
 pnpm preview
@@ -528,6 +530,6 @@ lint 口径：`unwrap_used = "deny"` / `expect_used = "warn"` 是生产代码的
 | [`CHANGELOG.md`](CHANGELOG.md) | 版本变更记录 |
 | [`docs/选型决策记录.md`](docs/选型决策记录.md) | 为什么选 egui 而非 Tauri |
 | [`docs/Tauri-vs-egui性能对比.md`](docs/Tauri-vs-egui性能对比.md) | 两版体积/启动/内存对比 |
-| [`docs/egui界面复刻说明.md`](docs/egui界面复刻说明.md) | 八套模板与阶段画面的复刻说明 |
+| [`docs/egui界面复刻说明.md`](docs/egui界面复刻说明.md) | 两套模板（F 主 / H 副）与阶段画面的复刻说明 |
 | [`docs/更新包打包工具-界面重设计.html`](docs/更新包打包工具-界面重设计.html) | pkgtool 界面设计稿（浏览器打开） |
 | [`docs/ui-drafts-下载校验解压.html`](docs/ui-drafts-下载校验解压.html) | 下载/校验/解压阶段界面草稿 |
