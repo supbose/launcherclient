@@ -30,6 +30,12 @@
 
 
 
+
+## v1.0.8 (2026-10-31)
+### 🚀 新增功能
+
+- [22173d9](/-/commit/22173d99eb2326ff28dd479b0892e443d542c37c) 新增(src-core): 新增文件日志系统，替换所有 eprintln! 为 qlog! (.cnb.yml, Cargo.lock, Cargo.toml, README.md, launcherclient-guide/launcherclient-guide.html, src-core/src/appdir.rs, src-core/src/cleanup.rs, src-core/src/cli.rs, src-core/src/client.rs, src-core/src/config.rs, src-core/src/download.rs, src-core/src/elevation.rs, src-core/src/flow.rs, src-core/src/install.rs, src-core/src/lib.rs, src-core/src/local_manifest.rs, src-core/src/log.rs, src-core/src/manifest.rs, src-core/src/services.rs, src-core/src/shell.rs, src-egui/src/app.rs, src-egui/src/main.rs, src-egui/version.rc, src-pkgtool/Cargo.toml, src-pkgtool/icon.rc)
+
 ## v1.0.7 (2026-10-31)
 ### 🚀 新增功能
 
