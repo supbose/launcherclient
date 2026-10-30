@@ -219,10 +219,7 @@ where
         }
 
         let file = if is_resume {
-            tokio::fs::OpenOptions::new()
-                .append(true)
-                .open(&part)
-                .await
+            tokio::fs::OpenOptions::new().append(true).open(&part).await
         } else {
             tokio::fs::File::create(&part).await
         }
@@ -292,11 +289,7 @@ fn with_suffix(path: &Path, suffix: &str) -> PathBuf {
 /// 读取可用的续传半包；不可用时（无强校验器、地址不符、半包损坏）返回 None
 ///
 /// 顺带清掉孤儿半包：没有 meta 的 `.part` 无法确认来源，留着只会占盘。
-async fn load_resume(
-    url: &str,
-    part: &Path,
-    meta_path: &Path,
-) -> Option<(PartialMeta, u64)> {
+async fn load_resume(url: &str, part: &Path, meta_path: &Path) -> Option<(PartialMeta, u64)> {
     if !part.exists() {
         remove_quietly(meta_path).await;
         return None;
@@ -306,7 +299,10 @@ async fn load_resume(
         Err(_) => None,
     };
     let Some(meta) = meta.filter(|m| m.url == url && !m.validator.trim().is_empty()) else {
-        eprintln!("[下载] 半包缺少可用续传信息，丢弃后重新下载: {}", part.display());
+        eprintln!(
+            "[下载] 半包缺少可用续传信息，丢弃后重新下载: {}",
+            part.display()
+        );
         remove_quietly(part).await;
         remove_quietly(meta_path).await;
         return None;
@@ -572,11 +568,7 @@ where
     }
 
     fn report(&self) {
-        let downloaded: u64 = self
-            .bytes
-            .iter()
-            .map(|b| b.load(Ordering::Relaxed))
-            .sum();
+        let downloaded: u64 = self.bytes.iter().map(|b| b.load(Ordering::Relaxed)).sum();
         (self.on_part)(
             self.done.load(Ordering::Relaxed),
             self.total_parts,
@@ -715,8 +707,7 @@ where
 
                 // 逐卷校验：直接用下载时流式算出的哈希比对，不再把整卷读第二遍
                 // （2.3 GB 包按 28 卷算，省掉的就是一次全量读盘）。
-                if let Some(exp) = expected.as_deref().map(str::trim).filter(|s| !s.is_empty())
-                {
+                if let Some(exp) = expected.as_deref().map(str::trim).filter(|s| !s.is_empty()) {
                     if let Err(e) = compare_sha256(exp, &part_sha) {
                         let detail = e.strip_prefix(DOWNLOAD_FAIL_PREFIX).unwrap_or(&e);
                         return Err(format!(
@@ -748,9 +739,10 @@ where
         part_paths[i] = Some(path);
     }
 
-    let part_paths = part_paths.into_iter().collect::<Option<Vec<_>>>().ok_or_else(|| {
-        format!("{}有分卷未能完成下载，请重试", DOWNLOAD_FAIL_PREFIX)
-    })?;
+    let part_paths = part_paths
+        .into_iter()
+        .collect::<Option<Vec<_>>>()
+        .ok_or_else(|| format!("{}有分卷未能完成下载，请重试", DOWNLOAD_FAIL_PREFIX))?;
     Ok(PartsDownload { part_paths })
 }
 
@@ -1068,14 +1060,24 @@ mod tests {
 
     #[test]
     fn parse_content_range_reads_start_and_total() {
-        assert_eq!(parse_content_range("bytes 100-499/1234"), Some((100, Some(1234))));
+        assert_eq!(
+            parse_content_range("bytes 100-499/1234"),
+            Some((100, Some(1234)))
+        );
         // 总量未知用 *
         assert_eq!(parse_content_range(" bytes 0-9/* "), Some((0, None)));
     }
 
     #[test]
     fn parse_content_range_rejects_malformed_values() {
-        for bad in ["", "bytes", "bytes 1-", "bytes -5/10", "items 1-2/3", "bytes 9-3/10"] {
+        for bad in [
+            "",
+            "bytes",
+            "bytes 1-",
+            "bytes -5/10",
+            "items 1-2/3",
+            "bytes 9-3/10",
+        ] {
             assert_eq!(parse_content_range(bad), None, "应拒绝: {bad:?}");
         }
     }
@@ -1090,7 +1092,10 @@ mod tests {
 
     #[test]
     fn strong_etag_is_preferred_validator() {
-        let h = headers_with(&[("etag", "\"abc\""), ("last-modified", "Wed, 21 Oct 2015 07:28:00 GMT")]);
+        let h = headers_with(&[
+            ("etag", "\"abc\""),
+            ("last-modified", "Wed, 21 Oct 2015 07:28:00 GMT"),
+        ]);
         assert_eq!(validator_from(&h).as_deref(), Some("\"abc\""));
     }
 
@@ -1158,7 +1163,9 @@ mod tests {
         )
         .await;
 
-        assert!(load_resume("https://new/x.zip", &part, &meta_path).await.is_none());
+        assert!(load_resume("https://new/x.zip", &part, &meta_path)
+            .await
+            .is_none());
         assert!(!part.exists(), "来源不明的半包应被清掉，别长期占盘");
         assert!(!meta_path.exists());
         let _ = std::fs::remove_dir_all(&dir);
@@ -1181,7 +1188,9 @@ mod tests {
         )
         .await;
 
-        assert!(load_resume("https://a/x.zip", &part, &meta_path).await.is_none());
+        assert!(load_resume("https://a/x.zip", &part, &meta_path)
+            .await
+            .is_none());
         assert!(!part.exists());
         let _ = std::fs::remove_dir_all(&dir);
     }
@@ -1274,14 +1283,19 @@ mod tests {
             1,
             Some(100),
             Arc::new(move |_: usize, _: usize, p: DownloadProgress| {
-                sink.lock().unwrap_or_else(|e| e.into_inner()).push(p.downloaded);
+                sink.lock()
+                    .unwrap_or_else(|e| e.into_inner())
+                    .push(p.downloaded);
             }),
         );
         progress.update(0, 50);
         progress.update(0, 4); // 回落全量：不应把已显示进度拉回去
         progress.update(0, 60);
         let seen = seen.lock().unwrap_or_else(|e| e.into_inner()).clone();
-        assert!(seen.windows(2).all(|w| w[0] <= w[1]), "进度应单调: {seen:?}");
+        assert!(
+            seen.windows(2).all(|w| w[0] <= w[1]),
+            "进度应单调: {seen:?}"
+        );
         assert_eq!(seen.last().copied(), Some(60));
     }
 

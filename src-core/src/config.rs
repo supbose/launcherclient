@@ -523,8 +523,7 @@ mod tests {
         assert!(!resolve_fail_open(None));
         assert!(!resolve_fail_open(Some(false)));
         assert!(resolve_fail_open(Some(true)));
-        let s: UpdateSettings =
-            serde_json::from_str(r#"{"fail_open": true}"#).expect("应可解析");
+        let s: UpdateSettings = serde_json::from_str(r#"{"fail_open": true}"#).expect("应可解析");
         assert!(resolve_fail_open(s.fail_open));
     }
 

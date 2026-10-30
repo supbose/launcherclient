@@ -409,12 +409,11 @@ fn extract_zip_with_limits(
     // 解压前的磁盘预检：更新包已经在盘上，额外需要的是解压产物 + 余量。
     // 在写第一个文件前拒绝，比写到一半磁盘满好得多（后者还会被重试两轮）。
     if declared_total > 0 {
-        crate::disk::ensure_space(dest, crate::disk::required_for_extract(declared_total)).map_err(
-            |e| {
+        crate::disk::ensure_space(dest, crate::disk::required_for_extract(declared_total))
+            .map_err(|e| {
                 eprintln!("[安装] 解压前预检未通过: {}", e);
                 e
-            },
-        )?;
+            })?;
     }
     // 每 300ms 才推一次进度：几千个小文件时逐文件 set 会把 UI 线程刷爆。
     // 闭包按「已写出字节」算百分比，最后一项/最后一帧由调用方强制推送。

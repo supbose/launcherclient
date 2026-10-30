@@ -98,7 +98,12 @@ pub async fn fetch_with_failover(urls: &[String]) -> Result<FlatManifest, String
                 return Ok(m);
             }
             Err(e) => {
-                eprintln!("[更新器] manifest 地址 {} 拉取失败: {}（{}）", i + 1, url, e);
+                eprintln!(
+                    "[更新器] manifest 地址 {} 拉取失败: {}（{}）",
+                    i + 1,
+                    url,
+                    e
+                );
                 last_err = e;
             }
         }
