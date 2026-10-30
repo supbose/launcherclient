@@ -31,6 +31,12 @@
 
 
 
+
+## v1.0.9 (2026-10-31)
+### 🚀 新增功能
+
+- [74302cd](/-/commit/74302cdd5b05b347040bd783bdde74bbd036515b) 新增(src-core): 添加解压限额防 zip bomb，升级版本至 1.0.8 (.cargo/config.toml, Cargo.lock, Cargo.toml, README.md, launcherclient-guide/launcherclient-guide.html, src-core/examples/stage_bench.rs, src-core/src/config.rs, src-core/src/defaults.rs, src-core/src/elevation.rs, src-core/src/flow.rs, src-core/src/install.rs, src-egui/version.rc, src-pkgtool/Cargo.toml, src-pkgtool/icon.rc, update.json)
+
 ## v1.0.8 (2026-10-31)
 ### 🚀 新增功能
 
