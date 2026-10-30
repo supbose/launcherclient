@@ -26,6 +26,7 @@ use crate::config;
 use crate::defaults::{
     DEFAULT_APP_NAME, DEFAULT_HOMEPAGE, DEFAULT_MANIFEST_URLS, PROGRESS_INTERVAL_MS,
 };
+use crate::disk;
 use crate::download;
 use crate::elevation;
 use crate::install;
@@ -58,6 +59,10 @@ pub struct ResolvedConfig {
     /// [`run_update_flow`] 在下载前直接拒绝自动安装；关它的两条路见
     /// [`crate::config::resolve_require_sha256`]。
     pub require_sha256: bool,
+    /// 分卷并发下载数（1~8，默认 3）：CDN 单连接限速时并发能明显提速
+    pub parts_concurrency: usize,
+    /// 检查更新失败（网络/服务端不可达）时是否直接启动已安装版本（默认 false）
+    pub fail_open: bool,
 }
 
 /// 启动决策：窗口创建前确定是否需要 UI
@@ -164,6 +169,8 @@ pub fn resolve_config(args: &CliArgs) -> ResolvedConfig {
             .into_iter()
             .filter(|s| !s.trim().is_empty())
             .collect(),
+        parts_concurrency: config::resolve_parts_concurrency(settings.parts_concurrency),
+        fail_open: config::resolve_fail_open(settings.fail_open),
     }
 }
 
@@ -300,19 +307,48 @@ pub async fn run_check_only(args: &CliArgs, cfg: &ResolvedConfig) -> i32 {
 /// （发现新版本 / 检测失败）；发现新版本时调用方随后调用
 /// [`spawn_update_flow`] 启动后台下载流程。
 pub async fn run_startup(args: &CliArgs, cfg: &ResolvedConfig) -> StartupDecision {
-    // 先清理上次删除失败的残留目录
+    // 启动 GC：恢复/清理上次中断安装的备份、解压半成品、原子写残留与过期下载包。
+    // 放在进程最前面：既让「上次崩溃」在下一次启动就自愈，也避免这些
+    // 中间产物长期占着磁盘（旧实现只清 `_del_`，`_bak_`/`_tmp` 无人管）。
     let app_root = install_root(&cfg.app_name);
-    cleanup::cleanup_pending(&app_root).await;
+    cleanup::cleanup_startup(&app_root, &download_dir(&cfg.app_name)).await;
 
     // 当前版本：命令行 > update.json > 本地 app.json > 0.0.0（视为未安装/损坏自恢复）
     let current_version = resolve_current_version(args, &cfg.app_name).await;
     eprintln!("[更新器] 当前版本: {}", current_version);
+
+    // 旧版本目录按 max_versions 保留。清理从「安装收尾」挪到「启动」：
+    // 删一个 GB 级旧目录要好几秒，不该压在「更新完成 → 拉起应用」之间；
+    // 启动清理还能兜住历史上收尾失败留下的目录。
+    if !is_first_install(&current_version) {
+        cleanup::cleanup_old_versions(&app_root, &current_version, cfg.max_versions).await;
+    }
 
     eprintln!("[更新器] 开始拉取 manifest...");
     let m = match manifest::fetch_with_failover(&cfg.manifest_urls).await {
         Ok(m) => m,
         Err(e) => {
             eprintln!("[更新器] 检查更新失败: {}", e);
+            // fail-open（opt-in）：弱网/服务端故障时，已安装版本仍可运行时
+            // 不把用户挡在错误窗口后面。「仅本地安装有效」是硬条件——没有
+            // 可启动的程序时放行只会得到一次启动失败。
+            if cfg.fail_open {
+                let installed = read_installed_path(&cfg.app_name).await;
+                if should_fail_open(cfg, &current_version, installed.as_deref()) {
+                    match launch_outcome(cfg, installed.as_deref().map(Path::new)) {
+                        Ok(()) => {
+                            eprintln!(
+                                "[更新器] fail_open 已开启：无法检查更新，直接启动本地已安装版本"
+                            );
+                            return StartupDecision::SilentExit(0);
+                        }
+                        Err(detail) => eprintln!(
+                            "[更新器] fail_open 未能启动本地版本（{}），保留错误界面",
+                            detail
+                        ),
+                    }
+                }
+            }
             return StartupDecision::Show(Box::new(StartupContext {
                 cfg: cfg.clone(),
                 manifest: None,
@@ -358,6 +394,17 @@ pub async fn run_startup(args: &CliArgs, cfg: &ResolvedConfig) -> StartupDecisio
 /// 「稍后升级」只会得到一次启动失败，因此必须按强制安装处理。
 fn is_first_install(current_version: &str) -> bool {
     current_version.trim() == "0.0.0"
+}
+
+/// 检查失败时是否放行启动（纯判定，便于单测）
+///
+/// 三个条件缺一不可：配置显式开启、本地有版本（0.0.0 视为未安装）、
+/// 记录的安装目录真实存在。缺少任何一条都退回错误界面——fail-open 只服务
+/// 「网络挂了但程序本来能跑」这一种场景，不是跳过更新检查的通用开关。
+fn should_fail_open(cfg: &ResolvedConfig, current_version: &str, installed: Option<&str>) -> bool {
+    cfg.fail_open
+        && !is_first_install(current_version)
+        && installed.is_some_and(|p| !p.trim().is_empty() && Path::new(p).exists())
 }
 
 /// 有可用更新时的启动决策（从 [`run_startup`] 抽出的纯决策，便于单测）
@@ -618,6 +665,20 @@ pub async fn run_update_flow(
         return Err(e);
     }
 
+    // ---- 磁盘空间预检（下载前）----
+    //
+    // 2.3 GB 的包在「下载 + 合并/解压」期间峰值约为两倍包大小：先查一次，
+    // 免得用户等了半小时才在解压中途失败（还会自动重试两轮）。清单没给
+    // size_bytes、或平台查不到可用空间时跳过——预检只是体验优化，不能误拦。
+    if let Some(size) = m.size_bytes {
+        let probe = download_dir(&cfg.app_name);
+        if let Err(e) = disk::ensure_space(&probe, disk::required_for_download(size)) {
+            eprintln!("[更新器] 磁盘预检未通过: {}", e);
+            handle.set(PhasePayload::failure("磁盘空间不足", &e, false));
+            return Err(e);
+        }
+    }
+
     // ---- 提权前置检查（删除服务 / 安装前）----
     //
     // 删除 Windows 服务（`sc delete`）需要管理员权限；当前进程未提权时会拿到
@@ -661,7 +722,16 @@ pub async fn run_update_flow(
     loop {
         attempt += 1;
         let outcome = if is_parts {
-            run_download_parts(handle, m, &cfg.app_name, &zip_path, attempt, download_max).await
+            run_download_parts(
+                handle,
+                m,
+                &cfg.app_name,
+                cfg.parts_concurrency,
+                &zip_path,
+                attempt,
+                download_max,
+            )
+            .await
         } else {
             if attempt > 1 {
                 // 重试前丢弃上一轮的残包：复用逻辑只认校验通过的包，
@@ -680,7 +750,10 @@ pub async fn run_update_flow(
 
         match result {
             Ok(()) => break,
-            Err(e) if attempt < download_max => {
+            // 只有「再试一次可能就好了」的错误才重试：404/403 这类 4xx 与
+            // 本地写盘失败（磁盘满、目录只读）重下多少遍都是同一个结果，
+            // 白等三轮外加一次 1.4 GB 的无效流量。
+            Err(e) if attempt < download_max && download::is_retryable(&e) => {
                 eprintln!(
                     "[更新器] 下载/校验失败（第 {}/{} 次），自动重试: {}",
                     attempt, download_max, e
@@ -691,7 +764,17 @@ pub async fn run_update_flow(
                 tokio::time::sleep(retry_backoff(attempt)).await;
             }
             Err(e) => {
-                record_download_failure(handle, &e, attempt, download_max);
+                if attempt < download_max {
+                    eprintln!("[更新器] 该类失败重试无意义，停止自动重试: {}", e);
+                }
+                // 不可重试的错误把上限记成 0：界面文案只写「已尝试 N 次」，
+                // 不再暗示还有「共 M 次」轮次要来
+                let effective_max = if download::is_retryable(&e) {
+                    download_max
+                } else {
+                    0
+                };
+                record_download_failure(handle, &e, attempt, effective_max);
                 return Err(e);
             }
         }
@@ -755,7 +838,9 @@ pub async fn run_update_flow(
         });
         match install::install(&zip_path, &target_dir, install_cb).await {
             Ok(_) => break,
-            Err(e) if install_attempt < install_max => {
+            // 与下载环节同一条原则：包非法 / 磁盘写不进去这类确定性失败
+            // 不再陪着等两轮退避；只有改名交换阶段的瞬时占用值得重试。
+            Err(e) if install_attempt < install_max && install::is_retryable_error(&e) => {
                 eprintln!(
                     "[更新器] 安装失败（第 {}/{} 次），自动重试: {}",
                     install_attempt, install_max, e
@@ -765,11 +850,16 @@ pub async fn run_update_flow(
             }
             Err(e) => {
                 eprintln!("[更新器] 安装失败: {}", e);
+                let effective_max = if install::is_retryable_error(&e) {
+                    install_max
+                } else {
+                    0
+                };
                 handle.set(
                     PhasePayload::failure("更新安装失败", &e, false).with_attempt(
                         "install",
                         install_attempt,
-                        install_max,
+                        effective_max,
                     ),
                 );
                 return Err(e);
@@ -798,11 +888,10 @@ pub async fn run_update_flow(
         return Err(e);
     }
 
-    // 清理本次更新的下载缓存（zip + 分卷），downloads 回归暂存区语义
+    // 清理本次更新的下载缓存（zip + 分卷），downloads 回归暂存区语义。
+    // 旧版本目录不在这里删——那是回滚资产，交由下次启动的 cleanup_startup
+    // 按 max_versions 处理，别让用户在「更新完成」前多等一次大目录删除。
     cleanup_download_cache(&cfg.app_name, &m.version).await;
-
-    // 清理旧版本目录（旧目录即回滚资产，保留 max_versions 个）
-    cleanup::cleanup_old_versions(&install_root(&cfg.app_name), &m.version, cfg.max_versions).await;
 
     let done_msg = format!("已更新到版本 {}", m.version);
     handle.set(PhasePayload::new(Stage::Done, "更新完成", &done_msg, None));
@@ -843,6 +932,7 @@ async fn run_download_parts(
     handle: &PhaseHandle,
     m: &manifest::FlatManifest,
     app_name: &str,
+    concurrency: usize,
     zip_path: &Path,
     attempt: u32,
     max_attempts: u32,
@@ -853,6 +943,12 @@ async fn run_download_parts(
     // 整体总大小（manifest.size_bytes），分卷之和等于完整 zip 大小
     let total_size = m.size_bytes;
 
+    // 上次已合并好的完整包优先复用：合并成功后分卷会立即删除，
+    // 不复用这里就得为一次安装失败/手动重试重下整包。
+    if let Some(actual) = try_reuse_zip(handle, m, zip_path).await {
+        return Ok(Some(actual));
+    }
+
     handle.set(PhasePayload::new(
         Stage::Downloading,
         &retry_title("download", attempt, max_attempts),
@@ -862,34 +958,44 @@ async fn run_download_parts(
 
     let tracker = std::sync::Mutex::new(SpeedTracker::new());
     let handle_cb = handle.clone();
-    let result =
-        download::download_parts(urls, sha256s, &parts_dir, total_size, move |i, total, p| {
+    let result = download::download_parts(
+        urls,
+        sha256s,
+        &parts_dir,
+        total_size,
+        concurrency,
+        move |done, total, p| {
             let mut t = tracker.lock().unwrap_or_else(|e| e.into_inner());
             let (should, speed) = t.tick(p.downloaded, p.percent() == Some(100.0));
             if should {
-                // 标题只描述动作，分卷进度交由右上角徽标（"分卷 x/y"）展示，
-                // 避免标题与徽标同时出现"分卷 1/28"造成冗余拥挤（与单包模式标题语义一致）
+                // 标题只描述动作，分卷进度交由右上角徽标（"分卷 x/y"）展示。
+                // 并发下载时 x 是「已完成卷数」，不是正在下载的卷号。
                 let msg = retry_title("download", attempt, max_attempts);
                 // 总大小未知时按卷数估算百分比
                 let percent = p
                     .percent()
-                    .unwrap_or(((i + 1) as f64 / total as f64) * 100.0);
+                    .unwrap_or((done as f64 / total.max(1) as f64) * 100.0);
                 handle_cb.set(PhasePayload::download(
                     &msg,
-                    Some(format!("分卷 {}/{}", i + 1, total)),
+                    Some(format!("分卷 {}/{}", done, total)),
                     Some(percent),
                     p.downloaded,
                     p.total,
                     Some(speed),
                 ));
             }
-        })
-        .await;
+        },
+    )
+    .await;
     let result = match result {
         Ok(r) => r,
         Err(e) => {
-            // download_parts 已把卷号补进错误里，这里原样保留
-            let msg = if e.starts_with(download::DOWNLOAD_FAIL_PREFIX) {
+            // download_parts 已把卷号补进错误里，这里原样保留。
+            // 本地落盘失败（磁盘满/目录只读）不带下载前缀：既不该重试，
+            // 也不该把用户引到官网——换个地址一样写不进同一块磁盘。
+            let msg = if e.starts_with(download::DOWNLOAD_FAIL_PREFIX)
+                || download::is_local_io_error(&e)
+            {
                 e
             } else {
                 format!("{}{}", download::DOWNLOAD_FAIL_PREFIX, e)
@@ -906,11 +1012,23 @@ async fn run_download_parts(
     ));
     eprintln!("[更新器] 合并 {} 个分卷...", result.part_paths.len());
     let merge_handle = handle.clone();
+    // 合并是 GB 级顺序读写，按 256 KB 推一次进度会把 UI 锁砸出上万次；
+    // 与下载一样 300ms 节流，末次强制推送 100%。
+    let merge_throttle =
+        std::sync::Mutex::new(Instant::now() - Duration::from_millis(PROGRESS_INTERVAL_MS));
     let merged_sha = download::merge_parts(
         &result.part_paths,
         zip_path,
         &m.sha256,
         move |done, total| {
+            let force = total > 0 && done >= total;
+            {
+                let mut last = merge_throttle.lock().unwrap_or_else(|e| e.into_inner());
+                if !force && last.elapsed() < Duration::from_millis(PROGRESS_INTERVAL_MS) {
+                    return;
+                }
+                *last = Instant::now();
+            }
             let pct = if total > 0 {
                 (done as f64 / total as f64 * 100.0).min(100.0)
             } else {
@@ -927,40 +1045,59 @@ async fn run_download_parts(
     .await
     .map_err(|e| {
         // 合并失败多为分卷本身残缺（下载环节的锅），统一按下载环节处理；
-        // 错误本身可能已带前缀（整体哈希不匹配），避免重复拼接
+        // 错误本身可能已带前缀（整体哈希不匹配），避免重复拼接。
+        // 写合并文件失败属于本地磁盘问题，不挂下载前缀（不给官网入口）。
         let detail = e.strip_prefix(download::DOWNLOAD_FAIL_PREFIX).unwrap_or(&e);
-        format!("{}分卷合并失败: {}", download::DOWNLOAD_FAIL_PREFIX, detail)
+        if download::is_local_io_error(&e) {
+            format!("分卷合并失败: {}", detail)
+        } else {
+            format!("{}分卷合并失败: {}", download::DOWNLOAD_FAIL_PREFIX, detail)
+        }
     })?;
     eprintln!("[更新器] 分卷合并完成: {}", zip_path.display());
+
+    // 合并产物已经过整体 SHA256 校验（或逐卷校验），分卷不再被任何后续步骤需要。
+    // 立即删除，别让它一直占着与完整包等量的空间穿过解压/安装阶段。
+    if let Err(e) = tokio::fs::remove_dir_all(&parts_dir).await {
+        eprintln!(
+            "[更新器] 清理分卷缓存失败（忽略）: {}（{}）",
+            parts_dir.display(),
+            e
+        );
+    }
     Ok(Some(merged_sha))
 }
 
-/// 执行下载：本地已有同名包且校验通过则复用，否则流式下载并推送进度
-async fn run_download(
+/// 复用已存在的完整更新包：校验通过返回实际 SHA256，不可复用返回 None
+///
+/// 复用前提：manifest 提供了非空整包 SHA256。无校验值时无法确认文件完整，
+/// 等于把上次中断的半包当完整包复用（后面安装的就是损坏包），故宁可重下。
+/// （缺校验值的包能否走到这一步由 `require_sha256` 闸门决定；这里保留同一
+/// 判断，是为了闸门被显式关掉时仍然不拿半包去装。）
+///
+/// 单包与分卷模式共用：分卷合并成功后分卷已被删除，安装失败后点「重试」
+/// 时只有这个完整包能省下整包重下的流量。
+async fn try_reuse_zip(
     handle: &PhaseHandle,
     m: &manifest::FlatManifest,
     zip_path: &Path,
-    attempt: u32,
-    max_attempts: u32,
-) -> Result<Option<String>, String> {
-    // 复用前提：manifest 提供了非空整包 SHA256。无校验值时 verify_sha256 直接
-    // 放行，等于把上次下载中断的半包当完整包复用（后面安装的就是损坏包），
-    // 故强制重新下载。（缺校验值的包能否走到这一步，由上面的 require_sha256
-    // 闸门决定；这里保留同一判断是为了闸门被显式关掉时仍然不拿半包去装。）
-    let has_hash = manifest::has_whole_hash(m);
-    if zip_path.exists() && has_hash {
-        let cached = zip_path.to_path_buf();
-        let sha256 = m.sha256.clone();
-        // 复用校验只读一次：算出实际哈希的同时完成比对，并把结果上抛，
-        // 外层 verify_package 直接复用，不再整读第二遍（GB 级包差别明显）
-        let verified = tokio::task::spawn_blocking(move || {
-            let actual = download::sha256_of_file(&cached)?;
-            let expected = sha256.as_deref().unwrap_or_default();
-            download::compare_sha256(expected, &actual).map(|()| actual)
-        })
-        .await
-        .unwrap_or_else(|e| Err(format!("校验任务异常: {}", e)));
-        if let Ok(actual) = verified {
+) -> Option<String> {
+    if !zip_path.exists() || !manifest::has_whole_hash(m) {
+        return None;
+    }
+    let cached = zip_path.to_path_buf();
+    let sha256 = m.sha256.clone();
+    // 复用校验只读一次：算出实际哈希的同时完成比对，并把结果上抛，
+    // 外层 verify_package 直接复用，不再整读第二遍（GB 级包差别明显）
+    let verified = tokio::task::spawn_blocking(move || {
+        let actual = download::sha256_of_file(&cached)?;
+        let expected = sha256.as_deref().unwrap_or_default();
+        download::compare_sha256(expected, &actual).map(|()| actual)
+    })
+    .await
+    .unwrap_or_else(|e| Err(format!("校验任务异常: {}", e)));
+    match verified {
+        Ok(actual) => {
             let size = tokio::fs::metadata(zip_path)
                 .await
                 .map(|m| m.len())
@@ -978,10 +1115,26 @@ async fn run_download(
                 Some(size),
                 None,
             ));
-            return Ok(Some(actual));
+            Some(actual)
         }
-        eprintln!("[更新器] 本地更新包校验不通过，重新下载");
-        let _ = tokio::fs::remove_file(zip_path).await;
+        Err(e) => {
+            eprintln!("[更新器] 本地更新包校验不通过，重新下载: {}", e);
+            let _ = tokio::fs::remove_file(zip_path).await;
+            None
+        }
+    }
+}
+
+/// 执行下载：本地已有同名包且校验通过则复用，否则流式下载并推送进度
+async fn run_download(
+    handle: &PhaseHandle,
+    m: &manifest::FlatManifest,
+    zip_path: &Path,
+    attempt: u32,
+    max_attempts: u32,
+) -> Result<Option<String>, String> {
+    if let Some(actual) = try_reuse_zip(handle, m, zip_path).await {
+        return Ok(Some(actual));
     }
 
     if let Some(parent) = zip_path.parent() {
@@ -998,16 +1151,21 @@ async fn run_download(
     ));
     let tracker = std::sync::Mutex::new(SpeedTracker::new());
     let handle_cb = handle.clone();
+    // 服务器不给 Content-Length 时用清单的 size_bytes 兜底百分比：
+    // 否则界面只剩「已下载 X MB」，用户无法判断还要等多久
+    let known_size = m.size_bytes;
     let result = download::download_file(&m.url, zip_path, move |p| {
+        let total = p.total.or(known_size);
+        let percent = download::percent_of(p.downloaded, total);
         let mut t = tracker.lock().unwrap_or_else(|e| e.into_inner());
-        let (should, speed) = t.tick(p.downloaded, p.percent() == Some(100.0));
+        let (should, speed) = t.tick(p.downloaded, percent == Some(100.0));
         if should {
             handle_cb.set(PhasePayload::download(
                 &retry_title("download", attempt, max_attempts),
                 None,
-                p.percent(),
+                percent,
                 p.downloaded,
-                p.total,
+                total,
                 Some(speed),
             ));
         }
@@ -1500,6 +1658,8 @@ mod tests {
             homepage: "https://example.test".to_string(),
             retry_times: 3,
             require_sha256: true,
+            parts_concurrency: 3,
+            fail_open: false,
         }
     }
 
@@ -1706,6 +1866,32 @@ mod tests {
         assert_eq!(retry_limit(99, true), 10);
         // 不可重试的失败（如下载目录建不出来）只试一次
         assert_eq!(retry_limit(5, false), 1);
+    }
+
+    #[test]
+    fn fail_open_requires_switch_and_existing_install() {
+        let dir = temp_dir("fail_open_install");
+        let installed = dir.to_string_lossy().to_string();
+
+        let mut cfg = cfg_for_test();
+        assert!(
+            !should_fail_open(&cfg, "1.0.0", Some(&installed)),
+            "默认关闭：不显式开启绝不跳过检查"
+        );
+        cfg.fail_open = true;
+        assert!(should_fail_open(&cfg, "1.0.0", Some(&installed)));
+        assert!(
+            !should_fail_open(&cfg, "0.0.0", Some(&installed)),
+            "未安装（0.0.0）没有可启动的程序"
+        );
+        assert!(!should_fail_open(&cfg, "1.0.0", None), "无安装记录不放行");
+        assert!(!should_fail_open(&cfg, "1.0.0", Some("  ")));
+        let missing = dir.join("gone").to_string_lossy().to_string();
+        assert!(
+            !should_fail_open(&cfg, "1.0.0", Some(&missing)),
+            "记录存在但目录已丢：放行只会得到启动失败"
+        );
+        let _ = std::fs::remove_dir_all(&dir);
     }
 
     #[test]

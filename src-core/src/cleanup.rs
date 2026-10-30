@@ -9,6 +9,143 @@ use std::path::{Path, PathBuf};
 /// 删除失败的目录前缀（下次启动时由 cleanup_pending 再次清理）
 const PENDING_DELETE_PREFIX: &str = "_del_";
 
+/// 交换安装的备份前缀（与 install.rs 的 `SWAP_BACKUP_PREFIX` 保持一致）
+const SWAP_BACKUP_PREFIX: &str = "_bak_";
+
+/// 下载暂存文件/目录的统一前缀（`update_*.zip` / `update_*_parts`）
+const DOWNLOAD_STALE_PREFIX: &str = "update_";
+
+/// 下载暂存区里的包超过这个天数未改动即视为废弃
+const STALE_DOWNLOAD_DAYS: u64 = 7;
+
+/// 启动时的一次性残留清理（在拉 manifest 前调用，开销只与目录条目数相关）
+///
+/// 覆盖四类「上次没走完 / 走完没删掉」的痕迹：
+/// - `_del_*`：删除失败、等下次启动的旧版本（原有行为）
+/// - `_bak_<name>`：交换安装中断的备份——正式目录在则删备份，不在则还原
+/// - `app_*_tmp`：解压中断留下的半成品（正常流程会自己删，崩溃才残留）
+/// - `downloads/` 里 7 天前的 `update_*`：装好了却没清掉的包/分卷
+///
+/// 陈旧包按 mtime 判定而不是一律删除：提权交接、异常退出的窗口里，
+/// 另一个进程可能刚写好包正准备安装，删掉会迫使它重新下载完整包。
+pub async fn cleanup_startup(app_dir: &Path, downloads_dir: &Path) {
+    cleanup_pending(app_dir).await;
+    recover_backups(app_dir).await;
+    cleanup_temp_dirs(app_dir).await;
+    cleanup_manifest_temps(app_dir).await;
+    cleanup_stale_downloads(downloads_dir).await;
+}
+
+/// 恢复/清理交换安装留下的 `_bak_*` 备份
+///
+/// 正式目录在（崩溃发生在删备份之前）→ 备份已无用途，删除；
+/// 正式目录不在（崩溃发生在改名之后、新目录就位之前）→ 把备份还原，
+/// 至少先恢复出一个能跑的旧版本。
+async fn recover_backups(app_dir: &Path) {
+    let Ok(mut entries) = tokio::fs::read_dir(app_dir).await else {
+        return;
+    };
+    while let Ok(Some(entry)) = entries.next_entry().await {
+        let path = entry.path();
+        if !path.is_dir() {
+            continue;
+        }
+        let Some(name) = path.file_name().and_then(|n| n.to_str()) else {
+            continue;
+        };
+        let Some(original) = name.strip_prefix(SWAP_BACKUP_PREFIX) else {
+            continue;
+        };
+        let target = app_dir.join(original);
+        if target.exists() {
+            remove_dir_smart(&path).await;
+        } else {
+            match tokio::fs::rename(&path, &target).await {
+                Ok(()) => eprintln!("[清理] 已还原上次中断安装的版本: {}", original),
+                Err(e) => eprintln!("[清理] 还原中断安装的备份失败 {}（{}）", name, e),
+            }
+        }
+    }
+}
+
+/// 清理解压中断留下的 `app_*_tmp` 半成品目录
+async fn cleanup_temp_dirs(app_dir: &Path) {
+    let Ok(mut entries) = tokio::fs::read_dir(app_dir).await else {
+        return;
+    };
+    while let Ok(Some(entry)) = entries.next_entry().await {
+        let path = entry.path();
+        if !path.is_dir() {
+            continue;
+        }
+        let Some(name) = path.file_name().and_then(|n| n.to_str()) else {
+            continue;
+        };
+        if name.starts_with("app_") && name.ends_with("_tmp") {
+            remove_dir_smart(&path).await;
+        }
+    }
+}
+
+/// 清理原子写 app.json 时崩溃留下的临时文件（`app.json.<pid>.tmp`）
+async fn cleanup_manifest_temps(app_dir: &Path) {
+    let Ok(mut entries) = tokio::fs::read_dir(app_dir).await else {
+        return;
+    };
+    while let Ok(Some(entry)) = entries.next_entry().await {
+        let path = entry.path();
+        if !path.is_file() {
+            continue;
+        }
+        let Some(name) = path.file_name().and_then(|n| n.to_str()) else {
+            continue;
+        };
+        if name.starts_with("app.json.") && name.ends_with(".tmp") {
+            if let Err(e) = tokio::fs::remove_file(&path).await {
+                eprintln!("[清理] 版本记录临时文件删除失败 {}: {}", name, e);
+            }
+        }
+    }
+}
+
+/// 清理下载暂存区里长期未改动的 `update_*`（完整包与分卷目录）
+async fn cleanup_stale_downloads(downloads_dir: &Path) {
+    let Ok(mut entries) = tokio::fs::read_dir(downloads_dir).await else {
+        return;
+    };
+    let now = std::time::SystemTime::now();
+    while let Ok(Some(entry)) = entries.next_entry().await {
+        let path = entry.path();
+        let Some(name) = path.file_name().and_then(|n| n.to_str()) else {
+            continue;
+        };
+        if !name.starts_with(DOWNLOAD_STALE_PREFIX) {
+            continue;
+        }
+        let Ok(meta) = entry.metadata().await else {
+            continue;
+        };
+        // 读不到 mtime（异常卷/未来时间戳）就放过，宁可多留也不误删
+        let Ok(modified) = meta.modified() else {
+            continue;
+        };
+        let Ok(age) = now.duration_since(modified) else {
+            continue;
+        };
+        if age.as_secs() < STALE_DOWNLOAD_DAYS * 24 * 60 * 60 {
+            continue;
+        }
+        if meta.is_dir() {
+            remove_dir_smart(&path).await;
+        } else {
+            match tokio::fs::remove_file(&path).await {
+                Ok(()) => eprintln!("[清理] 已删除过期更新包: {}", name),
+                Err(e) => eprintln!("[清理] 过期更新包删除失败 {}: {}", name, e),
+            }
+        }
+    }
+}
+
 /// 清理删除失败的残留目录（`_del_*`）
 ///
 /// - `app_dir`: 版本根目录（如 .../qsm/app）
@@ -149,6 +286,28 @@ mod tests {
         root.join(name).exists()
     }
 
+    /// 测试用：把文件/目录的修改时间改到过去（验证按 mtime 判定陈旧包）
+    fn backdate(path: &Path, t: std::time::SystemTime) {
+        // Windows 上需要 FILE_WRITE_ATTRIBUTES 才能改时间戳，目录还必须
+        // 带 FILE_FLAG_BACKUP_SEMANTICS 才允许 OpenOptions 打开
+        #[cfg(windows)]
+        let opened = {
+            use std::os::windows::fs::OpenOptionsExt;
+            const FILE_WRITE_ATTRIBUTES: u32 = 0x0100;
+            const FILE_FLAG_BACKUP_SEMANTICS: u32 = 0x0200_0000;
+            std::fs::OpenOptions::new()
+                .access_mode(FILE_WRITE_ATTRIBUTES)
+                .custom_flags(FILE_FLAG_BACKUP_SEMANTICS)
+                .open(path)
+        };
+        #[cfg(not(windows))]
+        let opened = std::fs::File::open(path);
+        opened
+            .expect("打开待回填时间的路径")
+            .set_times(std::fs::FileTimes::new().set_modified(t))
+            .expect("回填修改时间");
+    }
+
     #[tokio::test]
     async fn keep_zero_deletes_nothing() {
         // keep=0 防御性不删（避免配置错误清空所有版本）
@@ -267,5 +426,87 @@ mod tests {
         remove_dir_smart(&d).await;
         assert!(!d.exists());
         let _ = std::fs::remove_dir_all(&root);
+    }
+
+    // ---------- cleanup_startup ----------
+
+    #[tokio::test]
+    async fn startup_gc_removes_backup_when_version_dir_exists() {
+        // 交换完成后崩溃：正式目录在，`_bak_` 只是残留
+        let root = temp_app_dir("gc_bak_stale").expect("建目录");
+        make_version_dir(&root, "app_1.0.0").expect("造版本目录");
+        make_version_dir(&root, "_bak_app_1.0.0").expect("造备份目录");
+        cleanup_startup(&root, &root.join("downloads")).await;
+        assert!(!exists(&root, "_bak_app_1.0.0"), "残留备份应删除");
+        assert!(exists(&root, "app_1.0.0"), "正式目录不动");
+        let _ = std::fs::remove_dir_all(&root);
+    }
+
+    #[tokio::test]
+    async fn startup_gc_restores_backup_when_version_dir_missing() {
+        // 改名后、新目录就位前崩溃：备份就是唯一能跑的版本，必须还原
+        let root = temp_app_dir("gc_bak_recover").expect("建目录");
+        make_version_dir(&root, "_bak_app_1.0.0").expect("造备份目录");
+        cleanup_startup(&root, &root.join("downloads")).await;
+        assert!(exists(&root, "app_1.0.0"), "备份应还原为正式目录");
+        assert!(!exists(&root, "_bak_app_1.0.0"));
+        let _ = std::fs::remove_dir_all(&root);
+    }
+
+    #[tokio::test]
+    async fn startup_gc_removes_install_temp_dirs() {
+        let root = temp_app_dir("gc_tmp").expect("建目录");
+        make_version_dir(&root, "app_2.0.0_tmp").expect("造解压半成品");
+        make_version_dir(&root, "app_2.0.0").expect("造版本目录");
+        cleanup_startup(&root, &root.join("downloads")).await;
+        assert!(!exists(&root, "app_2.0.0_tmp"), "解压半成品应删除");
+        assert!(exists(&root, "app_2.0.0"), "正常版本目录不动");
+        let _ = std::fs::remove_dir_all(&root);
+    }
+
+    #[tokio::test]
+    async fn startup_gc_removes_manifest_temp_files() {
+        // 原子写 app.json 时崩溃留下的临时文件
+        let root = temp_app_dir("gc_manifest_tmp").expect("建目录");
+        std::fs::write(root.join("app.json"), b"{}").expect("造 app.json");
+        std::fs::write(root.join("app.json.1234.tmp"), b"partial").expect("造临时文件");
+        cleanup_startup(&root, &root.join("downloads")).await;
+        assert!(!exists(&root, "app.json.1234.tmp"), "临时文件应删除");
+        assert!(exists(&root, "app.json"), "正式记录不动");
+        let _ = std::fs::remove_dir_all(&root);
+    }
+
+    #[tokio::test]
+    async fn startup_gc_only_removes_old_downloads() {
+        // 新建的包可能是另一个进程刚下好的，按 mtime 保留；8 天前的废弃包才删
+        let root = temp_app_dir("gc_downloads").expect("建目录");
+        let downloads = root.join("downloads");
+        std::fs::create_dir_all(&downloads).expect("建下载目录");
+        let old_zip = downloads.join("update_1.0.0.zip");
+        let old_parts = downloads.join("update_1.0.0_parts");
+        let fresh_zip = downloads.join("update_2.0.0.zip");
+        std::fs::write(&old_zip, b"old").expect("造旧包");
+        std::fs::create_dir_all(&old_parts).expect("造旧分卷目录");
+        std::fs::write(&fresh_zip, b"fresh").expect("造新包");
+        std::fs::write(downloads.join("notes.txt"), b"keep").expect("造无关文件");
+
+        let old = std::time::SystemTime::now() - std::time::Duration::from_secs(8 * 24 * 3600);
+        backdate(&old_zip, old);
+        backdate(&old_parts, old);
+        backdate(&downloads.join("notes.txt"), old);
+
+        cleanup_startup(&root, &downloads).await;
+        assert!(!old_zip.exists(), "8 天前的更新包应删除");
+        assert!(!old_parts.exists(), "8 天前的分卷目录应删除");
+        assert!(fresh_zip.exists(), "新包不能误删（可能正在用）");
+        assert!(downloads.join("notes.txt").exists(), "非 update_ 文件不动");
+        let _ = std::fs::remove_dir_all(&root);
+    }
+
+    #[tokio::test]
+    async fn startup_gc_tolerates_missing_dirs() {
+        // 首次启动：app 与 downloads 都不存在，不能 panic
+        let root = std::env::temp_dir().join("qsltd_cleanup_test_gc_missing_98765");
+        cleanup_startup(&root, &root.join("downloads")).await;
     }
 }

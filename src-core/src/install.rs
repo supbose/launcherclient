@@ -1,9 +1,11 @@
 //! 更新包安装：zip 解压到版本目录 + 写入本地版本记录（app.json）
 
-use std::io::Read as _;
+use std::io::{Read as _, Write as _};
 use std::path::{Path, PathBuf};
 use std::sync::Arc; // Read::take（流式截断，防 zip bomb 闸 2）
+use std::time::{Duration, Instant};
 
+use crate::defaults::PROGRESS_INTERVAL_MS;
 use crate::local_manifest::LocalManifest;
 
 /// 安装阶段回调：接收中文消息与可选进度百分比（0-100）
@@ -12,29 +14,86 @@ pub type StageCallback = Arc<dyn Fn(&str, Option<f64>) + Send + Sync>;
 /// 更新器自身的可执行文件名（小写 stem），定位主程序时排除，避免误启动自己
 const SELF_EXE_STEMS: &[&str] = &["launcherclient", "qsltdupdater", "updater"];
 
+/// 主程序向下搜索的最大层数（安装目录自身为第 0 层，最多再往下 3 层）
+///
+/// 只在顶层找不到 exe 时才启用：绝大多数包主程序就在根目录，递归只是
+/// 兜住 `bin/`、`app/` 这类分层打包的情况。层数上限避免在资源/插件目录
+/// 里越走越深，把某个辅助程序当成主程序。
+const MAX_SEARCH_DEPTH: usize = 3;
+
 /// 在安装目录中定位主程序 exe（手动模式 launch 未配置时，供「完成」按钮启动用）
 ///
-/// 选择规则（按优先级）：
+/// 先找顶层，再（仅在顶层没有 exe 时）向下最多 [`MAX_SEARCH_DEPTH`] 层。
+/// 每一层的选择规则（按优先级）：
 /// 1. 排除更新器自身文件名（launcherclient / qsltdupdater / updater，不区分大小写）
 /// 2. 文件名 stem 与 `app_name` 匹配（不区分大小写）优先
 /// 3. 唯一候选直接选用
 /// 4. 多个候选且无名称匹配时，取文件体积最大者（主程序通常最大）；
 ///    读取元数据失败（大小均为 0）时返回 None，避免误启动
 pub fn find_main_executable(install_dir: &Path, app_name: &str) -> Option<PathBuf> {
-    let candidates: Vec<PathBuf> = std::fs::read_dir(install_dir)
-        .ok()?
+    // 顶层优先：保持既有行为不受递归影响（顶层有多个 exe 时仍取最大者）
+    let top = collect_exes(install_dir);
+    if let Some(hit) = pick_candidate(top, app_name) {
+        return Some(hit);
+    }
+    // 顶层一个候选都没有才浅扫子目录：有些包把主程序放在 dist/ 或 bin/，
+    // 只扫顶层会让用户在「更新完成」后看到「启动失败」
+    let mut nested = Vec::new();
+    collect_nested_exes(install_dir, 1, &mut nested);
+    pick_candidate(nested, app_name)
+}
+
+/// 收集某一层目录中的候选 exe（不递归）
+fn collect_exes(dir: &Path) -> Vec<PathBuf> {
+    let Ok(entries) = std::fs::read_dir(dir) else {
+        return Vec::new();
+    };
+    entries
         .filter_map(|e| e.ok())
         .map(|e| e.path())
-        .filter(|p| {
-            p.is_file()
-                && p.extension()
-                    .is_some_and(|ext| ext.eq_ignore_ascii_case("exe"))
-                && !p.file_stem().is_some_and(|s| {
-                    let stem = s.to_string_lossy().to_lowercase();
-                    SELF_EXE_STEMS.contains(&stem.as_str())
-                })
+        .filter(|p| is_main_candidate(p))
+        .collect()
+}
+
+/// 递归收集子目录中的候选 exe（`depth` 从 1 开始，最多到 [`MAX_SEARCH_DEPTH`]）
+fn collect_nested_exes(dir: &Path, depth: usize, out: &mut Vec<PathBuf>) {
+    let Ok(entries) = std::fs::read_dir(dir) else {
+        return;
+    };
+    for entry in entries.filter_map(|e| e.ok()) {
+        let path = entry.path();
+        if path.is_file() {
+            if is_main_candidate(&path) {
+                out.push(path);
+            }
+        } else if depth < MAX_SEARCH_DEPTH && path.is_dir() && !is_ignored_dir(&path) {
+            collect_nested_exes(&path, depth + 1, out);
+        }
+    }
+}
+
+/// 交换/解压留下的中间目录不参与主程序搜索：`_bak_*` 是上一次安装的旧版本，
+/// `*_tmp` 是解压半成品，从里面启动会得到一个马上要消失的程序。
+fn is_ignored_dir(path: &Path) -> bool {
+    path.file_name()
+        .map(|n| n.to_string_lossy())
+        .is_some_and(|n| n.starts_with("_bak_") || n.ends_with("_tmp"))
+}
+
+/// 是否为候选主程序：`.exe` 且不是更新器自身
+fn is_main_candidate(path: &Path) -> bool {
+    path.is_file()
+        && path
+            .extension()
+            .is_some_and(|ext| ext.eq_ignore_ascii_case("exe"))
+        && !path.file_stem().is_some_and(|s| {
+            let stem = s.to_string_lossy().to_lowercase();
+            SELF_EXE_STEMS.contains(&stem.as_str())
         })
-        .collect();
+}
+
+/// 候选排序：名称匹配 > 唯一候选 > 体积最大
+fn pick_candidate(candidates: Vec<PathBuf>, app_name: &str) -> Option<PathBuf> {
     if candidates.is_empty() {
         return None;
     }
@@ -63,6 +122,33 @@ pub fn find_main_executable(install_dir: &Path, app_name: &str) -> Option<PathBu
         }
     }
     best.filter(|(_, size)| *size > 0).map(|(p, _)| p)
+}
+
+/// 判断安装失败是否值得自动重试
+///
+/// 只对「同一份包、同一块磁盘，再来一遍可能不一样」的失败返回 true
+/// （交换阶段的改名被短暂占用等）。包结构非法、超限、空包、路径穿越，
+/// 以及建目录/写文件失败（磁盘满、目录只读）都是确定性的：重试只会把
+/// 同样的错误再走一遍，还多占用户两次退避时间。
+pub fn is_retryable_error(err: &str) -> bool {
+    const PERMANENT: &[&str] = &[
+        "打开更新包失败",
+        "读取更新包结构失败",
+        "读取更新包条目",
+        "条目过大已中止",
+        "解压总量超限已中止",
+        "非法路径条目",
+        "更新包为空",
+        "创建临时目录失败",
+        "清理临时目录失败",
+        "创建安装父目录失败",
+        "创建目录失败",
+        "创建文件失败",
+        "解压文件失败",
+        // 磁盘预检失败：清盘才有用，重试只会再写坏一次
+        "磁盘空间不足",
+    ];
+    !PERMANENT.iter().any(|m| err.contains(m))
 }
 
 /// 安装更新包
@@ -271,6 +357,9 @@ const MAX_EXTRACT_TOTAL_BYTES: u64 = 8 * 1024 * 1024 * 1024;
 /// 实际最多写出「上限 + 1」字节即被截断判定。
 const MAX_EXTRACT_ENTRY_BYTES: u64 = 512 * 1024 * 1024;
 
+/// 解压分块大小：与下载/合并一致，兼顾进度粒度与系统调用次数
+const EXTRACT_CHUNK_BYTES: usize = 256 * 1024;
+
 /// 解压 zip 到目标目录（阻塞函数，请在 spawn_blocking 中调用）
 ///
 /// 通过 `on_stage` 按条目推送解压进度（第 N/M 项 + 百分比）
@@ -306,11 +395,48 @@ fn extract_zip_with_limits(
         .map_err(|e| format!("打开更新包失败 {}: {}", zip_path.display(), e))?;
     let mut archive =
         zip::ZipArchive::new(file).map_err(|e| format!("读取更新包结构失败: {}", e))?;
-    let total = archive.len() as f64;
+    let entry_count = archive.len();
     let mut written: u64 = 0;
     let mut file_count: u64 = 0;
 
-    for i in 0..archive.len() {
+    // 进度分母取中央目录里声明的未压缩总大小（只读条目头，不解压）。
+    // 按条目数算进度时，一个 2 GB 的主 exe 就会让进度条卡在「1/28」不动，
+    // 用户以为程序挂了；按字节算才能持续前进。
+    let declared_total: u64 = (0..entry_count)
+        .filter_map(|i| archive.by_index(i).ok().map(|e| e.size()))
+        .sum();
+
+    // 解压前的磁盘预检：更新包已经在盘上，额外需要的是解压产物 + 余量。
+    // 在写第一个文件前拒绝，比写到一半磁盘满好得多（后者还会被重试两轮）。
+    if declared_total > 0 {
+        crate::disk::ensure_space(dest, crate::disk::required_for_extract(declared_total)).map_err(
+            |e| {
+                eprintln!("[安装] 解压前预检未通过: {}", e);
+                e
+            },
+        )?;
+    }
+    // 每 300ms 才推一次进度：几千个小文件时逐文件 set 会把 UI 线程刷爆。
+    // 闭包按「已写出字节」算百分比，最后一项/最后一帧由调用方强制推送。
+    let mut last_report = Instant::now() - Duration::from_millis(PROGRESS_INTERVAL_MS);
+    let mut emit = |written: u64, index: usize, brief: &str, done: bool, force: bool| {
+        if !force && last_report.elapsed() < Duration::from_millis(PROGRESS_INTERVAL_MS) {
+            return;
+        }
+        last_report = Instant::now();
+        let pct = extract_percent(written, declared_total, index, entry_count, done);
+        on_stage(
+            &format!(
+                "正在解压更新包... {} / {}（{}）",
+                index + 1,
+                entry_count,
+                brief
+            ),
+            Some(pct),
+        );
+    };
+
+    for i in 0..entry_count {
         let entry = archive
             .by_index(i)
             .map_err(|e| format!("读取更新包条目 {} 失败: {}", i, e))?;
@@ -324,8 +450,13 @@ fn extract_zip_with_limits(
             ));
         };
         let out_path = dest.join(name);
+        let brief = out_path
+            .file_name()
+            .map(|n| n.to_string_lossy().into_owned())
+            .unwrap_or_default();
 
-        if entry.is_dir() {
+        let is_dir = entry.is_dir();
+        if is_dir {
             std::fs::create_dir_all(&out_path)
                 .map_err(|e| format!("创建目录失败 {}: {}", out_path.display(), e))?;
         } else {
@@ -360,11 +491,30 @@ fn extract_zip_with_limits(
             #[cfg(unix)]
             let unix_mode = entry.unix_mode();
 
-            // 闸 2：流式截断（头部声明可能小于实际数据量）
+            // 闸 2：流式截断（头部声明可能小于实际数据量）。
+            // 分块复制而非 std::io::copy：一个几百 MB 的大文件也要能持续推
+            // 字节进度，否则进度条会停在「第 N/M 项」直到整个文件写完。
             let mut limited = entry.take(max_entry + 1);
-            let copied = std::io::copy(&mut limited, &mut out_file)
-                .map_err(|e| format!("解压文件失败 {}: {}", out_path.display(), e))?;
-            written += copied;
+            let mut buf = vec![0u8; EXTRACT_CHUNK_BYTES];
+            let mut copied: u64 = 0;
+            loop {
+                let n = limited
+                    .read(&mut buf)
+                    .map_err(|e| format!("解压文件失败 {}: {}", out_path.display(), e))?;
+                if n == 0 {
+                    break;
+                }
+                out_file
+                    .write_all(&buf[..n])
+                    .map_err(|e| format!("解压文件失败 {}: {}", out_path.display(), e))?;
+                copied += n as u64;
+                written += n as u64;
+                // 多写出 1 字节即可判定超限（take 的上限是 max_entry + 1）
+                if copied > max_entry {
+                    break;
+                }
+                emit(written, i, &brief, false, false);
+            }
             file_count += 1;
 
             // 闸 2 判定：读满 max_entry+1 说明实际数据超出单条目上限
@@ -393,21 +543,12 @@ fn extract_zip_with_limits(
             }
         }
 
-        // 每完成一个条目推送一次进度（含文件名，取最后一段避免长路径）
-        let pct = ((i + 1) as f64 / total * 100.0).min(100.0);
-        let brief = out_path
-            .file_name()
-            .map(|n| n.to_string_lossy().into_owned())
-            .unwrap_or_default();
-        on_stage(
-            &format!(
-                "正在解压更新包... {} / {}（{}）",
-                i + 1,
-                total as u64,
-                brief
-            ),
-            Some(pct),
-        );
+        // 条目收尾进度：最后一个条目强制推 100%。目录条目不动字节数，
+        // 不必单独推（只有它恰好是最后一项时才推）。
+        let done = i + 1 == entry_count;
+        if !is_dir || done {
+            emit(written, i, &brief, done, done);
+        }
     }
 
     // 空包/只有目录的包不能算安装成功：否则会得到一个空版本目录，
@@ -416,6 +557,26 @@ fn extract_zip_with_limits(
         return Err("更新包为空或没有可解压的文件，已中止安装".to_string());
     }
     Ok(())
+}
+
+/// 解压进度百分比：优先按已写字节 / 声明总量，总量未知时退回按条目数。
+///
+/// 最后一条强制 100%（声明值可能比实际大，按字节算会停在 99.x）。
+fn extract_percent(
+    written: u64,
+    declared_total: u64,
+    index: usize,
+    total: usize,
+    done: bool,
+) -> f64 {
+    if done {
+        return 100.0;
+    }
+    if declared_total > 0 {
+        (written as f64 / declared_total as f64 * 100.0).min(100.0)
+    } else {
+        ((index + 1) as f64 / total.max(1) as f64 * 100.0).min(100.0)
+    }
 }
 
 #[cfg(test)]
@@ -560,13 +721,134 @@ mod tests {
     }
 
     #[test]
-    fn find_main_ignores_subdirectory_exes() -> io::Result<()> {
-        // 只扫顶层，不递归子目录
-        let dir = temp_install_dir("no_recurse")?;
+    fn find_main_falls_back_to_nested_exe() -> io::Result<()> {
+        // 分层打包（主程序在 bin/）时，顶层没有 exe 就向下找
+        let dir = temp_install_dir("nested")?;
         let sub = dir.join("bin");
         std::fs::create_dir_all(&sub)?;
         make_exe(&sub, "qsm.exe", 100)?;
+        let hit = find_main_executable(&dir, "qsm");
+        assert_eq!(hit.as_deref().map(stem_of).as_deref(), Some("qsm.exe"));
+        let _ = std::fs::remove_dir_all(&dir);
+        Ok(())
+    }
+
+    #[test]
+    fn find_main_prefers_top_level_over_nested() -> io::Result<()> {
+        // 顶层有候选时不再往下找：顶层的 helper.exe 也比子目录的 qsm.exe 优先
+        let dir = temp_install_dir("top_wins")?;
+        make_exe(&dir, "helper.exe", 100)?;
+        let sub = dir.join("dist");
+        std::fs::create_dir_all(&sub)?;
+        make_exe(&sub, "qsm.exe", 10_000)?;
+        let hit = find_main_executable(&dir, "qsm");
+        assert_eq!(hit.as_deref().map(stem_of).as_deref(), Some("helper.exe"));
+        let _ = std::fs::remove_dir_all(&dir);
+        Ok(())
+    }
+
+    #[test]
+    fn find_main_skips_backup_and_temp_dirs() -> io::Result<()> {
+        // `_bak_` 旧版本与 `*_tmp` 解压半成品不参与搜索
+        let dir = temp_install_dir("skip_backup")?;
+        let bak = dir.join("_bak_app_1.0.0");
+        let tmp = dir.join("app_2.0.0_tmp");
+        std::fs::create_dir_all(&bak)?;
+        std::fs::create_dir_all(&tmp)?;
+        make_exe(&bak, "qsm.exe", 10_000)?;
+        make_exe(&tmp, "qsm.exe", 20_000)?;
         assert!(find_main_executable(&dir, "qsm").is_none());
+        let _ = std::fs::remove_dir_all(&dir);
+        Ok(())
+    }
+
+    #[test]
+    fn find_main_respects_depth_limit() -> io::Result<()> {
+        // 超过 3 层的 exe 不再搜索，避免在资源目录里越走越深
+        let dir = temp_install_dir("depth_limit")?;
+        let deep = dir.join("a").join("b").join("c").join("d");
+        std::fs::create_dir_all(&deep)?;
+        make_exe(&deep, "qsm.exe", 100)?;
+        assert!(find_main_executable(&dir, "qsm").is_none());
+        let _ = std::fs::remove_dir_all(&dir);
+        Ok(())
+    }
+
+    // ---------- is_retryable_error ----------
+
+    #[test]
+    fn retryable_errors_are_exchange_stage_failures() {
+        assert!(is_retryable_error("备份旧安装目录失败（a -> b）: 拒绝访问"));
+        assert!(is_retryable_error(
+            "应用新版本失败（a -> b）: 另一个程序正在使用"
+        ));
+    }
+
+    #[test]
+    fn permanent_install_errors_are_not_retried() {
+        // 包非法 / 超限 / 本地写盘失败：重试只会重复同一个结果
+        for e in [
+            "读取更新包结构失败: invalid Zip archive",
+            "更新包条目过大已中止: big.dll（声明 999 字节，上限 100 字节）",
+            "更新包解压总量超限已中止: 已写出 200 字节（上限 100 字节）",
+            "更新包包含非法路径条目，已中止安装: ../evil.txt",
+            "更新包为空或没有可解压的文件，已中止安装",
+            "创建临时目录失败 C:\\app\\tmp: 磁盘已满",
+            "创建文件失败 C:\\app\\x.exe: 磁盘已满",
+            "解压文件失败 C:\\app\\x.exe: 拒绝访问",
+        ] {
+            assert!(!is_retryable_error(e), "不应重试: {e}");
+        }
+    }
+
+    // ---------- extract_percent ----------
+
+    #[test]
+    fn extract_percent_uses_bytes_not_entry_count() {
+        // 1 字节 / 共 100 字节：按条目数会显示 50%，按字节应是 1%
+        let pct = extract_percent(1, 100, 0, 2, false);
+        assert!((pct - 1.0).abs() < f64::EPSILON, "按字节推进: {pct}");
+    }
+
+    #[test]
+    fn extract_percent_falls_back_to_entry_count() {
+        // 声明总量未知（0）：退回按条目数
+        let pct = extract_percent(0, 0, 2, 4, false);
+        assert!((pct - 75.0).abs() < f64::EPSILON, "按条目数推进: {pct}");
+    }
+
+    #[test]
+    fn extract_percent_final_is_always_100() {
+        // 声明值偏大导致按字节只到 99.x 时，最后一条强制 100
+        assert!((extract_percent(90, 100, 9, 10, true) - 100.0).abs() < f64::EPSILON);
+    }
+
+    #[test]
+    fn extract_progress_reaches_100() -> io::Result<()> {
+        // 端到端：回调至少收到一次，且最后一次为 100%
+        let dir = temp_install_dir("progress")?;
+        let zip = dir.join("update.zip");
+        make_test_zip(&zip, &[("a.txt", b"hello"), ("b.txt", b"world")])?;
+        let out = dir.join("out");
+        std::fs::create_dir_all(&out)?;
+        let seen = Arc::new(std::sync::Mutex::new(Vec::<f64>::new()));
+        let sink = seen.clone();
+        let cb: StageCallback = Arc::new(move |_msg: &str, pct: Option<f64>| {
+            if let Some(p) = pct {
+                sink.lock().unwrap_or_else(|e| e.into_inner()).push(p);
+            }
+        });
+        extract_zip(&zip, &out, &cb).map_err(io::Error::other)?;
+        let seen = seen.lock().unwrap_or_else(|e| e.into_inner()).clone();
+        assert_eq!(
+            seen.last().copied(),
+            Some(100.0),
+            "最后一次应为 100%: {seen:?}"
+        );
+        assert!(
+            seen.iter().all(|p| (0.0..=100.0).contains(p)),
+            "百分比越界: {seen:?}"
+        );
         let _ = std::fs::remove_dir_all(&dir);
         Ok(())
     }

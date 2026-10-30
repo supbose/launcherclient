@@ -80,6 +80,15 @@ pub struct UpdateSettings {
     /// 是同义出口；判定见 [`resolve_require_sha256`]。
     #[serde(default)]
     pub require_sha256: Option<bool>,
+    /// 分卷并发下载数（同时下载的卷数，1~8）。缺省用
+    /// [`DEFAULT_PARTS_CONCURRENCY`]；CDN 单连接限速时并发能明显提速，
+    /// 服务端限制连接数时调小。归一规则见 [`resolve_parts_concurrency`]。
+    #[serde(default)]
+    pub parts_concurrency: Option<u32>,
+    /// 检查更新失败（网络/服务端不可达）时是否直接启动已安装版本（缺省 false）。
+    /// 仅当本地安装有效时生效，见 [`resolve_fail_open`]。
+    #[serde(default)]
+    pub fail_open: Option<bool>,
 }
 
 impl UpdateSettings {
@@ -135,6 +144,35 @@ pub fn resolve_require_sha256(cli_allows_missing: bool, settings: Option<bool>) 
         return false;
     }
     settings.unwrap_or(true)
+}
+
+/// 分卷并发下载的默认卷数
+///
+/// 3 路是「限速 CDN 上明显提速」与「不把服务端连接数打满」之间的折中：
+/// 单连接已跑满带宽时并发只会更慢一点，不会明显变差。
+pub const DEFAULT_PARTS_CONCURRENCY: usize = 3;
+
+/// 分卷并发上限：再多也只是让磁盘/带宽排队，还容易触发服务端限流
+pub const MAX_PARTS_CONCURRENCY: usize = 8;
+
+/// 解析生效的分卷并发数
+///
+/// 未配置 → 默认 3；显式 0 → 1（「不并发」而不是「不下载」，与
+/// [`resolve_retry_times`] 的 0 语义一致）；超过上限夹到 8。
+pub fn resolve_parts_concurrency(specified: Option<u32>) -> usize {
+    match specified {
+        None => DEFAULT_PARTS_CONCURRENCY,
+        Some(n) => (n as usize).clamp(1, MAX_PARTS_CONCURRENCY),
+    }
+}
+
+/// 解析「检查失败时放行启动」开关
+///
+/// 默认关闭：更新器的主职责是把版本更新到位，静默跳过检查属于产品决策，
+/// 必须由部署方显式打开。真正的「本地安装有效」判断在编排层
+/// （[`crate::flow`]），这里只做配置归一。
+pub fn resolve_fail_open(settings: Option<bool>) -> bool {
+    settings.unwrap_or(false)
 }
 
 /// max_versions 默认值：当前版本 + 1 个旧版本（回滚资产）；构建期可经 QSLTD_MAX_VERSIONS 覆盖
@@ -267,7 +305,9 @@ fn generate_default_template(dir: &std::path::Path) -> bool {
             "launcher_template": "启动器界面模板：留空 = 自动（双击直启用主模板 F，被其他应用带参数调用用副模板 H）；也可填 F/H 强制指定，旧版 A~E/G 等值回落到 F",
             "homepage": "官网首页地址；更新检查（manifest 全部地址失效）或下载地址全部失败时，界面上的「前往官网重新下载」按钮跳这里，留空用内置默认",
             "retry_times": "同一环节（下载 / 解压校验）的自动重试次数（含首次尝试），默认 3：失败后自动再试 2 次，仍失败才提示前往官网重新下载",
-            "require_sha256": "是否要求服务器清单提供包完整性校验值，默认 true：整包 sha256 缺失且分卷 part_sha256 也没给齐时拒绝自动安装。自建/内网等可信环境确需放行时设为 false（等价于命令行 --allow-missing-sha256）"
+            "require_sha256": "是否要求服务器清单提供包完整性校验值，默认 true：整包 sha256 缺失且分卷 part_sha256 也没给齐时拒绝自动安装。自建/内网等可信环境确需放行时设为 false（等价于命令行 --allow-missing-sha256）",
+            "parts_concurrency": "分卷并发下载数（同时下载的卷数），默认 3，可选 1~8：CDN 对单连接限速时并发能明显提速；服务端限制连接数或小带宽环境可调小到 1",
+            "fail_open": "检查更新失败（网络/服务器不可达）时是否直接启动已安装版本，默认 false：仅当本地安装目录有效时生效，适合弱网下不希望启动被检查卡住的启动器；强制更新语义不受影响（能拿到清单时仍按清单执行）"
         },
         "manifest_url": defaults::DEFAULT_MANIFEST_URLS,
         "app_name": defaults::DEFAULT_APP_NAME,
@@ -285,7 +325,10 @@ fn generate_default_template(dir: &std::path::Path) -> bool {
         "retry_times": defaults::DEFAULT_RETRY_TIMES,
         // 显式写出默认值：这条开关关掉就是放弃包完整性校验，写在配置里比
         // 藏在「缺省即 true」里更容易被接手的人看见
-        "require_sha256": true
+        "require_sha256": true,
+        "parts_concurrency": DEFAULT_PARTS_CONCURRENCY,
+        // 放行启动会跳过更新检查，必须显式开启；默认关闭才是更新器的本分
+        "fail_open": false
     });
     let Ok(content) = serde_json::to_string_pretty(&template) else {
         eprintln!("[配置] 默认模板序列化失败");
@@ -358,6 +401,8 @@ mod tests {
         assert!(s.max_versions.is_none());
         assert!(s.services.is_none());
         assert!(s.launcher_template.is_none());
+        assert!(s.parts_concurrency.is_none());
+        assert!(s.fail_open.is_none());
     }
 
     #[test]
@@ -445,6 +490,42 @@ mod tests {
         assert!(!resolve_require_sha256(true, None));
         // 反过来不行：命令行没有强开语义
         assert!(resolve_require_sha256(false, None));
+    }
+
+    // ---------- 分卷并发 / fail-open ----------
+
+    #[test]
+    fn parts_concurrency_defaults_and_clamps() {
+        assert_eq!(
+            resolve_parts_concurrency(None),
+            DEFAULT_PARTS_CONCURRENCY,
+            "未配置用默认 3 路"
+        );
+        // 0 是配置笔误：按「不并发」处理，而不是「不下载」
+        assert_eq!(resolve_parts_concurrency(Some(0)), 1);
+        assert_eq!(resolve_parts_concurrency(Some(1)), 1);
+        assert_eq!(resolve_parts_concurrency(Some(4)), 4);
+        // 超过上限夹到 8：再多只会触发服务端限流
+        assert_eq!(resolve_parts_concurrency(Some(99)), MAX_PARTS_CONCURRENCY);
+    }
+
+    #[test]
+    fn parts_concurrency_field_parses() {
+        let s: UpdateSettings =
+            serde_json::from_str(r#"{"parts_concurrency": 4}"#).expect("应可解析");
+        assert_eq!(s.parts_concurrency, Some(4));
+        assert_eq!(resolve_parts_concurrency(s.parts_concurrency), 4);
+    }
+
+    #[test]
+    fn fail_open_defaults_off_and_requires_explicit_opt_in() {
+        // 默认关闭：跳过更新检查必须是部署方的显式决定
+        assert!(!resolve_fail_open(None));
+        assert!(!resolve_fail_open(Some(false)));
+        assert!(resolve_fail_open(Some(true)));
+        let s: UpdateSettings =
+            serde_json::from_str(r#"{"fail_open": true}"#).expect("应可解析");
+        assert!(resolve_fail_open(s.fail_open));
     }
 
     #[test]

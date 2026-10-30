@@ -23,6 +23,7 @@ pub mod cli;
 pub mod client;
 pub mod config;
 pub mod defaults;
+pub mod disk;
 pub mod download;
 pub mod elevation;
 pub mod flow;

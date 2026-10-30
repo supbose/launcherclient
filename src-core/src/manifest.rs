@@ -14,6 +14,7 @@
 //! }
 //! ```
 
+use futures_util::StreamExt;
 use serde::{Deserialize, Serialize};
 use std::path::{Path, PathBuf};
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
@@ -65,33 +66,39 @@ fn default_true() -> bool {
     true
 }
 
-/// 拉取并解析服务器 manifest（带故障转移：按序尝试多个地址，第一个成功的生效）
+/// 拉取并解析服务器 manifest（多地址并发，取最先成功者）
 ///
-/// 全部失败时返回最后一个错误
+/// 早先按序串行：每个地址 5s 总超时，弱网下「第一个挂、第二个通」要白等
+/// 一个完整超时才能开始检测。现在并发打全部镜像，谁先回谁生效——
+/// manifest 体积只有几百字节，多打一个地址的成本可以忽略。
+///
+/// 全部失败时返回最后一个错误（保留原有文案，便于脚本与界面沿用）。
 pub async fn fetch_with_failover(urls: &[String]) -> Result<FlatManifest, String> {
     if urls.is_empty() {
         return Err("manifest 地址列表为空".to_string());
     }
+    if urls.len() == 1 {
+        return fetch(&urls[0]).await;
+    }
 
+    eprintln!(
+        "[更新器] 并发拉取 {} 个 manifest 地址（取最先成功者）",
+        urls.len()
+    );
+    let attempts = futures_util::stream::iter(urls.iter().enumerate())
+        .map(|(i, url)| async move { (i, url, fetch(url).await) })
+        .buffer_unordered(urls.len());
+
+    futures_util::pin_mut!(attempts);
     let mut last_err = String::new();
-    for (i, url) in urls.iter().enumerate() {
-        if urls.len() > 1 {
-            eprintln!(
-                "[更新器] 尝试 manifest 地址 {}/{}: {}",
-                i + 1,
-                urls.len(),
-                url
-            );
-        }
-        match fetch(url).await {
+    while let Some((i, url, outcome)) = attempts.next().await {
+        match outcome {
             Ok(m) => {
-                if i > 0 {
-                    eprintln!("[更新器] 地址 {} 拉取成功", url);
-                }
+                eprintln!("[更新器] manifest 地址 {} 拉取成功: {}", i + 1, url);
                 return Ok(m);
             }
             Err(e) => {
-                eprintln!("[更新器] 地址 {} 拉取失败: {}", url, e);
+                eprintln!("[更新器] manifest 地址 {} 拉取失败: {}（{}）", i + 1, url, e);
                 last_err = e;
             }
         }

@@ -256,6 +256,8 @@ mod tests {
             homepage: String::new(),
             retry_times: 3,
             require_sha256: true,
+            parts_concurrency: 3,
+            fail_open: false,
         }
     }
 

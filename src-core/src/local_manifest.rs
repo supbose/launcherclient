@@ -14,7 +14,7 @@
 //! `String`（调用方直接 `format!` 上抛 UI）；`save` 顺带创建父目录——旧实现由外层
 //! `UpdateManager` 负责，本仓库的调用点没有那层封装，不建目录会在首次安装时偶发失败。
 
-use std::path::Path;
+use std::path::{Path, PathBuf};
 
 use chrono::{SecondsFormat, Utc};
 use serde::{Deserialize, Serialize};
@@ -49,6 +49,18 @@ fn now_rfc3339() -> String {
     Utc::now().to_rfc3339_opts(SecondsFormat::Secs, true)
 }
 
+/// app.json 原子写的临时路径：`app.json.<pid>.tmp`
+///
+/// 与目标同目录，保证 `rename` 不跨卷（跨卷 rename 会退化成复制，失去原子性）；
+/// 带 pid 避免两个进程的临时文件互相覆盖。
+fn tmp_path_for(path: &Path) -> PathBuf {
+    let name = path
+        .file_name()
+        .map(|n| n.to_string_lossy().into_owned())
+        .unwrap_or_else(|| "app.json".to_string());
+    path.with_file_name(format!("{}.{}.tmp", name, std::process::id()))
+}
+
 impl LocalManifest {
     /// 构造一条「刚装好」的记录：`installed_at` 与 `last_check` 均取当前时刻
     ///
@@ -80,7 +92,13 @@ impl LocalManifest {
         }
     }
 
-    /// 以 pretty JSON 写入 `path`（父目录不存在时自动创建）
+    /// 以 pretty JSON 原子写入 `path`（父目录不存在时自动创建）
+    ///
+    /// 先写同目录下的临时文件再 `rename` 覆盖目标：app.json 是「是否已安装 /
+    /// 装的是哪一版」的唯一依据，直接覆盖写到一半断电会留下截断的 JSON，
+    /// 下次读取解析失败 → 被当成未安装 → 全量重下。rename 在同一分区内是
+    /// 原子的（Windows 走 MoveFileEx 替换已存在目标），写入失败则清掉临时文件，
+    /// 旧记录保持原样。
     pub async fn save(&self, path: &Path) -> Result<(), String> {
         if let Some(parent) = path.parent() {
             if !parent.as_os_str().is_empty() {
@@ -92,9 +110,24 @@ impl LocalManifest {
 
         let json = serde_json::to_string_pretty(self)
             .map_err(|e| format!("序列化本地版本记录失败: {}", e))?;
-        tokio::fs::write(path, json)
-            .await
-            .map_err(|e| format!("写入本地版本记录失败 {}: {}", path.display(), e))
+
+        // 文件名带 pid：极端情况下两个进程同时写（提权交接窗口），
+        // 各写各的临时文件，最后 rename 的结果总是完整 JSON，不会互相截断
+        let tmp = tmp_path_for(path);
+        if let Err(e) = tokio::fs::write(&tmp, json).await {
+            let _ = tokio::fs::remove_file(&tmp).await;
+            return Err(format!("写入本地版本记录失败 {}: {}", tmp.display(), e));
+        }
+        if let Err(e) = tokio::fs::rename(&tmp, path).await {
+            let _ = tokio::fs::remove_file(&tmp).await;
+            return Err(format!(
+                "替换本地版本记录失败 {} -> {}: {}",
+                tmp.display(),
+                path.display(),
+                e
+            ));
+        }
+        Ok(())
     }
 
     /// 读取 `path`；文件不存在返回 `Ok(None)`（正常首装），解析失败返回 `Err`
@@ -236,6 +269,31 @@ mod tests {
 
         let loaded = LocalManifest::load(&path).await.expect("应可读取");
         assert_eq!(loaded.as_ref(), Some(&m), "读写应完全一致");
+
+        let _ = std::fs::remove_dir_all(path.parent().unwrap());
+    }
+
+    #[tokio::test]
+    async fn save_is_atomic_and_leaves_no_temp_file() {
+        let path = tmp_path("atomic");
+        let m = LocalManifest::new("qsm", "1.0.0", "p", None, true, None, None);
+        m.save(&path).await.expect("首次写入");
+
+        // 目录里只应有 app.json（临时文件已被 rename 掉）
+        let leftovers: Vec<String> = std::fs::read_dir(path.parent().unwrap())
+            .unwrap()
+            .filter_map(|e| e.ok())
+            .map(|e| e.file_name().to_string_lossy().into_owned())
+            .filter(|n| n != "app.json")
+            .collect();
+        assert!(leftovers.is_empty(), "不应残留临时文件: {leftovers:?}");
+
+        // 覆盖写：整体替换为新记录，不出现半新半旧
+        let newer = LocalManifest::new("qsm", "2.0.0", "p2", None, true, None, None);
+        newer.save(&path).await.expect("覆盖写入");
+        let loaded = LocalManifest::load(&path).await.unwrap().unwrap();
+        assert_eq!(loaded.version, "2.0.0");
+        assert_eq!(loaded.installed_path, "p2");
 
         let _ = std::fs::remove_dir_all(path.parent().unwrap());
     }
