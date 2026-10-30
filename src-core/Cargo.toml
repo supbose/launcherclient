@@ -18,17 +18,27 @@ integration = []
 [dependencies]
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
-reqwest = { version = "0.12", features = ["json", "stream"] }
+# 只保留实际用到的能力：JSON、流式下载、系统 TLS（schannel）、系统代理。
+# charset / http2 等默认 feature 本项目不依赖，去掉以减小体积；
+# system-proxy 保留：企业网络常靠系统代理出网，去掉会直接导致更新失败。
+reqwest = { version = "0.12", default-features = false, features = ["json", "stream", "default-tls", "system-proxy"] }
 semver = "1"
-# 下载与安装
-tokio = { version = "1", features = ["full"] }
+# 下载与安装：仅运行时/文件/流/定时器（reqwest 会按需自带 net 相关 feature）
+tokio = { version = "1", features = ["rt-multi-thread", "fs", "io-util", "time"] }
 futures-util = "0.3"
 sha2 = "0.10"
 hex = "0.4"
-zip = "2"
+# 更新包只做 deflate 压缩/解压，去掉 zip 默认的 aes-crypto/bzip2/deflate64/lzma/zstd/xz/time
+zip = { version = "2", default-features = false, features = ["deflate-flate2", "flate2"] }
+# zip 的 deflate-flate2 需要显式声明 flate2，并统一走纯 Rust 后端（与 reqwest 的 rustls/系统 TLS 无关）
+flate2 = { version = "1", default-features = false, features = ["rust_backend"] }
 # 本地版本记录（app.json）时间戳：与旧 qingshu 实现同格式（UTC 秒级 RFC3339）
 # default-features=false 只保留时钟所需的最小依赖面
 chrono = { version = "0.4", default-features = false, features = ["clock"] }
+
+[dev-dependencies]
+# 仅测试期需要 #[tokio::test] 宏与单线程运行时；不进发布产物
+tokio = { version = "1", features = ["macros", "rt"] }
 
 # 注意：unused_imports / unused_variables / dead_code 是 rustc lint，
 # 必须放在 [lints.rust]；放进 [lints.clippy] 会触发 unknown lint 警告且不生效

@@ -81,46 +81,66 @@ pub fn tint(mut c: Color32, a: u8) -> Color32 {
 
 // ---- 字体 ----
 
-/// Windows 系统中文字体候选（按序取第一个存在的；微软雅黑优先）
-const FONT_CANDIDATES: [&str; 5] = [
+/// 载入字体在 `FontDefinitions` 中的键名
+const FONT_KEY: &str = "cjk";
+
+/// Windows 系统字体候选（按序取第一个可读的；微软雅黑优先）。
+///
+/// 末尾的 segoeui/arial 是兜底：launcherclient 关闭了 eframe 的 default_fonts，
+/// 若系统连中文字体都读不到，至少保证有西文字体能渲染，避免 epaint 因
+/// 「字族内无字体」直接 panic。
+const FONT_CANDIDATES: [&str; 7] = [
     "C:/Windows/Fonts/msyh.ttc",
     "C:/Windows/Fonts/msyhl.ttc",
     "C:/Windows/Fonts/simhei.ttf",
     "C:/Windows/Fonts/Deng.ttf",
     "C:/Windows/Fonts/simsun.ttc",
+    "C:/Windows/Fonts/segoeui.ttf",
+    "C:/Windows/Fonts/arial.ttf",
 ];
 
 /// 安装中文字体：egui 默认字体无 CJK 字形（会显示豆腐块），
 /// 从系统字体目录加载微软雅黑（TTC 第 0 面 = Regular）。
 ///
-/// 找不到任何候选字体时保留 egui 默认字体（界面仍可用，仅中文显示
-/// 退化为方块 —— 非常规 Windows 环境才会发生）。
+/// launcherclient 关闭了 eframe 的 default_fonts —— 此时
+/// `FontDefinitions::default()` 是空的（只有空的 Proportional/Monospace 列表），
+/// 必须显式往两个字族里塞字体，否则 epaint 会在排版时 panic。
+/// pkgtool 仍启用 default_fonts，同一函数只是在默认字体链前插入，观感不变。
 pub fn install_fonts(ctx: &Context) {
-    let Some(path) = FONT_CANDIDATES
-        .iter()
-        .find(|p| std::path::Path::new(p).exists())
-    else {
-        eprintln!("[ui] 未找到系统中文字体，中文将无法显示");
-        return;
-    };
-    let Ok(data) = std::fs::read(path) else {
-        eprintln!("[ui] 读取系统字体失败: {}", path);
+    let Some((path, data)) = load_first_font() else {
+        eprintln!("[ui] 未找到任何可用系统字体，界面文字将无法渲染");
         return;
     };
     eprintln!("[ui] 使用系统字体: {}", path);
 
     let mut fonts = FontDefinitions::default();
+    apply_primary_font(&mut fonts, data);
+    ctx.set_fonts(fonts);
+}
+
+/// 按候选顺序读取第一个可用的系统字体（读失败的跳过，继续下一个）
+fn load_first_font() -> Option<(&'static str, Vec<u8>)> {
+    FONT_CANDIDATES
+        .iter()
+        .find_map(|p| std::fs::read(p).ok().map(|data| (*p, data)))
+}
+
+/// 把字体插到 Proportional / Monospace 两个字族的最前面。
+///
+/// 用 `entry().or_default()` 而不是 `get_mut()`：关闭 default_fonts 时
+/// 字族列表是空的，旧写法会静默失败并留下无字体字族。
+fn apply_primary_font(fonts: &mut FontDefinitions, data: Vec<u8>) {
     fonts
         .font_data
-        .insert("cjk".to_owned(), egui::FontData::from_owned(data).into());
+        .insert(FONT_KEY.to_owned(), egui::FontData::from_owned(data).into());
     // 插到最前：中英文字形全部优先走雅黑（与 Vue 版 font-family 一致的观感）
-    if let Some(prop) = fonts.families.get_mut(&egui::FontFamily::Proportional) {
-        prop.insert(0, "cjk".to_owned());
+    for family in [egui::FontFamily::Proportional, egui::FontFamily::Monospace] {
+        fonts
+            .families
+            .entry(family)
+            .or_default()
+            .insert(0, FONT_KEY.to_owned());
     }
-    if let Some(mono) = fonts.families.get_mut(&egui::FontFamily::Monospace) {
-        mono.insert(0, "cjk".to_owned());
-    }
-    ctx.set_fonts(fonts);
 }
 
 /// 关闭全局部件间距：布局间距全部由模板代码显式控制
@@ -160,4 +180,48 @@ pub fn apply_theme(ctx: &Context) {
         v.selection.bg_fill = tint(ACCENT, 90);
         v.selection.stroke = egui::Stroke::new(1.0, ACCENT);
     });
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn family_fonts(fonts: &FontDefinitions, family: egui::FontFamily) -> Vec<String> {
+        fonts.families.get(&family).cloned().unwrap_or_default()
+    }
+
+    #[test]
+    fn apply_primary_font_builds_empty_families() {
+        // launcherclient 关闭 default_fonts 后的真实起点：两个字族都是空列表
+        let mut fonts = FontDefinitions::empty();
+        apply_primary_font(&mut fonts, vec![0u8; 4]);
+
+        assert!(fonts.font_data.contains_key(FONT_KEY));
+        for family in [egui::FontFamily::Proportional, egui::FontFamily::Monospace] {
+            let names = family_fonts(&fonts, family);
+            assert_eq!(names.first().map(String::as_str), Some(FONT_KEY));
+        }
+    }
+
+    #[test]
+    fn apply_primary_font_keeps_existing_fallback_chain() {
+        // pkgtool 启用 default_fonts：在原字体链最前面插入，原有回退顺序不能丢
+        let mut fonts = FontDefinitions::empty();
+        fonts
+            .families
+            .insert(egui::FontFamily::Proportional, vec!["existing".to_owned()]);
+        apply_primary_font(&mut fonts, vec![0u8; 4]);
+
+        let names = family_fonts(&fonts, egui::FontFamily::Proportional);
+        assert_eq!(names.first().map(String::as_str), Some(FONT_KEY));
+        assert_eq!(names.get(1).map(String::as_str), Some("existing"));
+    }
+
+    #[test]
+    fn font_candidates_cover_cjk_and_latin_fallback() {
+        // 中文字体优先；末尾必须有西文兜底，避免关闭 default_fonts 后无字体可用
+        assert_eq!(FONT_CANDIDATES[0], "C:/Windows/Fonts/msyh.ttc");
+        assert!(FONT_CANDIDATES.iter().any(|p| p.ends_with("segoeui.ttf")));
+        assert!(FONT_CANDIDATES.iter().any(|p| p.ends_with("arial.ttf")));
+    }
 }

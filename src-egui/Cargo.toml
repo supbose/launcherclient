@@ -14,12 +14,17 @@ name = "launcherclient"
 path = "src/main.rs"
 
 [dependencies]
-# egui/eframe 原生 UI 框架（默认 feature 即走 wgpu 渲染后端，与 0.35 一致）
-eframe = "0.37"
+# egui/eframe 原生 UI 框架。兼容优先：保留 wgpu 渲染后端（DX12/WARP，不依赖 GL 驱动），
+# 只关掉用不到的默认 feature，减小体积：
+# - default_fonts：字体由 src-ui 的 install_fonts 从系统字体加载（关闭后必须显式建字族）
+# - accesskit / clipboard / links / system_fonts / web_screen_reader / wayland / x11：
+#   本项目不用的辅助能力（x11/wayland 仅 Linux 生效）
+eframe = { version = "0.37", default-features = false, features = ["wgpu"] }
 egui = "0.37"
 # PNG 解码：assets/icon.png → egui::IconData（窗口/任务栏图标）
 png = "0.17"
-tokio = { version = "1", features = ["full"] }
+# 只用运行时/文件/流/定时器，避免 tokio "full" 带入未使用的 net/process/signal 等
+tokio = { version = "1", features = ["rt-multi-thread", "fs", "io-util", "time"] }
 # 共享核心：cli/config/manifest/download/install/cleanup/services + phase/flow（无 UI）
 # 应用目录与本地版本记录（原外部 qingshu 能力）已内聚到 src-core 的 appdir / local_manifest
 qsltd-updater-core = { path = "../src-core" }

@@ -162,9 +162,12 @@
    形成圆环；视觉宽度对齐 CSS 的 ring + inner 组合（96px / 78px）。
 
 4. **字体必须手工注入。**
-   egui 内置字体不含中文字形，直接渲染会出现豆腐块。`theme::install_fonts` 按
-   `msyh.ttc → msyhl.ttc → simhei.ttf → Deng.ttf → simsun.ttc` 顺序加载系统字体，并插入
-   Proportional / Monospace 家族首位。这是相对 WebView（可用 `system-ui`）的额外必需步骤。
+   launcherclient 关闭了 eframe 的 `default_fonts`（不再打包内置字体），egui 自身没有 CJK 字形，
+   不注入会直接豆腐块、甚至因字族为空而 panic。`theme::install_fonts` 按
+   `msyh.ttc → msyhl.ttc → simhei.ttf → Deng.ttf → simsun.ttc → segoeui.ttf → arial.ttf`
+   顺序加载第一个可读的系统字体，并**显式创建** Proportional / Monospace 家族后插入首位
+   （关闭 default_fonts 后 `FontDefinitions::default()` 是空的，`get_mut` 会静默失败）。
+   pkgtool 仍启用默认字体，同一函数只是把系统字体插到原字体链最前面。
 
 5. **控件全部自绘，而非使用 egui 默认 `Button`/`ProgressBar`。**
    egui 默认控件的圆角、padding、hover 动效与 CSS 不一致，因此用 `Painter` 直接画。
@@ -197,8 +200,9 @@
    实际不受影响。
 2. **无 DPI 感知的自适应弹性布局。** 窗口固定 440×420 且不缩放，因此与 Tauri 版一致地不具备响应式；
    在高 DPI 缩放下egui 会整体缩放而非重排，某些模板的长文本可能出现轻微换行差异。
-3. **中文字体依赖系统字体存在。** 需 `C:/Windows/Fonts/msyh.ttc`（或兜底链中任一字体）。
-   若目标机器上这些字体都被移除，界面文字会退化为方块。
+3. **中文字体依赖系统字体存在。** 需 `C:/Windows/Fonts/msyh.ttc`（或兜底链中任一字体）；
+   由于已关闭 eframe 内置字体，全部候选都读不到时界面无法渲染文字（标准 Windows 上
+   末尾的 segoeui/arial 兜底恒存在）。
 4. **渐变/环形为近似实现。** 160deg 斜向渐变 → 纵向近似；`conic-gradient` → 64 段描边近似；
    spinner 的 `animation-timing-function` 复刻为匀速旋转。
 5. **仅 Windows 验证。** 与已删除的 Tauri 版相同，服务端操作（`sc`、`services`）、路径规则、

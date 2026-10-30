@@ -505,7 +505,7 @@ lint 口径：`unwrap_used = "deny"` / `expect_used = "warn"` 是生产代码的
 ## 7. 注意事项
 
 - `version.rc` / `icon.rc` 中的公司名、产品名、版本号是 Windows 资源硬编码字段，改动后需重新构建；版本号本身不要手改，改 `package.json` 后由 `scripts/pybuild.py` 铺开（见 3.2），CI 用 `--check-version` 兜底。
-- release 构建会 `strip` 符号并关闭 panic 位置信息，用于减小体积、降低杀软启发式误报。profile 现在写在**根 `Cargo.toml`**（workspace 成员不能各自定义）：`opt-level = 3` + `lto = true` + `strip = true` + `codegen-units = 1`。
+- release 构建会 `strip` 符号并关闭 panic 位置信息，用于减小体积、降低杀软启发式误报。profile 现在写在**根 `Cargo.toml`**（workspace 成员不能各自定义）：`opt-level = 3` + `lto = true` + `strip = true` + `codegen-units = 1` + `panic = "abort"`。
 - `src-pkgtool` 刻意**留在 workspace 之外**：它的 release profile 放宽了 LTO 与优化级别（`opt-level = 2` / `lto = false` / `codegen-units = 16`），用于规避特定环境下编译 `windows-sys` 的偶发崩溃。workspace 的 profile 全局唯一、成员无法覆盖，把它纳进来会让这份规避失效，顺带把发布产物 `launcherclient.exe` 的 LTO/strip 一起退化。
 - 更新器只做「下载 → 校验 → 解压 → 拉起」，**不做包签名校验**；分发链路请自行保证 HTTPS 与 CDN 可信。
   `require_sha256`（默认开启）挡住的是「传输损坏 + 无完整性证据的包」，不是伪造者——他能同时改掉服务器上的包和哈希，

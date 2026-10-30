@@ -34,3 +34,5 @@ lto = true
 # 剥离调试符号与 panic 位置信息：减小体积、降低杀软启发式误报率（对齐原 Tauri 版的既有约定）
 strip = true
 codegen-units = 1
+# 不生成 unwind 表与回溯支持：本项目无 catch_unwind，panic 一律终止进程（体积 -数百 KB）
+panic = "abort"
