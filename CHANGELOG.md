@@ -23,6 +23,12 @@
 
 
 
+
+## v1.0.1 (2026-10-30)
+### ♻️ 代码重构
+
+- [1f17d30](/-/commit/1f17d30c1194c41953ba87d99cf018a8414d7240) 重构(Cargo.lock): 优化构建体积与字体加载逻辑，修复无字体时的 panic (Cargo.lock, Cargo.toml, README.md, docs/egui界面复刻说明.md, src-core/Cargo.toml, src-egui/Cargo.toml, src-ui/src/theme.rs)
+
 ## v1.0.0 (2026-10-30)
 ## v0.2.6-beta.0 (2026-10-30)
 ### 🚀 新增功能
