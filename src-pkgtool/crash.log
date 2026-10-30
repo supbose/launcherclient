@@ -1,7 +1,0 @@
-﻿pkgtool.exe : [pkgtool] 使用中文字体: C:/Windows/Fonts/msyh.ttc
-所在位置 行:15 字符: 1913
-+ ... '; $env:RUST_BACKTRACE='0'; & .\target\debug\pkgtool.exe 2>&1 | Out-F ...
-+                                 ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
-    + CategoryInfo          : NotSpecified: ([pkgtool] 使用中文字.../Fonts/msyh.ttc:String) [], RemoteException
-    + FullyQualifiedErrorId : NativeCommandError
- 
