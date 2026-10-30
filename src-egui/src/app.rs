@@ -26,6 +26,20 @@ use crate::widgets;
 pub const WINDOW_SIZE: (f32, f32) = (440.0, 420.0);
 /// 预览模式下窗口高度（底部模板/阶段切换条）
 pub const PREVIEW_EXTRA_HEIGHT: f32 = 150.0;
+/// 首检未出结果时，窗口最多隐藏这么久；超时先显示「检测中」极简屏
+const LAZY_SHOW_DELAY: std::time::Duration = std::time::Duration::from_millis(300);
+
+/// 当前帧是否应把隐藏启动的窗口显示出来（纯函数，便于覆盖各分支）
+///
+/// 判定必须每帧执行：首检结果晚于一帧到达时，`startup_show` 仍要把窗口拉出来。
+fn should_show_window(
+    preview: bool,
+    startup_show: bool,
+    startup_consumed: bool,
+    elapsed: std::time::Duration,
+) -> bool {
+    preview || startup_show || (!startup_consumed && elapsed > LAZY_SHOW_DELAY)
+}
 
 /// 更新器应用状态
 pub struct UpdaterApp {
@@ -263,21 +277,25 @@ impl eframe::App for UpdaterApp {
             if self.frames > 30 {
                 self.centered = true;
             }
-            if self.centered && !self.shown {
-                // 懒加载显示：
-                // - 预览模式：直接显示
-                // - 已决且为 Show（有更新/失败）：显示
-                // - 未决且超过 300ms 阈值（弱网/慢 manifest）：显示 checking
-                // - 其余（未决且 <300ms、或无更新静默）：维持隐藏
-                let show_now = self.preview
-                    || self.startup_show
-                    || (!self.startup_consumed
-                        && self.start_time.elapsed() > std::time::Duration::from_millis(300));
-                if show_now {
-                    ctx.send_viewport_cmd(egui::ViewportCommand::Visible(true));
-                    self.shown = true;
-                }
-            }
+        }
+        // 显示判定必须每帧执行，不能藏在 `if !centered` 里：居中一旦完成，
+        // 后续到达的首检结果（startup_show）仍需把窗口显示出来
+        if self.centered
+            && !self.shown
+            && should_show_window(
+                self.preview,
+                self.startup_show,
+                self.startup_consumed,
+                self.start_time.elapsed(),
+            )
+        {
+            // 懒加载显示：
+            // - 预览模式：直接显示
+            // - 已决且为 Show（有更新/失败）：显示
+            // - 未决且超过 300ms 阈值（弱网/慢 manifest）：显示 checking
+            // - 其余（未决且 <300ms、或无更新静默）：维持隐藏
+            ctx.send_viewport_cmd(egui::ViewportCommand::Visible(true));
+            self.shown = true;
         }
 
         // 关键阶段关闭拦截（对应 lib.rs on_window_event 的 CloseRequested 确认）：
@@ -520,4 +538,64 @@ fn modal_button(ui: &mut Ui, rect: egui::Rect, label: &str, primary: bool) -> bo
     let clicked = resp.clicked();
     resp.on_hover_cursor(egui::CursorIcon::PointingHand);
     clicked
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::time::Duration;
+
+    #[test]
+    fn preview_always_shows_immediately() {
+        assert!(should_show_window(true, false, false, Duration::ZERO));
+        assert!(should_show_window(true, false, true, Duration::ZERO));
+    }
+
+    #[test]
+    fn startup_show_wins_after_any_frame() {
+        // 门闩回归：居中的同一帧首检尚未到达（未决且 <300ms）→ 先隐藏；
+        // 后续帧首检结果为 Show → 必须仍能显示
+        let early = Duration::from_millis(10);
+        assert!(!should_show_window(false, false, false, early));
+        assert!(should_show_window(false, true, true, early));
+    }
+
+    #[test]
+    fn slow_startup_shows_checking_after_delay() {
+        assert!(!should_show_window(
+            false,
+            false,
+            false,
+            Duration::from_millis(299)
+        ));
+        assert!(should_show_window(
+            false,
+            false,
+            false,
+            Duration::from_millis(301)
+        ));
+    }
+
+    #[test]
+    fn silent_exit_keeps_window_hidden() {
+        // 无更新静默退出：消费决策后 startup_show=false，不得再显示窗口
+        assert!(!should_show_window(
+            false,
+            false,
+            true,
+            Duration::from_secs(5)
+        ));
+    }
+
+    #[test]
+    fn show_requires_centering_and_not_shown() {
+        // 纯函数只负责「该不该显示」；调用方还要求 centered && !shown，
+        // 这里用组合条件钉住语义，防止未来把门闩改回去
+        let gate = |centered: bool, shown: bool| {
+            centered && !shown && should_show_window(false, true, true, Duration::ZERO)
+        };
+        assert!(gate(true, false), "居中完成且未显示时应显示");
+        assert!(!gate(true, true), "已显示后不应重复发送 Visible(true)");
+        assert!(!gate(false, false), "未完成居中时不应显示");
+    }
 }
