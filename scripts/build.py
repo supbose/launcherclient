@@ -6,8 +6,8 @@
     python scripts/build.py     # = pnpm dist
 
 产物：
-    dist/<版本号>/launcherclient.exe
-    dist/<版本号>/fonts/            # 华为 HarmonyOS Sans SC（含 LICENSE.txt）
+    dist/<版本号>/launcherclient.exe   # 字体已编进 exe，单文件即可运行
+    dist/<版本号>/HarmonyOS-Sans-LICENSE.txt   # 字体许可（分发时须保留）
     dist/<版本号>/pkgtool.exe
 """
 
@@ -20,6 +20,7 @@ from pathlib import Path
 import pybuild
 
 DIST_DIR = pybuild.PROJECT_ROOT / "dist"
+FONT_LICENSE = pybuild.PROJECT_ROOT / "src-egui" / "assets" / "font" / "LICENSE.txt"
 
 
 def main() -> int:
@@ -49,16 +50,16 @@ def main() -> int:
             shutil.copy2(exe_path, dest)
             print(f"      产物已复制到：{dest}")
 
-            # 启动器附带华为字体目录（缺失时运行期回退系统字体）；pkgtool 不需要
+            # 启动器内嵌了华为字体（include_bytes!），只需随包分发许可文本；
+            # pkgtool 不需要
             if name == "egui":
-                fonts_src = exe_path.parent / "fonts"
-                if fonts_src.is_dir():
-                    fonts_dest = out_dir / "fonts"
-                    shutil.copytree(fonts_src, fonts_dest, dirs_exist_ok=True)
-                    print(f"      字体目录已复制到：{fonts_dest}")
+                if FONT_LICENSE.is_file():
+                    license_dest = out_dir / "HarmonyOS-Sans-LICENSE.txt"
+                    shutil.copy2(FONT_LICENSE, license_dest)
+                    print(f"      字体许可已复制到：{license_dest}")
                 else:
                     print(
-                        f"      警告：未找到 {fonts_src}，发布包将回退系统字体",
+                        f"      警告：未找到 {FONT_LICENSE}，请补齐字体许可文本",
                         file=sys.stderr,
                     )
 

@@ -3,7 +3,7 @@
 通用启动器程序：启动前先向服务器版本清单（version.json）询问是否有更新，**无更新直接拉起目标程序并静默退出，有更新才弹出窗口**下载安装。
 仓库同时提供配套的**更新包打包工具 pkgtool**（GUI，由 `scripts/versionTools.py` 重实现而来）。
 
-当前实现为 **Rust + egui/eframe 原生 UI**（无 WebView、无 Node 运行时），产物是单个 exe；界面字体默认使用**华为 HarmonyOS Sans SC**，随程序放在 exe 同级的 `fonts/` 目录（缺失时自动回退系统字体）。
+当前实现为 **Rust + egui/eframe 原生 UI**（无 WebView、无 Node 运行时），产物是单个 exe；界面字体**华为 HarmonyOS Sans SC** 已内嵌进 exe，分发时无需附带字体文件（字体缺失时仍会回退系统字体）。
 
 | 项目 | 说明 |
 | --- | --- |
@@ -31,15 +31,16 @@ launcherclient/
 │              phase.rs flow.rs
 │   └── examples/gen_cli_docs.rs  # 从 cli.rs 的 CLI_SPECS 生成 README/手册的参数表（--check / --write）
 ├── src-ui/                # 共享 UI 原语（只依赖 egui，无产品语义）
-│   └── src/    theme.rs widgets.rs
-│                # theme：色板、text_alpha 等色值工具、字体安装、apply_theme
+│   └── src/    fonts.rs theme.rs widgets.rs
+│                # fonts：华为字体加载（内嵌 / 磁盘 / 系统回退）
+│                # theme：色板、text_alpha 等色值工具、apply_theme
 │                # widgets：标题栏、进度条、圆环、状态点、胶囊、按钮、背景绘制
 ├── src-egui/              # 启动器主程序（egui 0.37）
 │   ├── src/    main.rs app.rs templates.rs widgets.rs theme.rs preview.rs
 │   │            # templates：A~H 八套布局（共用 EndStyle/TailStyle/BulletLogStyle 骨架）
 │   │            # widgets/theme：启动器专属控件 + 对 qsltd-ui 的转出层
 │   ├── assets/icon.ico  icon.png
-│   ├── assets/font/                # 华为 HarmonyOS Sans SC（Regular/Medium/Bold）+ LICENSE.txt
+│   ├── assets/font/                # 华为 HarmonyOS Sans SC（Regular/Medium/Bold）+ LICENSE.txt，编译时内嵌
 │   └── version.rc         # exe 图标 + 文件版本信息（build.rs 嵌入）
 ├── src-pkgtool/           # 打包工具（egui 0.37，独立 crate + 自己的 target/）
 │   ├── src/main.rs
@@ -75,7 +76,7 @@ launcherclient/
 ```bash
 # 启动器：release 构建（workspace 根执行 = cargo build --release -p qsltdupdater-egui）
 pnpm build
-# 产物：target/release/launcherclient.exe（字体已由 build.rs 复制到 target/release/fonts/）
+# 产物：target/release/launcherclient.exe（字体已内嵌，单文件即可运行）
 
 # 启动器：debug 运行
 pnpm dev
@@ -195,8 +196,8 @@ python scripts/pybuild.py egui --codesign-pfx D:\certs\qsltd.pfx --codesign-tsa 
 
 ### 4.1 部署
 
-把 `launcherclient.exe`、`update.json` 与 `fonts/`（华为字体，可选）放在**同一目录**即可（配置其次会查找当前工作目录）。
-`fonts/` 缺失不影响启动，字体会回退到微软雅黑等系统字体；`fonts/LICENSE.txt` 是 HarmonyOS Sans 的许可协议，分发时请一并保留。
+把 `launcherclient.exe` 与 `update.json` 放在**同一目录**即可（配置其次会查找当前工作目录）。
+字体已内嵌进 exe，不需要再附带 `fonts/` 目录；`HarmonyOS-Sans-LICENSE.txt` 是字体许可协议，`scripts/build.py` 会把它复制进 `dist/<版本号>/`，分发时请一并保留。
 首次运行若找不到 `update.json`，程序会按内置默认值自动生成一份带 `_说明` 字段的模板，不覆盖已有文件。
 
 ### 4.2 命令行参数
@@ -508,7 +509,7 @@ lint 口径：`unwrap_used = "deny"` / `expect_used = "warn"` 是生产代码的
 
 - `version.rc` / `icon.rc` 中的公司名、产品名、版本号是 Windows 资源硬编码字段，改动后需重新构建；版本号本身不要手改，改 `package.json` 后由 `scripts/pybuild.py` 铺开（见 3.2），CI 用 `--check-version` 兜底。
 - release 构建会 `strip` 符号并关闭 panic 位置信息，用于减小体积、降低杀软启发式误报。profile 现在写在**根 `Cargo.toml`**（workspace 成员不能各自定义）：`opt-level = 3` + `lto = true` + `strip = true` + `codegen-units = 1` + `panic = "abort"`。
-- 界面字体默认使用**华为 HarmonyOS Sans SC**（`src-egui/assets/font/`，Regular/Medium/Bold）。`build.rs` 把它们复制到 `target/<profile>/fonts/`，`scripts/build.py` 再复制进 `dist/<版本号>/fonts/`。运行期先探测 `<exe 同级>/fonts/`，再回退源码目录；都找不到时按平台回退系统字体：Windows 雅黑/黑体/宋体/等线/Segoe UI/Arial，macOS 苹方/冬青黑体/宋体，Linux Noto Sans CJK/思源黑体/文泉驿/DejaVu/Liberation。egui 的 `FontId` 没有字重字段，Medium/Bold 各注册为独立字族（`harmony-medium` / `harmony-bold`），当前界面文案主要使用 Regular。字体许可见 `src-egui/assets/font/LICENSE.txt`，分发时请保留。
+- 界面字体使用**华为 HarmonyOS Sans SC**（`src-egui/assets/font/`，Regular/Medium/Bold），由 `src-egui/src/app.rs` 用 `include_bytes!` 直接编进 exe（约 +5.1 MB），单文件分发不依赖外部字体目录。运行期仍保留两级回退：exe 同级 `fonts/` 或源码目录（仅在内嵌字节不可用或未内嵌时生效，pkgtool 走这条路径），再不行按平台回退系统字体——Windows 雅黑/黑体/宋体/等线/Segoe UI/Arial，macOS 苹方/冬青黑体/宋体，Linux Noto Sans CJK/思源黑体/文泉驿/DejaVu/Liberation。egui 的 `FontId` 没有字重字段，Medium/Bold 各注册为独立字族（`harmony-medium` / `harmony-bold`）。字体许可见 `src-egui/assets/font/LICENSE.txt`，分发时请保留（`scripts/build.py` 会复制为 `dist/<版本号>/HarmonyOS-Sans-LICENSE.txt`）。
 - `src-pkgtool` 刻意**留在 workspace 之外**：它的 release profile 放宽了 LTO 与优化级别（`opt-level = 2` / `lto = false` / `codegen-units = 16`），用于规避特定环境下编译 `windows-sys` 的偶发崩溃。workspace 的 profile 全局唯一、成员无法覆盖，把它纳进来会让这份规避失效，顺带把发布产物 `launcherclient.exe` 的 LTO/strip 一起退化。
 - 更新器只做「下载 → 校验 → 解压 → 拉起」，**不做包签名校验**；分发链路请自行保证 HTTPS 与 CDN 可信。
   `require_sha256`（默认开启）挡住的是「传输损坏 + 无完整性证据的包」，不是伪造者——他能同时改掉服务器上的包和哈希，

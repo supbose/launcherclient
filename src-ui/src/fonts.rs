@@ -4,11 +4,13 @@
 //!
 //! # 字体来源与优先级
 //!
-//! 1. **项目内置**（默认）：`src-egui/assets/font/HarmonyOSSansSC-{Regular,Medium,Bold}.ttf`。
-//!    `src-egui/build.rs` 会把它复制到 `target/<profile>/fonts/`，发布态则放在
-//!    exe 同级的 `fonts/`；运行期按 [`search_dirs`] 的顺序探测。
-//!    woff2 是 Brotli 容器，egui 的 skrifa 后端不认，必须用 ttf/otf/ttc。
-//! 2. **客户端系统字体**（内置缺失时兜底）：
+//! 1. **内嵌资源**（launcherclient 默认）：`src-egui/assets/font/` 下的三个 ttf 由
+//!    `include_bytes!` 编进 exe，单文件分发不依赖外部字体目录；调用方通过
+//!    [`install_embedded`] 传入字节。woff2 是 Brotli 容器，egui 的 skrifa
+//!    后端不认，必须用 ttf/otf/ttc。
+//! 2. **磁盘字体目录**（pkgtool 等未内嵌的调用方；内嵌字节不可用时兜底）：
+//!    exe 同级 `fonts/`、开发态 `src-egui/assets/font/`，探测顺序见 [`search_dirs`]。
+//! 3. **客户端系统字体**（以上都缺失时兜底）：
 //!    Windows 微软雅黑 / 黑体 / 宋体 / 等线 / Segoe UI / Arial；
 //!    macOS 苹方 / 冬青黑体 / 华文黑体 / 宋体；
 //!    Linux Noto Sans CJK / 思源黑体 / 文泉驿 / DejaVu / Liberation。
@@ -114,19 +116,51 @@ struct LoadedFont {
     data: FontData,
 }
 
+/// 内嵌字体字节：调用方用 `include_bytes!` 提供，编进 exe。
+///
+/// launcherclient 在 `src-egui/src/app.rs` 里定义静态实例；pkgtool 不内嵌，
+/// 继续走 [`install`] 的磁盘/系统字体路径，产物不受影响。
+#[derive(Clone, Copy)]
+pub struct EmbeddedFonts {
+    /// Regular 字重（正文）
+    pub regular: &'static [u8],
+    /// Medium 字重（次级强调）
+    pub medium: &'static [u8],
+    /// Bold 字重（标题）
+    pub bold: &'static [u8],
+}
+
+/// 安装内嵌字体（launcherclient 用）：内嵌资源优先，缺失时回退磁盘与系统字体。
+pub fn install_embedded(ctx: &Context, fonts: &EmbeddedFonts) -> bool {
+    install_with(ctx, Some(fonts))
+}
+
 /// 安装字体到 egui 上下文（幂等，可重复调用）
 ///
-/// 返回是否成功装上了正文用字体。字体目录探测顺序见 [`search_dirs`]；
-/// 发布包里字体放在 exe 同级的 `fonts/`，删掉该目录也能正常启动（回退系统字体）。
+/// 按「磁盘内置 → 系统字体」的顺序加载，供没有内嵌字体的调用方（pkgtool）使用。
+/// 返回是否成功装上了正文用字体；探测顺序见 [`search_dirs`]。
 pub fn install(ctx: &Context) -> bool {
+    install_with(ctx, None)
+}
+
+/// 两种入口共用的安装逻辑；`embedded` 为 None 时只走磁盘/系统字体。
+fn install_with(ctx: &Context, embedded: Option<&EmbeddedFonts>) -> bool {
     if INSTALLED.swap(true, Ordering::SeqCst) {
         return true;
     }
 
     let dirs = search_dirs();
-    let mut regular = load_builtin(&dirs, BUILTIN_REGULAR).or_else(|| load_system(SYSTEM_REGULAR));
-    let mut medium = load_builtin(&dirs, BUILTIN_MEDIUM);
-    let mut bold = load_builtin(&dirs, BUILTIN_BOLD).or_else(|| load_system(SYSTEM_BOLD));
+    let mut regular = embedded
+        .and_then(|f| load_embedded(f.regular))
+        .or_else(|| load_builtin(&dirs, BUILTIN_REGULAR))
+        .or_else(|| load_system(SYSTEM_REGULAR));
+    let mut medium = embedded
+        .and_then(|f| load_embedded(f.medium))
+        .or_else(|| load_builtin(&dirs, BUILTIN_MEDIUM));
+    let mut bold = embedded
+        .and_then(|f| load_embedded(f.bold))
+        .or_else(|| load_builtin(&dirs, BUILTIN_BOLD))
+        .or_else(|| load_system(SYSTEM_BOLD));
 
     // 极端兜底：只剩粗体/中等文件时也拿来当正文，避免字族为空
     if regular.is_none() {
@@ -219,7 +253,7 @@ pub fn bold(size: f32) -> FontId {
 
 /// 字体探测目录（按优先级）：
 ///
-/// 1. `<exe 同级>/fonts/`：发布态（打包脚本把 ttf 放这里）
+/// 1. `<exe 同级>/fonts/`：内嵌字节不可用时兜底（pkgtool 等未内嵌调用方）
 /// 2. `<exe 上两级>/src-egui/assets/font/`：开发态 `target/<profile>/launcherclient.exe`
 /// 3. `<exe 上三级>/src-egui/assets/font/`：开发态 `src-pkgtool/target/<profile>/pkgtool.exe`
 /// 4. `<exe 上级>/src-egui/assets/font/`
@@ -254,6 +288,17 @@ fn load_builtin(dirs: &[PathBuf], file: &str) -> Option<LoadedFont> {
             source: dir.join(file).display().to_string(),
             data,
         })
+    })
+}
+
+/// 校验并包装内嵌字节；签名不对时返回 None，交给后续回退
+fn load_embedded(bytes: &'static [u8]) -> Option<LoadedFont> {
+    if bytes.len() < 12 || !looks_like_sfnt(bytes) {
+        return None;
+    }
+    Some(LoadedFont {
+        source: "内嵌资源".to_owned(),
+        data: FontData::from_static(bytes),
     })
 }
 
@@ -311,10 +356,22 @@ mod tests {
     #[test]
     fn search_dirs_cover_deploy_and_dev_layouts() {
         let dirs = search_dirs();
-        // 发布态：exe 同级 fonts/
+        // 兜底：exe 同级 fonts/（内嵌缺失时才会用到）
         assert!(dirs.iter().any(|p| p.ends_with("fonts")));
         // 开发态：target/<profile>/ 向上回溯到仓库的 src-egui/assets/font
         assert!(dirs.iter().any(|p| p.ends_with("src-egui/assets/font")));
+    }
+
+    #[test]
+    fn embedded_fonts_require_sfnt_signature() {
+        // 合法 sfnt 头：接受并标记来源
+        let Some(font) = load_embedded(b"\x00\x01\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00") else {
+            panic!("合法 sfnt 头应被接受");
+        };
+        assert_eq!(font.source, "内嵌资源");
+        // woff2 / 截断数据：拒绝，交给磁盘/系统字体回退
+        assert!(load_embedded(b"wOF2\x00\x01\x00\x00\x00\x00\x00\x00").is_none());
+        assert!(load_embedded(b"ttf").is_none());
     }
 
     #[test]

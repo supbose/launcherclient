@@ -26,7 +26,7 @@
 | `src-egui/Cargo.toml` | — | 新 crate `qsltdupdater-egui`，依赖 eframe/egui 0.37 + tokio + 共享 core |
 | `src-egui/src/main.rs` | 212 | 命令行预处理（`--preview` / `--stage`）、`--check-only` 退出码、启动决策、进入事件循环 |
 | `src-egui/src/app.rs` | 505 | `App` 实现：阶段快照轮询、标题栏动作、关闭确认模态、完成/重试派发 |
-| `src-egui/src/theme.rs` | 121 | 全部色值/尺寸常量 + 中文字体注入 + item_spacing 归零 |
+| `src-egui/src/theme.rs` | 121 | 对 `qsltd-ui` 色板/字体工具的转出层 |
 | `src-egui/src/widgets.rs` | 563 | 自绘控件库：背景渐变、标题栏、进度条、环形进度、spinner、状态点、pill、日志卡、按钮 |
 | `src-egui/src/templates.rs` | 1474 | 八套模板 A~H 布局；A~E 与 `UpdateTemplateA~E.vue` 一一对应，F/G/H 为后续新增的三套设计方向 |
 | `src-egui/src/preview.rs` | 270 | 预览面板数据与渲染（`Preview.vue` 的 8 个阶段预设 + 模板切换） |
@@ -163,9 +163,10 @@
 
 4. **字体必须手工注入，优先华为鸿蒙字体。**
    launcherclient 关闭了 eframe 的 `default_fonts`（不再打包 egui 内置字体），egui 自身没有 CJK 字形，
-   不注入会直接豆腐块、甚至因字族为空而 panic。`src-ui/src/fonts.rs` 的 `fonts::install` 优先加载项目内置的
-   `HarmonyOSSansSC-{Regular,Medium,Bold}.ttf`（`src-egui/assets/font/`，发布态在 exe 同级 `fonts/`）；
-   缺失时逐字重回退系统字体：常规按平台为 Windows `msyh → msyhl → simhei → simsun → Deng → segoeui → arial`、
+   不注入会直接豆腐块、甚至因字族为空而 panic。`src-ui/src/fonts.rs` 提供两种入口：launcherclient 走
+   `fonts::install_embedded`，三个 `HarmonyOSSansSC-{Regular,Medium,Bold}.ttf`（`src-egui/assets/font/`）
+   由 `include_bytes!` 直接编进 exe，单文件分发；`fonts::install`（pkgtool 等）则从 exe 同级 `fonts/`
+   或源码目录加载。都缺失时逐字重回退系统字体：常规按平台为 Windows `msyh → msyhl → simhei → simsun → Deng → segoeui → arial`、
    macOS `PingFang → Hiragino Sans GB → STHeiti → Songti`、Linux `NotoSansCJK → SourceHanSans → wqy → DejaVu/Liberation`；
    粗体同理（`msyhbd` / `STHeiti Medium` / `NotoSansCJK-Bold` 等）。Medium/Bold 各自注册为独立字族
    （`harmony-medium` / `harmony-bold`），因为 egui 的 `FontId` 没有字重字段。
@@ -202,8 +203,8 @@
    实际不受影响。
 2. **无 DPI 感知的自适应弹性布局。** 窗口固定 440×420 且不缩放，因此与 Tauri 版一致地不具备响应式；
    在高 DPI 缩放下egui 会整体缩放而非重排，某些模板的长文本可能出现轻微换行差异。
-3. **字体依赖内置目录或系统字体。** 默认使用 `src-egui/assets/font/`（发布态 `fonts/`）里的
-   华为 HarmonyOS Sans SC；目录被删除时回退系统字体，末尾的 segoeui/arial 兜底在标准 Windows 上恒存在。
+3. **字体内嵌进 exe，体积增加约 5.1 MB。** 三个字重的华为 HarmonyOS Sans SC 随编译产物分发，
+   不再依赖 exe 旁边的 `fonts/` 目录；磁盘目录与系统字体只作为兜底（末尾的 segoeui/arial 兜底在标准 Windows 上恒存在）。
    woff2 是 Brotli 容器，egui（skrifa）不认，必须使用 ttf/otf/ttc。
 4. **渐变/环形为近似实现。** 160deg 斜向渐变 → 纵向近似；`conic-gradient` → 64 段描边近似；
    spinner 的 `animation-timing-function` 复刻为匀速旋转。

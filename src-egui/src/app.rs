@@ -29,6 +29,16 @@ pub const PREVIEW_EXTRA_HEIGHT: f32 = 150.0;
 /// 首检未出结果时，窗口最多隐藏这么久；超时先显示「检测中」极简屏
 const LAZY_SHOW_DELAY: std::time::Duration = std::time::Duration::from_millis(300);
 
+/// 内嵌字体：编进 exe，单文件分发不依赖外部 `fonts/` 目录。
+///
+/// 三个 ttf 来自 `assets/font/`（华为 HarmonyOS Sans SC），
+/// 许可条款见同目录 `LICENSE.txt`（随发布包一起分发）。
+static EMBEDDED_FONTS: qsltd_ui::fonts::EmbeddedFonts = qsltd_ui::fonts::EmbeddedFonts {
+    regular: include_bytes!("../assets/font/HarmonyOSSansSC-Regular.ttf"),
+    medium: include_bytes!("../assets/font/HarmonyOSSansSC-Medium.ttf"),
+    bold: include_bytes!("../assets/font/HarmonyOSSansSC-Bold.ttf"),
+};
+
 /// 当前帧是否应把隐藏启动的窗口显示出来（纯函数，便于覆盖各分支）
 ///
 /// 判定必须每帧执行：首检结果晚于一帧到达时，`startup_show` 仍要把窗口拉出来。
@@ -100,7 +110,7 @@ impl UpdaterApp {
         preview_stage: usize,
         title: String,
     ) -> Self {
-        qsltd_ui::fonts::install(&cc.egui_ctx);
+        qsltd_ui::fonts::install_embedded(&cc.egui_ctx, &EMBEDDED_FONTS);
         theme::zero_item_spacing(&cc.egui_ctx);
         Self {
             title,
@@ -544,6 +554,30 @@ fn modal_button(ui: &mut Ui, rect: egui::Rect, label: &str, primary: bool) -> bo
 mod tests {
     use super::*;
     use std::time::Duration;
+
+    #[test]
+    fn embedded_fonts_are_valid_sfnt_assets() {
+        // 字体编进 exe 后没有运行期兜底可查：资源被换成 woff2/空文件时要在测试里拦下
+        for bytes in [
+            EMBEDDED_FONTS.regular,
+            EMBEDDED_FONTS.medium,
+            EMBEDDED_FONTS.bold,
+        ] {
+            assert!(bytes.len() > 12, "字体资源不得为空");
+            assert!(
+                matches!(
+                    bytes.get(..4),
+                    Some(
+                        [0x00, 0x01, 0x00, 0x00]
+                            | [b't', b'r', b'u', b'e']
+                            | [b'O', b'T', b'T', b'O']
+                            | [b't', b't', b'c', b'f']
+                    )
+                ),
+                "字体必须是 ttf/otf/ttc（woff2 不被 egui 支持）"
+            );
+        }
+    }
 
     #[test]
     fn preview_always_shows_immediately() {
