@@ -29,6 +29,12 @@
 
 
 
+
+## v1.0.7 (2026-10-31)
+### 🚀 新增功能
+
+- [1598733](/-/commit/15987339ec2740efb6f82b38042f5ee341c1abe1) 新增(src-core): 支持多地址并发拉取 manifest 新增分卷并发与 fail_open 配置 (README.md, launcherclient-guide/launcherclient-guide.html, src-core/examples/stage_bench.rs, src-core/src/config.rs, src-core/src/download.rs, src-core/src/install.rs, src-core/src/manifest.rs, update.json)
+
 ## v1.0.6 (2026-10-30)
 ### 🚀 新增功能
 
