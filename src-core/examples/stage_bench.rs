@@ -265,12 +265,12 @@ fn run() -> Result<(), String> {
             .block_on(download::merge_parts(
                 &parts,
                 &merged,
-                &Some(source.overall_sha.clone()),
+                Some(source.overall_sha.as_str()),
                 |_, _| {},
             ))
             .map_err(|e| format!("分卷合并失败: {e}"))?;
         let elapsed = started.elapsed();
-        if sha != source.overall_sha {
+        if sha.as_deref() != Some(source.overall_sha.as_str()) {
             return Err("合并产物 SHA256 与源数据不一致".to_string());
         }
         results.push(StageResult::new("merge(read+write)", source.total, elapsed));
@@ -307,6 +307,8 @@ fn run() -> Result<(), String> {
                 &source.package,
                 &install_dir,
                 install::ExtractLimits::default(),
+                // 基准包的 app.exe 是内容占位，不参与「主程序是否可启动」的判断
+                &install::InstallCheck::new("bench", None),
                 Arc::new(|_: &str, _: Option<f64>| {}),
             ))
             .map_err(|e| format!("解压安装失败: {e}"))?;

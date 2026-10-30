@@ -1,4 +1,8 @@
-//! 更新包安装：zip 解压到版本目录 + 写入本地版本记录（app.json）
+//! 更新包安装：zip 解压到版本目录 + 安装后自检 + 写入本地版本记录（app.json）
+//!
+//! 安装的顺序是「临时目录解压 → 旧目录改名备份 → 新目录就位 → 自检 →
+//! 删除备份」。自检（主程序可定位且非空）失败时自动回滚到备份：绝不把
+//! 一个「更新完成但启动不了」的目录留在正式路径上。
 
 use std::io::{Read as _, Write as _};
 use std::path::{Path, PathBuf};
@@ -72,6 +76,37 @@ fn collect_nested_exes(dir: &Path, depth: usize, out: &mut Vec<PathBuf>) {
     }
 }
 
+/// 在目录内按文件名递归查找（限深，防止异常目录树拖慢安装/启动）
+///
+/// 供 `launch` 定位使用：打包时 zip 根可能多包一层目录（`qsm/bin/qsm.exe`），
+/// 直接拼接相对路径找不到，就按文件名在浅层里兜底。
+pub(crate) fn find_file_by_name(
+    dir: &Path,
+    name: &std::ffi::OsStr,
+    max_depth: usize,
+) -> Option<PathBuf> {
+    if max_depth == 0 {
+        return None;
+    }
+    let entries = std::fs::read_dir(dir).ok()?;
+    for entry in entries.flatten() {
+        let path = entry.path();
+        if path.is_file() && path.file_name() == Some(name) {
+            return Some(path);
+        }
+    }
+    // 第二轮再递归（同名文件优先出现在浅层）
+    for entry in std::fs::read_dir(dir).ok()?.flatten() {
+        let path = entry.path();
+        if path.is_dir() {
+            if let Some(found) = find_file_by_name(&path, name, max_depth - 1) {
+                return Some(found);
+            }
+        }
+    }
+    None
+}
+
 /// 交换/解压留下的中间目录不参与主程序搜索：`_bak_*` 是上一次安装的旧版本，
 /// `*_tmp` 是解压半成品，从里面启动会得到一个马上要消失的程序。
 fn is_ignored_dir(path: &Path) -> bool {
@@ -133,6 +168,10 @@ fn pick_candidate(candidates: Vec<PathBuf>, app_name: &str) -> Option<PathBuf> {
 pub fn is_retryable_error(err: &str) -> bool {
     const PERMANENT: &[&str] = &[
         "打开更新包失败",
+        // 分卷直装：缺卷/读不到大小是本地确定性问题，重试不会长出文件
+        "分卷列表为空",
+        "打开分卷失败",
+        "读取分卷大小失败",
         "读取更新包结构失败",
         "读取更新包条目",
         "条目过大已中止",
@@ -147,6 +186,8 @@ pub fn is_retryable_error(err: &str) -> bool {
         "解压文件失败",
         // 磁盘预检失败：清盘才有用，重试只会再写坏一次
         "磁盘空间不足",
+        // 安装后自检失败：包结构/主程序问题，重装同一份包结果一样
+        "新版本自检失败",
     ];
     !PERMANENT.iter().any(|m| err.contains(m))
 }
@@ -182,23 +223,161 @@ impl Default for ExtractLimits {
     }
 }
 
+/// 安装后自检条件
+///
+/// 「解压完成」不等于「装好了」：包可能漏打主程序、主程序为空，或
+/// `launch` 指向的程序根本不在包里。自检失败时 [`install`] 会在删除
+/// 备份之前回滚，用户至少还能启动旧版本。
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct InstallCheck {
+    /// 应用名：`launch` 留空时用于定位安装目录内的主程序（同名优先）
+    pub app_name: String,
+    /// 更新完成后要拉起的程序（与 `ResolvedConfig::launch` 同义）。
+    /// 相对路径按安装目录解析；绝对路径按文件名在安装目录内查找。
+    pub launch: Option<String>,
+}
+
+impl InstallCheck {
+    pub fn new(app_name: impl Into<String>, launch: Option<String>) -> Self {
+        Self {
+            app_name: app_name.into(),
+            launch,
+        }
+    }
+}
+
+/// 安装后结构自检：目标程序可定位、存在且非空
+///
+/// 只做结构检查，不启动目标程序——拉起要等安装收尾（app.json 写入）后由
+/// 主流程统一执行；这里负责把「更新完成但启动失败」挡在替换旧版本之前。
+///
+/// 返回定位到的主程序。`launch` 是安装目录外的绝对路径且该路径真实存在时
+/// 返回 `None`：目标程序不在包内（如外部共享运行时），安装目录无法判定，
+/// 交给运行期的启动逻辑按原语义处理。
+pub fn verify_install(install_dir: &Path, check: &InstallCheck) -> Result<Option<PathBuf>, String> {
+    if !install_dir.is_dir() {
+        return Err(format!("安装目录不存在: {}", install_dir.display()));
+    }
+    let launch = check
+        .launch
+        .as_deref()
+        .map(str::trim)
+        .filter(|s| !s.is_empty());
+    let exe = match launch {
+        Some(raw) => {
+            let raw_path = Path::new(raw);
+            // 与 flow::resolve_launch_exe 同一套优先级：安装目录内同名文件
+            // 优先（交接模式传的是旧目录绝对路径），找不到再按文件名递归兜底
+            let direct = if raw_path.is_absolute() {
+                raw_path.file_name().map(|n| install_dir.join(n))
+            } else {
+                Some(install_dir.join(raw_path))
+            };
+            let found = direct.filter(|p| p.is_file()).or_else(|| {
+                raw_path
+                    .file_name()
+                    .and_then(|n| find_file_by_name(install_dir, n, MAX_SEARCH_DEPTH))
+            });
+            match found {
+                Some(p) => p,
+                None if raw_path.is_absolute() && raw_path.is_file() => {
+                    crate::qlog!(
+                        "[安装] launch 指向安装目录外的现有程序，跳过主程序定位自检: {}",
+                        raw
+                    );
+                    return Ok(None);
+                }
+                None => {
+                    return Err(format!(
+                        "安装目录中未找到 launch 指定的程序: {}（安装目录 {}）",
+                        raw,
+                        install_dir.display()
+                    ))
+                }
+            }
+        }
+        None => find_main_executable(install_dir, &check.app_name).ok_or_else(|| {
+            format!(
+                "安装目录中未找到可执行文件（应用名 {}，安装目录 {}）；若主程序名称特殊，可在 update.json 配置 launch",
+                check.app_name,
+                install_dir.display()
+            )
+        })?,
+    };
+    let size = std::fs::metadata(&exe)
+        .map(|m| m.len())
+        .map_err(|e| format!("读取主程序信息失败 {}: {}", exe.display(), e))?;
+    if size == 0 {
+        return Err(format!("主程序为空文件: {}", exe.display()));
+    }
+    Ok(Some(exe))
+}
+
 /// 安装更新包
 ///
 /// - `zip_path`: 已下载并通过校验的更新包
 /// - `install_dir`: 版本安装目录（如 .../app_2.1.2）
 /// - `limits`: 解压限额（防 zip bomb；大包部署可在 update.json 调大）
+/// - `check`: 安装后自检条件（主程序必须可定位且非空）
 /// - `on_stage`: 安装阶段回调（中文消息 + 进度百分比，解压阶段按条目实时推进）
 ///
 /// 返回安装目录路径。
 ///
-/// 顺序是「先解压、后替换」：解压成功前不动旧目录，同版本修复重装失败时
-/// 仍保留可运行的旧版本。替换时先把旧目录改名为 `_bak_` 备份，再把临时
-/// 目录改名为正式目录，成功后才删除备份；中途崩溃留下的备份会在下次
+/// 顺序是「先解压、后替换、再自检」：解压成功前不动旧目录，同版本修复
+/// 重装失败时仍保留可运行的旧版本。替换时先把旧目录改名为 `_bak_` 备份，
+/// 再把临时目录改名为正式目录；自检通过后才删除备份。自检失败会自动
+/// 回滚（新目录移开、备份改回正式路径），中途崩溃留下的备份会在下次
 /// 安装时自动恢复或清理。
 pub async fn install(
     zip_path: &Path,
     install_dir: &Path,
     limits: ExtractLimits,
+    check: &InstallCheck,
+    on_stage: StageCallback,
+) -> Result<PathBuf, String> {
+    install_inner(
+        PackageInput::Zip(zip_path.to_path_buf()),
+        install_dir,
+        limits,
+        check,
+        on_stage,
+    )
+    .await
+}
+
+/// 直接从已逐卷校验的分卷解压安装（不生成合并 zip）
+///
+/// `part_paths` 必须按序拼接即为完整 zip，且每卷已单独校验
+/// （见 `flow::run_download_parts`）。省掉合并阶段的整包写盘与等量
+/// 磁盘峰值；自检、回滚与目录交换行为与 [`install`] 完全一致。
+pub async fn install_parts(
+    part_paths: &[PathBuf],
+    install_dir: &Path,
+    limits: ExtractLimits,
+    check: &InstallCheck,
+    on_stage: StageCallback,
+) -> Result<PathBuf, String> {
+    install_inner(
+        PackageInput::Parts(part_paths.to_vec()),
+        install_dir,
+        limits,
+        check,
+        on_stage,
+    )
+    .await
+}
+
+/// 安装输入：完整 zip，或已校验的分卷列表
+enum PackageInput {
+    Zip(PathBuf),
+    Parts(Vec<PathBuf>),
+}
+
+async fn install_inner(
+    input: PackageInput,
+    install_dir: &Path,
+    limits: ExtractLimits,
+    check: &InstallCheck,
     on_stage: StageCallback,
 ) -> Result<PathBuf, String> {
     let backup_dir = backup_dir_for(install_dir);
@@ -221,13 +400,20 @@ pub async fn install(
         crate::phase::format_bytes(limits.max_total_bytes),
         crate::phase::format_bytes(limits.max_entry_bytes)
     );
-    let zip_path = zip_path.to_path_buf();
+    match &input {
+        PackageInput::Zip(path) => crate::qlog!("[安装] 解压更新包: {}", path.display()),
+        PackageInput::Parts(parts) => {
+            crate::qlog!("[安装] 直接从 {} 个分卷解压（跳过合并写盘）", parts.len())
+        }
+    }
     let temp = temp_dir.clone();
     let cb = on_stage.clone();
-    let extract_result =
-        tokio::task::spawn_blocking(move || extract_zip(&zip_path, &temp, limits, &cb))
-            .await
-            .map_err(|e| format!("解压任务异常: {}", e))?;
+    let extract_result = tokio::task::spawn_blocking(move || match input {
+        PackageInput::Zip(path) => extract_zip(&path, &temp, limits, &cb),
+        PackageInput::Parts(parts) => extract_parts(&parts, &temp, limits, &cb),
+    })
+    .await
+    .map_err(|e| format!("解压任务异常: {}", e))?;
 
     if let Err(e) = extract_result {
         let _ = tokio::fs::remove_dir_all(&temp_dir).await;
@@ -263,6 +449,31 @@ pub async fn install(
     }
     match tokio::fs::rename(&temp_dir, install_dir).await {
         Ok(()) => {
+            // 自检在删除备份之前：自检失败时把旧版本还原，而不是留下一个
+            // 「更新完成但启动失败」的目录。
+            match verify_install(install_dir, check) {
+                Ok(Some(exe)) => {
+                    crate::qlog!("[安装] 自检通过，主程序: {}", exe.display());
+                }
+                Ok(None) => {}
+                Err(reason) => {
+                    crate::qlog!("[安装] 新版本自检失败: {}", reason);
+                    let action = if had_existing {
+                        "已回滚到旧版本"
+                    } else {
+                        "已清理不完整的安装目录"
+                    };
+                    return match rollback_install(install_dir, &backup_dir, &temp_dir, had_existing)
+                        .await
+                    {
+                        Ok(()) => Err(format!("新版本自检失败，{}: {}", action, reason)),
+                        Err(rb) => {
+                            crate::qlog!("[安装] 自检失败后的回滚也失败: {}", rb);
+                            Err(format!("新版本自检失败（{}），且回滚失败: {}", reason, rb))
+                        }
+                    };
+                }
+            }
             if had_existing {
                 if let Err(e) = tokio::fs::remove_dir_all(&backup_dir).await {
                     // 备份清不掉不影响新版本可用，下次安装/启动会再处理
@@ -324,6 +535,52 @@ fn backup_dir_for(install_dir: &Path) -> PathBuf {
         .map(|n| n.to_string_lossy().into_owned())
         .unwrap_or_default();
     install_dir.with_file_name(format!("{}{}", SWAP_BACKUP_PREFIX, name))
+}
+
+/// 自检失败后的回滚：新目录让位 → 备份还原 → 删除自检失败的新目录
+///
+/// 顺序刻意是「先改名、后删除」：直接删新目录再还原备份，中途失败会让
+/// 新旧两个版本都不在正式路径上。首装（无旧版本）没有可还原的内容，
+/// 直接清掉不完整的安装目录，避免下次启动把它当成已安装版本。
+async fn rollback_install(
+    install_dir: &Path,
+    backup_dir: &Path,
+    temp_dir: &Path,
+    had_existing: bool,
+) -> Result<(), String> {
+    if !had_existing {
+        return tokio::fs::remove_dir_all(install_dir)
+            .await
+            .map_err(|e| format!("清理不完整的安装目录失败 {}: {}", install_dir.display(), e));
+    }
+    tokio::fs::rename(install_dir, temp_dir)
+        .await
+        .map_err(|e| {
+            format!(
+                "移开自检失败的新版本失败（{} -> {}）: {}",
+                install_dir.display(),
+                temp_dir.display(),
+                e
+            )
+        })?;
+    if let Err(e) = tokio::fs::rename(backup_dir, install_dir).await {
+        // 还原失败时把新版本挪回正式路径，至少目录还在
+        let _ = tokio::fs::rename(temp_dir, install_dir).await;
+        return Err(format!(
+            "还原旧版本失败（{} -> {}）: {}",
+            backup_dir.display(),
+            install_dir.display(),
+            e
+        ));
+    }
+    if let Err(e) = tokio::fs::remove_dir_all(temp_dir).await {
+        crate::qlog!(
+            "[安装] 清理自检失败的新版本失败（忽略）: {}（{}）",
+            temp_dir.display(),
+            e
+        );
+    }
+    Ok(())
 }
 
 /// 处理上次交换中断留下的备份：
@@ -405,6 +662,23 @@ fn extract_zip(
     )
 }
 
+/// 解压已校验的分卷（按序拼接即完整 zip；阻塞函数，请在 spawn_blocking 中调用）
+fn extract_parts(
+    part_paths: &[PathBuf],
+    dest: &Path,
+    limits: ExtractLimits,
+    on_stage: &StageCallback,
+) -> Result<(), String> {
+    let reader = crate::parts::PartsReader::open(part_paths)?;
+    extract_reader(
+        reader,
+        dest,
+        on_stage,
+        limits.max_total_bytes,
+        limits.max_entry_bytes,
+    )
+}
+
 /// 解压 zip 到目标目录，带写入量上限（阻塞函数，请在 spawn_blocking 中调用）
 ///
 /// 防 zip bomb 三道闸（上限可由测试注入小值验证）：
@@ -425,8 +699,19 @@ fn extract_zip_with_limits(
 ) -> Result<(), String> {
     let file = std::fs::File::open(zip_path)
         .map_err(|e| format!("打开更新包失败 {}: {}", zip_path.display(), e))?;
+    extract_reader(file, dest, on_stage, max_total, max_entry)
+}
+
+/// 从任意 `Read + Seek` 数据源解压 zip（完整包文件或分卷拼接读取器共用）
+fn extract_reader<R: std::io::Read + std::io::Seek>(
+    reader: R,
+    dest: &Path,
+    on_stage: &StageCallback,
+    max_total: u64,
+    max_entry: u64,
+) -> Result<(), String> {
     let mut archive =
-        zip::ZipArchive::new(file).map_err(|e| format!("读取更新包结构失败: {}", e))?;
+        zip::ZipArchive::new(reader).map_err(|e| format!("读取更新包结构失败: {}", e))?;
     let entry_count = archive.len();
     let mut written: u64 = 0;
     let mut file_count: u64 = 0;
@@ -835,6 +1120,7 @@ mod tests {
             "创建临时目录失败 C:\\app\\tmp: 磁盘已满",
             "创建文件失败 C:\\app\\x.exe: 磁盘已满",
             "解压文件失败 C:\\app\\x.exe: 拒绝访问",
+            "新版本自检失败，已回滚到旧版本: 安装目录中未找到可执行文件（应用名 qsm）",
         ] {
             assert!(!is_retryable_error(e), "不应重试: {e}");
         }
@@ -936,9 +1222,25 @@ mod tests {
         Ok(())
     }
 
+    /// 把字节流按 `chunk` 切段写成 part_001…，返回按序路径
+    fn write_split_parts(dir: &Path, data: &[u8], chunk: usize) -> io::Result<Vec<PathBuf>> {
+        let mut paths = Vec::new();
+        for (i, piece) in data.chunks(chunk.max(1)).enumerate() {
+            let path = dir.join(format!("part_{:03}", i + 1));
+            std::fs::write(&path, piece)?;
+            paths.push(path);
+        }
+        Ok(paths)
+    }
+
     /// 无操作进度回调
     fn noop_stage() -> StageCallback {
         Arc::new(|_msg: &str, _pct: Option<f64>| {})
+    }
+
+    /// 安装自检条件：按应用名自动定位主程序
+    fn check_for(app_name: &str) -> InstallCheck {
+        InstallCheck::new(app_name, None)
     }
 
     #[test]
@@ -1075,6 +1377,7 @@ mod tests {
             &bad_zip,
             &install_dir,
             ExtractLimits::default(),
+            &check_for("qsm"),
             noop_stage(),
         )
         .await
@@ -1099,9 +1402,15 @@ mod tests {
         let zip = dir.join("update.zip");
         make_test_zip(&zip, &[("new.exe", b"new")])?;
 
-        install(&zip, &install_dir, ExtractLimits::default(), noop_stage())
-            .await
-            .expect("正常包应安装成功");
+        install(
+            &zip,
+            &install_dir,
+            ExtractLimits::default(),
+            &check_for("qsm"),
+            noop_stage(),
+        )
+        .await
+        .expect("正常包应安装成功");
         assert_eq!(std::fs::read(install_dir.join("new.exe"))?, b"new");
         assert!(!install_dir.join("old.exe").exists(), "旧目录内容不应残留");
         assert!(!backup_dir_for(&install_dir).exists(), "成功后备份应删除");
@@ -1109,6 +1418,79 @@ mod tests {
             !temp_dir_for(&install_dir).exists(),
             "临时目录应改名为正式目录"
         );
+        let _ = std::fs::remove_dir_all(&dir);
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn install_parts_extracts_without_merged_zip() -> io::Result<()> {
+        // 逐卷校验齐全时直接读分卷安装：zip 条目/中央目录都会跨卷，
+        // 验证 PartsReader 的定位能力足以撑起完整解压。
+        let dir = temp_install_dir("install_parts")?;
+        let install_dir = dir.join("app_9.9.9");
+        let zip = dir.join("update.zip");
+        make_test_zip(
+            &zip,
+            &[("qsm.exe", b"binary-body"), ("data/a.txt", b"hello")],
+        )?;
+        let bytes = std::fs::read(&zip)?;
+        // 5 字节一段：几乎每个结构都横跨多卷
+        let parts = write_split_parts(&dir, &bytes, 5)?;
+        assert!(parts.len() > 5, "应切成多卷: {}", parts.len());
+
+        let installed = install_parts(
+            &parts,
+            &install_dir,
+            ExtractLimits::default(),
+            &check_for("qsm"),
+            noop_stage(),
+        )
+        .await
+        .expect("从分卷直接安装应成功");
+        assert_eq!(installed, install_dir);
+        assert_eq!(std::fs::read(install_dir.join("qsm.exe"))?, b"binary-body");
+        assert_eq!(std::fs::read(install_dir.join("data/a.txt"))?, b"hello");
+        assert!(
+            !temp_dir_for(&install_dir).exists(),
+            "临时目录应改名为正式目录"
+        );
+        let _ = std::fs::remove_dir_all(&dir);
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn install_parts_missing_part_is_permanent_and_keeps_old_version() -> io::Result<()> {
+        // 缺卷属于确定性失败：不重试、旧版本原样保留
+        let dir = temp_install_dir("install_parts_missing")?;
+        let install_dir = dir.join("app_9.9.9");
+        std::fs::create_dir_all(&install_dir)?;
+        std::fs::write(install_dir.join("old.exe"), b"old")?;
+        let parts = vec![dir.join("part_001"), dir.join("part_002")];
+        std::fs::write(&parts[0], b"PK")?;
+
+        let err = install_parts(
+            &parts,
+            &install_dir,
+            ExtractLimits::default(),
+            &check_for("qsm"),
+            noop_stage(),
+        )
+        .await
+        .expect_err("缺卷必须安装失败");
+        assert!(
+            err.contains("打开分卷失败"),
+            "错误应指出分卷打开失败: {err}"
+        );
+        assert!(
+            !is_retryable_error(&err),
+            "缺卷重试同一批分卷没有任何意义: {err}"
+        );
+        assert_eq!(
+            std::fs::read(install_dir.join("old.exe"))?,
+            b"old",
+            "解压失败后旧版本必须原样保留"
+        );
+        assert!(!temp_dir_for(&install_dir).exists(), "临时目录应清理");
         let _ = std::fs::remove_dir_all(&dir);
         Ok(())
     }
@@ -1143,6 +1525,203 @@ mod tests {
         recover_interrupted_swap(&install_dir, &backup).await;
         assert_eq!(std::fs::read(install_dir.join("new.exe"))?, b"new");
         assert!(!backup.exists(), "残留备份应被删除");
+        let _ = std::fs::remove_dir_all(&dir);
+        Ok(())
+    }
+
+    // ---------- 安装后自检 / 回滚 ----------
+
+    #[tokio::test]
+    async fn install_rolls_back_when_new_package_lacks_main_exe() -> io::Result<()> {
+        // 包漏打主程序：必须回滚到旧版本，而不是把可用的旧目录换成空壳
+        let dir = temp_install_dir("health_missing")?;
+        let install_dir = dir.join("app_9.9.9");
+        std::fs::create_dir_all(&install_dir)?;
+        std::fs::write(install_dir.join("old.exe"), b"old")?;
+        let zip = dir.join("update.zip");
+        make_test_zip(&zip, &[("assets/data.bin", b"data")])?;
+
+        let err = install(
+            &zip,
+            &install_dir,
+            ExtractLimits::default(),
+            &check_for("qsm"),
+            noop_stage(),
+        )
+        .await
+        .expect_err("缺少主程序的包必须自检失败");
+        assert!(err.contains("新版本自检失败"), "错误应标明自检失败: {err}");
+        assert!(err.contains("未找到可执行文件"), "应说明缺主程序: {err}");
+        assert_eq!(
+            std::fs::read(install_dir.join("old.exe"))?,
+            b"old",
+            "自检失败后旧版本必须原样还原"
+        );
+        assert!(
+            !install_dir.join("assets/data.bin").exists(),
+            "自检失败的新版本不应留在正式目录"
+        );
+        assert!(!backup_dir_for(&install_dir).exists(), "还原后备份应消失");
+        assert!(!temp_dir_for(&install_dir).exists(), "临时目录应清理");
+        let _ = std::fs::remove_dir_all(&dir);
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn install_rolls_back_when_main_exe_is_empty() -> io::Result<()> {
+        // 0 字节主程序同样启动不了：自检要拦住，不能只看文件是否存在
+        let dir = temp_install_dir("health_empty")?;
+        let install_dir = dir.join("app_9.9.9");
+        std::fs::create_dir_all(&install_dir)?;
+        std::fs::write(install_dir.join("old.exe"), b"old")?;
+        let zip = dir.join("update.zip");
+        make_test_zip(&zip, &[("qsm.exe", b"")])?;
+
+        let err = install(
+            &zip,
+            &install_dir,
+            ExtractLimits::default(),
+            &check_for("qsm"),
+            noop_stage(),
+        )
+        .await
+        .expect_err("空主程序必须自检失败");
+        assert!(err.contains("新版本自检失败"), "错误应标明自检失败: {err}");
+        assert!(err.contains("为空文件"), "应说明主程序为空: {err}");
+        assert_eq!(std::fs::read(install_dir.join("old.exe"))?, b"old");
+        assert!(!backup_dir_for(&install_dir).exists());
+        let _ = std::fs::remove_dir_all(&dir);
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn install_first_install_removes_broken_dir_on_health_failure() -> io::Result<()> {
+        // 首装没有旧版本可回滚：清掉不完整目录，避免下次启动把它当成已安装版本
+        let dir = temp_install_dir("health_first")?;
+        let install_dir = dir.join("app_9.9.9");
+        let zip = dir.join("update.zip");
+        make_test_zip(&zip, &[("readme.txt", b"no exe here")])?;
+
+        let err = install(
+            &zip,
+            &install_dir,
+            ExtractLimits::default(),
+            &check_for("qsm"),
+            noop_stage(),
+        )
+        .await
+        .expect_err("首装缺少主程序必须失败");
+        assert!(err.contains("新版本自检失败"), "错误应标明自检失败: {err}");
+        assert!(
+            !install_dir.exists(),
+            "首装自检失败后不完整目录应被清理: {}",
+            install_dir.display()
+        );
+        assert!(!temp_dir_for(&install_dir).exists());
+        let _ = std::fs::remove_dir_all(&dir);
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn install_accepts_nested_main_exe() -> io::Result<()> {
+        // 分层打包（主程序在 bin/）是受支持的布局，自检不能误判
+        let dir = temp_install_dir("health_nested")?;
+        let install_dir = dir.join("app_9.9.9");
+        let zip = dir.join("update.zip");
+        make_test_zip(&zip, &[("bin/qsm.exe", b"binary"), ("readme.txt", b"r")])?;
+
+        install(
+            &zip,
+            &install_dir,
+            ExtractLimits::default(),
+            &check_for("qsm"),
+            noop_stage(),
+        )
+        .await
+        .expect("嵌套主程序应通过自检");
+        assert_eq!(std::fs::read(install_dir.join("bin/qsm.exe"))?, b"binary");
+        let _ = std::fs::remove_dir_all(&dir);
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn install_rolls_back_when_launch_target_missing() -> io::Result<()> {
+        // 显式配置了 launch，但包里没有这个程序：装完必然启动失败，应回滚
+        let dir = temp_install_dir("health_launch_missing")?;
+        let install_dir = dir.join("app_9.9.9");
+        std::fs::create_dir_all(&install_dir)?;
+        std::fs::write(install_dir.join("old.exe"), b"old")?;
+        let zip = dir.join("update.zip");
+        make_test_zip(&zip, &[("other.exe", b"other")])?;
+        let check = InstallCheck::new("qsm", Some("qsm.exe".to_string()));
+
+        let err = install(
+            &zip,
+            &install_dir,
+            ExtractLimits::default(),
+            &check,
+            noop_stage(),
+        )
+        .await
+        .expect_err("launch 目标缺失必须自检失败");
+        assert!(
+            err.contains("launch 指定的程序"),
+            "应指出 launch 目标: {err}"
+        );
+        assert_eq!(std::fs::read(install_dir.join("old.exe"))?, b"old");
+        assert!(!install_dir.join("other.exe").exists());
+        let _ = std::fs::remove_dir_all(&dir);
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn install_accepts_when_launch_target_matches_nested_exe() -> io::Result<()> {
+        // launch 写了相对路径，包根多包一层目录：按文件名递归兜底应能找到
+        let dir = temp_install_dir("health_launch_nested")?;
+        let install_dir = dir.join("app_9.9.9");
+        let zip = dir.join("update.zip");
+        make_test_zip(&zip, &[("qsm-9.9.9/qsm.exe", b"binary")])?;
+        let check = InstallCheck::new("qsm", Some("qsm.exe".to_string()));
+
+        install(
+            &zip,
+            &install_dir,
+            ExtractLimits::default(),
+            &check,
+            noop_stage(),
+        )
+        .await
+        .expect("嵌套目录中的 launch 目标应被找到");
+        assert!(install_dir.join("qsm-9.9.9/qsm.exe").exists());
+        let _ = std::fs::remove_dir_all(&dir);
+        Ok(())
+    }
+
+    #[test]
+    fn verify_install_reports_missing_dir() {
+        let missing = std::env::temp_dir().join("qsltd_install_test_health_missing_98765");
+        let err =
+            verify_install(&missing, &check_for("qsm")).expect_err("不存在的安装目录必须自检失败");
+        assert!(err.contains("安装目录不存在"), "错误应说明目录缺失: {err}");
+    }
+
+    #[test]
+    fn verify_install_skips_external_absolute_launch_target() -> io::Result<()> {
+        // launch 指向安装目录外的现有程序（如外部共享运行时）：目标不在包内，
+        // 安装目录无法判定，跳过这项自检，交给运行期启动逻辑处理
+        let dir = temp_install_dir("health_external")?;
+        let install_dir = dir.join("app_9.9.9");
+        std::fs::create_dir_all(&install_dir)?;
+        std::fs::write(install_dir.join("readme.txt"), b"r")?;
+        let outside = dir.join("shared.exe");
+        std::fs::write(&outside, b"external")?;
+        let check = InstallCheck::new("qsm", Some(outside.to_string_lossy().to_string()));
+
+        assert_eq!(
+            verify_install(&install_dir, &check).map_err(io::Error::other)?,
+            None,
+            "安装目录外的现有目标应跳过自检"
+        );
         let _ = std::fs::remove_dir_all(&dir);
         Ok(())
     }

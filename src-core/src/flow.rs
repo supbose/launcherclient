@@ -766,7 +766,7 @@ pub async fn run_update_flow(
     }
     let download_max = retry_limit(cfg.retry_times, residual_free);
     let mut attempt: u32 = 0;
-    loop {
+    let package_source = loop {
         attempt += 1;
         let outcome = if is_parts {
             run_download_parts(
@@ -790,13 +790,17 @@ pub async fn run_update_flow(
 
         // 下载成功后再核一遍完整包 SHA256：早期中断/磁盘写坏都在这关露头。
         // 下载/合并阶段已流式算出的哈希直接复用（Some），没有才回落到整读校验。
+        // 分卷已逐卷校验（verified）时整包完整性已有定论，这一关直接放行。
         let result = match outcome {
-            Ok(precomputed) => verify_package(handle, &zip_path, &m.sha256, precomputed).await,
+            Ok(v) if v.verified => Ok(v.source),
+            Ok(v) => verify_package(handle, &zip_path, &m.sha256, v.sha256)
+                .await
+                .map(|()| v.source),
             Err(e) => Err(e),
         };
 
         match result {
-            Ok(()) => break,
+            Ok(source) => break source,
             // 只有「再试一次可能就好了」的错误才重试：404/403 这类 4xx 与
             // 本地写盘失败（磁盘满、目录只读）重下多少遍都是同一个结果，
             // 白等三轮外加一次 1.4 GB 的无效流量。
@@ -827,13 +831,28 @@ pub async fn run_update_flow(
                 return Err(e);
             }
         }
+    };
+    match &package_source {
+        PackageSource::Zip(path) => {
+            crate::qlog!("[更新器] 更新包校验通过: {}", path.display());
+            crate::qlog!(
+                "[计时] 下载 + 校验完成: {:.2}s（目标 {}）",
+                download_started.elapsed().as_secs_f64(),
+                path.display()
+            );
+        }
+        PackageSource::Parts(parts) => {
+            crate::qlog!(
+                "[更新器] 分卷逐卷校验通过: {} 卷（未生成合并 zip）",
+                parts.len()
+            );
+            crate::qlog!(
+                "[计时] 下载 + 校验完成: {:.2}s（目标 {} 个分卷）",
+                download_started.elapsed().as_secs_f64(),
+                parts.len()
+            );
+        }
     }
-    crate::qlog!("[更新器] 更新包校验通过: {}", zip_path.display());
-    crate::qlog!(
-        "[计时] 下载 + 校验完成: {:.2}s（目标 {}）",
-        download_started.elapsed().as_secs_f64(),
-        zip_path.display()
-    );
 
     // 安装前卸载用户配置的服务（运行中先停止；卸载后不恢复、不重启）。
     // 卸载失败必须在此终止：否则服务仍注册指向旧路径而新版本已装完，
@@ -878,6 +897,7 @@ pub async fn run_update_flow(
     // 解压失败多为「包不完整 / 磁盘瞬时占用」，重试一次常常就好了；
     // 但这不是「下载地址」的问题，故耗尽后也不引导用户去官网。
     let target_dir = install_dir(&cfg.app_name, &m.version);
+    let install_check = install::InstallCheck::new(cfg.app_name.clone(), cfg.launch.clone());
     let install_max = retry_limit(cfg.retry_times, true);
     let mut install_attempt: u32 = 0;
     loop {
@@ -891,7 +911,29 @@ pub async fn run_update_flow(
                 pct,
             ))
         });
-        match install::install(&zip_path, &target_dir, cfg.extract_limits, install_cb).await {
+        let install_result = match &package_source {
+            PackageSource::Zip(path) => {
+                install::install(
+                    path,
+                    &target_dir,
+                    cfg.extract_limits,
+                    &install_check,
+                    install_cb,
+                )
+                .await
+            }
+            PackageSource::Parts(parts) => {
+                install::install_parts(
+                    parts,
+                    &target_dir,
+                    cfg.extract_limits,
+                    &install_check,
+                    install_cb,
+                )
+                .await
+            }
+        };
+        match install_result {
             Ok(_) => break,
             // 与下载环节同一条原则：包非法 / 磁盘写不进去这类确定性失败
             // 不再陪着等两轮退避；只有改名交换阶段的瞬时占用值得重试。
@@ -995,9 +1037,34 @@ pub async fn run_update_flow(
     Ok(())
 }
 
+/// 安装数据来源
+enum PackageSource {
+    /// 完整 zip（单包下载、合并产物或复用本地包）
+    Zip(PathBuf),
+    /// 已逐卷校验的分卷列表（按序拼接即完整 zip）
+    Parts(Vec<PathBuf>),
+}
+
+/// 下载环节交付的包完整性结果
+///
+/// - `sha256`: 下载/合并时顺手算出的整包哈希（没算就是 `None`）
+/// - `verified`: 整包完整性是否已有定论。分卷逐卷校验、或复用本地完整包
+///   时，整包已被证明完整，外层不必再算/再比一遍
+/// - `source`: 安装阶段直接使用的数据源（zip 或分卷）
+struct PackageVerification {
+    sha256: Option<String>,
+    verified: bool,
+    source: PackageSource,
+}
+
 /// 执行分卷下载：逐卷下载（复用合格卷）→ 合并为完整 zip → 整体校验
 ///
-/// 合并产物与单包模式共用 zip_path，后续校验/安装/清理逻辑完全一致
+/// 合并产物与单包模式共用 zip_path，后续校验/安装/清理逻辑完全一致。
+///
+/// 当 `part_sha256` 与 `parts` 一一对齐时，每一卷都已单独校验：
+/// **既不计算整包 SHA256，也不写合并 zip**——直接把分卷列表交给安装
+/// 阶段流式解压。GB 级包因此省掉一次整包写盘（以及等量磁盘峰值），
+/// 解压读到的字节与合并产物完全一致。
 async fn run_download_parts(
     handle: &PhaseHandle,
     m: &manifest::FlatManifest,
@@ -1006,17 +1073,22 @@ async fn run_download_parts(
     zip_path: &Path,
     attempt: u32,
     max_attempts: u32,
-) -> Result<Option<String>, String> {
+) -> Result<PackageVerification, String> {
     let urls = m.parts.as_ref().ok_or("分卷地址列表缺失")?;
     let parts_dir = download_dir(app_name).join(format!("update_{}_parts", m.version));
     let sha256s = m.part_sha256.as_deref().filter(|s| s.len() == urls.len());
+    let parts_verified = manifest::has_full_part_hashes(m);
     // 整体总大小（manifest.size_bytes），分卷之和等于完整 zip 大小
     let total_size = m.size_bytes;
 
     // 上次已合并好的完整包优先复用：合并成功后分卷会立即删除，
     // 不复用这里就得为一次安装失败/手动重试重下整包。
     if let Some(actual) = try_reuse_zip(handle, m, zip_path).await {
-        return Ok(Some(actual));
+        return Ok(PackageVerification {
+            sha256: Some(actual),
+            verified: true,
+            source: PackageSource::Zip(zip_path.to_path_buf()),
+        });
     }
 
     handle.set(PhasePayload::new(
@@ -1074,6 +1146,21 @@ async fn run_download_parts(
         }
     };
 
+    if parts_verified {
+        // 逐卷校验已覆盖整包：不合并、不写盘，安装阶段直接从分卷流式解压。
+        // 分卷保留到安装成功后由 cleanup_download_cache 统一清理；安装失败
+        // 时还能直接重试或跨进程复用，不必重新下载。
+        crate::qlog!(
+            "[更新器] 分卷已逐卷校验，跳过合并写盘，安装阶段直接从 {} 个分卷解压",
+            result.part_paths.len()
+        );
+        return Ok(PackageVerification {
+            sha256: None,
+            verified: true,
+            source: PackageSource::Parts(result.part_paths),
+        });
+    }
+
     handle.set(PhasePayload::new(
         Stage::Checking,
         "正在合并分卷...",
@@ -1089,7 +1176,7 @@ async fn run_download_parts(
     let merged_sha = download::merge_parts(
         &result.part_paths,
         zip_path,
-        &m.sha256,
+        m.sha256.as_deref(),
         move |done, total| {
             let force = total > 0 && done >= total;
             {
@@ -1126,7 +1213,7 @@ async fn run_download_parts(
     })?;
     crate::qlog!("[更新器] 分卷合并完成: {}", zip_path.display());
 
-    // 合并产物已经过整体 SHA256 校验（或逐卷校验），分卷不再被任何后续步骤需要。
+    // 合并产物已经过整体 SHA256 校验，分卷不再被任何后续步骤需要。
     // 立即删除，别让它一直占着与完整包等量的空间穿过解压/安装阶段。
     if let Err(e) = tokio::fs::remove_dir_all(&parts_dir).await {
         crate::qlog!(
@@ -1135,7 +1222,11 @@ async fn run_download_parts(
             e
         );
     }
-    Ok(Some(merged_sha))
+    Ok(PackageVerification {
+        sha256: merged_sha,
+        verified: false,
+        source: PackageSource::Zip(zip_path.to_path_buf()),
+    })
 }
 
 /// 复用已存在的完整更新包：校验通过返回实际 SHA256，不可复用返回 None
@@ -1196,15 +1287,22 @@ async fn try_reuse_zip(
 }
 
 /// 执行下载：本地已有同名包且校验通过则复用，否则流式下载并推送进度
+///
+/// 复用分支已在本地完成整包校验（`verified = true`）；新下载的包只拿到
+/// 流式算出的哈希，是否匹配由外层统一比对（`verified = false`）。
 async fn run_download(
     handle: &PhaseHandle,
     m: &manifest::FlatManifest,
     zip_path: &Path,
     attempt: u32,
     max_attempts: u32,
-) -> Result<Option<String>, String> {
+) -> Result<PackageVerification, String> {
     if let Some(actual) = try_reuse_zip(handle, m, zip_path).await {
-        return Ok(Some(actual));
+        return Ok(PackageVerification {
+            sha256: Some(actual),
+            verified: true,
+            source: PackageSource::Zip(zip_path.to_path_buf()),
+        });
     }
 
     if let Some(parent) = zip_path.parent() {
@@ -1254,7 +1352,11 @@ async fn run_download(
                 sha
             );
             // 哈希是下载时流式算出的，交给外层直接比对，避免再读一遍
-            Ok(Some(sha))
+            Ok(PackageVerification {
+                sha256: Some(sha),
+                verified: false,
+                source: PackageSource::Zip(zip_path.to_path_buf()),
+            })
         }
         Err(e) => Err(e),
     }
@@ -1375,7 +1477,7 @@ pub fn resolve_launch_exe(launch: &str, installed_path: Option<&Path>) -> PathBu
         }
         // 嵌套结构兜底：安装目录内递归找同名文件
         if let Some(name) = raw.file_name() {
-            if let Some(found) = find_file_by_name(dir, name, 3) {
+            if let Some(found) = install::find_file_by_name(dir, name, 3) {
                 return found;
             }
         }
@@ -1388,30 +1490,6 @@ pub fn resolve_launch_exe(launch: &str, installed_path: Option<&Path>) -> PathBu
         .ok()
         .and_then(|cur| cur.parent().map(|d| d.join(raw)))
         .unwrap_or_else(|| raw.to_path_buf())
-}
-
-/// 在目录内按文件名递归查找（限深，防止异常目录树拖慢启动）
-fn find_file_by_name(dir: &Path, name: &std::ffi::OsStr, max_depth: usize) -> Option<PathBuf> {
-    if max_depth == 0 {
-        return None;
-    }
-    let entries = std::fs::read_dir(dir).ok()?;
-    for entry in entries.flatten() {
-        let path = entry.path();
-        if path.is_file() && path.file_name() == Some(name) {
-            return Some(path);
-        }
-    }
-    // 第二轮再递归（同名文件优先出现在浅层）
-    for entry in std::fs::read_dir(dir).ok()?.flatten() {
-        let path = entry.path();
-        if path.is_dir() {
-            if let Some(found) = find_file_by_name(&path, name, max_depth - 1) {
-                return Some(found);
-            }
-        }
-    }
-    None
 }
 
 /// 拉起目标程序（launch 已配置时）
@@ -2039,14 +2117,15 @@ mod tests {
         m.url = "http://127.0.0.1:9/unreachable.zip".to_string();
         let handle = PhaseHandle::new();
 
-        let reused_hash = run_download(&handle, &m, &zip, 1, 3)
+        let reused = run_download(&handle, &m, &zip, 1, 3)
             .await
             .expect("校验合格的本地包应被复用");
         assert_eq!(
-            reused_hash.as_deref(),
+            reused.sha256.as_deref(),
             Some(expected.as_str()),
             "复用分支应返回已算出的实际哈希，供外层免二次读盘"
         );
+        assert!(reused.verified, "复用前已在本地完成整包校验，外层不必再验");
         assert!(zip.exists(), "复用不得删掉本地包");
         assert_eq!(
             std::fs::read(&zip).expect("读回"),

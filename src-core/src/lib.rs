@@ -36,6 +36,9 @@ pub mod phase;
 pub mod services;
 pub mod shell;
 
+/// 分卷拼接读取器（内部模块：供安装阶段从已校验分卷直接解压）
+mod parts;
+
 /// 写一行诊断日志（同时落盘到 `<app_dir>/logs/updater.log`）。
 ///
 /// 用法与 `eprintln!` 完全一致；未初始化文件日志时回落到 stderr。

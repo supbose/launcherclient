@@ -748,21 +748,24 @@ where
     Ok(PartsDownload { part_paths })
 }
 
-/// 按序拼接分卷为完整 zip，边拼接边计算 SHA256 并与期望值比对
+/// 按序拼接分卷为完整 zip；给出期望整包哈希时边拼接边计算 SHA256 并比对
 ///
 /// - `part_paths`: 分卷路径列表（按序）
 /// - `dest`: 合并输出路径
-/// - `expected_sha256`: 完整 zip 的期望 SHA256（空则跳过整体校验）
+/// - `expected_sha256`: 完整 zip 的期望 SHA256（`None`/空则**不计算**整包哈希）
 /// - `on_progress`: 合并进度回调（已合并字节, 总字节），供 UI 展示实时进度
 ///
-/// 返回合并产物的实际 SHA256（十六进制）。调用方可直接拿它与清单比对，
-/// 不必再读一遍 GB 级文件。
+/// 返回合并产物在本次拼接中算出的 SHA256；跳过计算时为 `None`。
+///
+/// 只在需要比对时才计算：分卷已逐卷校验通过（`part_sha256` 与 parts 一一
+/// 对齐）时，整包哈希是同一份数据的二次计算，GB 级包要多吃几秒 CPU，
+/// 却证明不了任何新东西——调用方此时传 `None`，合并直接退回纯 IO。
 pub async fn merge_parts<F>(
     part_paths: &[PathBuf],
     dest: &Path,
-    expected_sha256: &Option<String>,
+    expected_sha256: Option<&str>,
     on_progress: F,
-) -> Result<String, String>
+) -> Result<Option<String>, String>
 where
     F: Fn(u64, u64),
 {
@@ -785,7 +788,9 @@ where
     // 输出侧同样走 256 KB 缓冲：合并循环本身以 CHUNK_BYTES 读写，
     // 缓冲主要兜住 BufWriter 内部可能的小块写。
     let mut out = BufWriter::with_capacity(CHUNK_BYTES, out);
-    let mut hasher = Sha256::new();
+    let expected = expected_sha256.map(str::trim).filter(|s| !s.is_empty());
+    // 没有期望值就不建哈希器：逐块 update 的 CPU 在 GB 级包上是实打实的开销
+    let mut hasher = expected.map(|_| Sha256::new());
     let mut merged: u64 = 0;
     on_progress(0, total_bytes);
 
@@ -802,7 +807,9 @@ where
             if n == 0 {
                 break;
             }
-            hasher.update(&buf[..n]);
+            if let Some(hasher) = hasher.as_mut() {
+                hasher.update(&buf[..n]);
+            }
             out.write_all(&buf[..n])
                 .await
                 .map_err(|e| format!("写入合并文件失败: {}", e))?;
@@ -817,15 +824,15 @@ where
     out.flush()
         .await
         .map_err(|e| format!("合并文件刷新失败: {}", e))?;
-    crate::qlog!("[合并] flush 完成，开始 SHA256 校验");
 
-    // 整体 SHA256 校验
+    let Some(hasher) = hasher else {
+        crate::qlog!("[合并] 未提供整包哈希，跳过 SHA256 计算");
+        return Ok(None);
+    };
+
+    crate::qlog!("[合并] flush 完成，开始 SHA256 校验");
     let actual = hex::encode(hasher.finalize());
-    if let Some(expected) = expected_sha256
-        .as_deref()
-        .map(str::trim)
-        .filter(|s| !s.is_empty())
-    {
+    if let Some(expected) = expected {
         if !actual.eq_ignore_ascii_case(expected) {
             return Err(format!(
                 "{}合并后整体 SHA256 校验不匹配，期望: {}，实际: {}",
@@ -834,7 +841,7 @@ where
         }
     }
 
-    Ok(actual)
+    Ok(Some(actual))
 }
 
 // 测试里构造失败即用例本身失败，按 clippy 惯例局部放行 expect/unwrap
@@ -1313,12 +1320,16 @@ mod tests {
         let actual = merge_parts(
             &[p1.clone(), p2.clone()],
             &out,
-            &Some(expected.clone()),
+            Some(expected.as_str()),
             |_, _| {},
         )
         .await
         .expect("合并并校验应成功");
-        assert_eq!(actual, expected, "应返回合并产物的实际 SHA256");
+        assert_eq!(
+            actual.as_deref(),
+            Some(expected.as_str()),
+            "给出期望值时应返回合并产物的实际 SHA256"
+        );
 
         let merged = std::fs::read(&out).expect("读合并产物");
         assert_eq!(merged, b"AAABBBB");
@@ -1332,10 +1343,11 @@ mod tests {
         let p1 = write_temp("bad1", b"AAA").expect("写分卷");
         let out = temp_path("badmerged", "zip");
         // 期望值对应别的内容 → 合并成功但整体校验失败
+        let wrong = sha_of(b"ZZZ");
         let err = merge_parts(
             std::slice::from_ref(&p1),
             &out,
-            &Some(sha_of(b"ZZZ")),
+            Some(wrong.as_str()),
             |_, _| {},
         )
         .await
@@ -1356,9 +1368,24 @@ mod tests {
     async fn merge_skips_hash_when_expected_absent() {
         let p1 = write_temp("nohash", b"AAA").expect("写分卷");
         let out = temp_path("nohashmerged", "zip");
-        merge_parts(std::slice::from_ref(&p1), &out, &None, |_, _| {})
+        let returned = merge_parts(std::slice::from_ref(&p1), &out, None, |_, _| {})
             .await
             .expect("无期望值时应跳过整体校验");
+        assert_eq!(returned, None, "未计算整包哈希时应返回 None");
+        assert_eq!(std::fs::read(&out).expect("读合并产物"), b"AAA");
+        let _ = std::fs::remove_file(&p1);
+        let _ = std::fs::remove_file(&out);
+    }
+
+    #[tokio::test]
+    async fn merge_skips_hash_when_expected_blank() {
+        // 空白值等同缺失：不建哈希器、不比对，避免把空期望误判成不匹配
+        let p1 = write_temp("blankhash", b"AAA").expect("写分卷");
+        let out = temp_path("blankmerged", "zip");
+        let returned = merge_parts(std::slice::from_ref(&p1), &out, Some("   "), |_, _| {})
+            .await
+            .expect("空白期望值应跳过整包校验");
+        assert_eq!(returned, None);
         assert_eq!(std::fs::read(&out).expect("读合并产物"), b"AAA");
         let _ = std::fs::remove_file(&p1);
         let _ = std::fs::remove_file(&out);
@@ -1370,7 +1397,7 @@ mod tests {
         let p2 = write_temp("prog2", b"BBB").expect("写分卷2");
         let out = temp_path("progmerged", "zip");
         let seen = std::sync::Mutex::new(Vec::new());
-        merge_parts(&[p1.clone(), p2.clone()], &out, &None, |done, total| {
+        merge_parts(&[p1.clone(), p2.clone()], &out, None, |done, total| {
             seen.lock()
                 .unwrap_or_else(|e| e.into_inner())
                 .push((done, total));
@@ -1390,7 +1417,7 @@ mod tests {
     async fn merge_fails_on_missing_part() {
         let missing = temp_path("ghostpart", "bin");
         let out = temp_path("ghostmerged", "zip");
-        assert!(merge_parts(&[missing], &out, &None, |_, _| {})
+        assert!(merge_parts(&[missing], &out, None, |_, _| {})
             .await
             .is_err());
     }

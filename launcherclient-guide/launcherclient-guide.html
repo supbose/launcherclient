@@ -305,10 +305,10 @@ footer { border-top: 1px solid var(--rule); margin-top: 64px; padding: 28px 0 44
       <div class="card feature"><div class="ic">静</div><h4>无更新零打扰</h4><p>首检在后台线程完成，窗口隐藏创建；无更新直接拉起目标程序，不闪现任何界面。</p></div>
       <div class="card feature"><div class="ic">灾</div><h4>多地址并发竞速</h4><p>manifest_url 支持地址数组，多个地址同时发起、先成功者胜出，天然适配多 CDN 容灾。</p></div>
       <div class="card feature"><div class="ic">续</div><h4>断点续传与分卷并发</h4><p>单包中断后按 Range 续传，只补剩余部分；大包可分卷并发下载（默认 3 路），合格分卷跨次复用。</p></div>
-      <div class="card feature"><div class="ic">验</div><h4>SHA256 双重校验</h4><p>分卷逐卷校验 + 合并后整体校验，杜绝半包、坏包进入安装环节。</p></div>
+      <div class="card feature"><div class="ic">验</div><h4>SHA256 双重校验</h4><p>分卷逐卷校验；逐卷校验不齐时才补合并后整体校验。逐卷齐全时不再生成合并 zip，安装直接从分卷解压，省掉一次整包大小的写盘与回读。</p></div>
       <div class="card feature"><div class="ic">试</div><h4>失败自动重试</h4><p>下载与解压校验各自独立重试（默认 3 次），节奏 1s→2s→3s 封顶 5s，界面同步展示进度。</p></div>
       <div class="card feature"><div class="ic">强</div><h4>强制更新</h4><p>服务端下发 min_version / force_update 即可阻断式要求升级，可配「前往应用商店」入口。</p></div>
-      <div class="card feature"><div class="ic">滚</div><h4>版本目录回滚</h4><p>每个版本独立目录，旧版本按 max_versions 保留即回滚资产，需要时把启动目标指回旧目录。</p></div>
+      <div class="card feature"><div class="ic">滚</div><h4>安装自检回滚</h4><p>新版本就位后先确认主程序可定位且非空，自检失败自动还原旧版本；日常回滚资产仍按 max_versions 保留。</p></div>
       <div class="card feature"><div class="ic">安</div><h4>安装防护</h4><p>解压带 zip-slip 与超大条目防护；更新前自动卸载配置的 Windows 服务，必要时触发 UAC 提权。</p></div>
     </div>
   </section>
@@ -367,7 +367,7 @@ footer { border-top: 1px solid var(--rule); margin-top: 64px; padding: 28px 0 44
           <tr><td><code>manifest_url</code></td><td>字符串 / 字符串数组</td><td>服务器 version.json 地址；数组时<mark class="key">并发竞速</mark>，多个地址同时发起、先成功者胜出，全部失败才算检查失败</td></tr>
           <tr><td><code>app_name</code></td><td>字符串</td><td>应用名，决定本地目录与拉取的清单</td></tr>
           <tr><td><code>name</code></td><td>字符串</td><td>启动器标题（标题栏左侧文字与系统窗口标题）；单行、最长 64 字符。<mark class="key">留空则跟随 exe 内置标题</mark>，这样换一版烘焙了新标题的 exe 覆盖安装即可生效，不会被老配置钉死</td></tr>
-          <tr><td><code>launch</code></td><td>字符串</td><td>更新完成后拉起的目标程序；留空自动定位安装目录中的主程序</td></tr>
+          <tr><td><code>launch</code></td><td>字符串</td><td>更新完成后拉起的目标程序；安装后自检也按它核对主程序是否存在且非空。留空自动定位安装目录中的主程序</td></tr>
           <tr><td><code>current_version</code></td><td>字符串</td><td>强制指定当前版本；留空自动从本地 <code>app.json</code> 探测</td></tr>
           <tr><td><code>max_versions</code></td><td>数字</td><td>保留的版本目录数量（含当前版本，旧目录即回滚资产），默认 <code>2</code></td></tr>
           <tr><td><code>services</code></td><td>字符串数组</td><td>更新前需卸载的 Windows 服务名；运行中的先停止后卸载，<mark class="key">卸载后不恢复、不重启</mark>；单个失败不中断流程</td></tr>
@@ -413,8 +413,8 @@ footer { border-top: 1px solid var(--rule); margin-top: 64px; padding: 28px 0 44
           <tr><td><code>update</code></td><td>更新总闸，<code>false</code> 时一律视为无更新（<mark class="key">force_update / min_version 同时失效</mark>），缺省 <code>true</code></td></tr>
           <tr><td><code>url</code></td><td>单包下载地址（分卷模式下被忽略）。单包模式留空会直接报错「manifest 缺少 url 字段」，不做自动重试</td></tr>
           <tr><td><code>parts</code></td><td>分卷地址数组（<code>.zip.001/.002/…</code>，按序拼接为完整 zip），非空即走分卷</td></tr>
-          <tr><td><code>part_sha256</code></td><td>各分卷 SHA256，与 parts <mark class="key">等长且每项非空</mark>时逐卷校验（长度不符或留空项则不逐卷校验），已下载合格的卷自动复用。分卷模式下这份齐备的数组即可满足 <code>require_sha256</code> 闸，无需再给整包 <code>sha256</code></td></tr>
-          <tr><td><code>sha256</code></td><td>完整 zip 的 SHA256（大小写不敏感），下载结束后整体复核（<mark class="key">默认必填</mark>，校验按 256 KB 分块流式计算，GB 级包也不会把哈希读进内存）。留空 = 跳过整体校验，且禁用「复用已下载包」以免把中断的半包当完整包安装；在 <code>require_sha256</code> 开启时（默认），<code>sha256</code> 与齐备的 <code>part_sha256</code> <mark class="key">两者都没有 → 直接拒绝安装</mark>，需要放行得显式关掉闸门</td></tr>
+          <tr><td><code>part_sha256</code></td><td>各分卷 SHA256，与 parts <mark class="key">等长且每项非空</mark>时逐卷校验（长度不符或留空项则不逐卷校验），已下载合格的卷自动复用。<mark class="key">逐卷校验齐全时不再生成合并 zip，安装阶段直接从分卷流式读取解压</mark>，整包完整性以逐卷校验为准。分卷模式下这份齐备的数组即可满足 <code>require_sha256</code> 闸，无需再给整包 <code>sha256</code></td></tr>
+          <tr><td><code>sha256</code></td><td>完整 zip 的 SHA256（大小写不敏感），下载结束后整体复核（<mark class="key">默认必填</mark>，校验按 256 KB 分块流式计算，GB 级包也不会把哈希读进内存）。<mark class="key">分卷模式下 <code>part_sha256</code> 已覆盖全部卷时，这一项不参与校验</mark>，也不会生成合并包或计算整包哈希；逐卷校验不齐时才回落到「合并写盘 + 合并时算整包哈希」。留空 = 跳过整体校验，且禁用「复用已下载包」以免把中断的半包当完整包安装；在 <code>require_sha256</code> 开启时（默认），<code>sha256</code> 与齐备的 <code>part_sha256</code> <mark class="key">两者都没有 → 直接拒绝安装</mark>，需要放行得显式关掉闸门</td></tr>
           <tr><td><code>size_bytes</code></td><td>更新包字节数（等于各分卷之和）。分卷模式下作为整体进度分母；单包模式下仅在响应缺少 <code>Content-Length</code> 时用它兜底百分比。两种模式都留空则界面只有已下载字节、没有百分比与剩余时间</td></tr>
           <tr><td><code>release_date</code></td><td>发布时间（ISO 8601，pkgtool 写入打包时刻 UTC）。客户端只解析留存，界面不展示</td></tr>
           <tr><td><code>changelog</code></td><td>更新日志数组，逐条展示；自拉到清单起贯穿「发现新版本 → 下载 → 安装 → 完成」全程，空数组则不显示日志区</td></tr>
@@ -448,10 +448,10 @@ flowchart TD
   E --> H
   H -->|失败| RT1[自动重试 1s→2s→3s<br/>半包与合格分卷保留续传]
   RT1 --> H
-  H --> I[SHA256 校验<br/>分卷逐卷 + 合并后整体]
+  H --> I[SHA256 校验<br/>分卷逐卷 / 合并后整体（按需）]
   I -->|校验失败| RT2[自动重试]
   RT2 --> H
-  I --> J[解压安装到新版本目录<br/>预检磁盘 · zip-slip 防护]
+  I --> J[解压安装到新版本目录<br/>分卷直读 · 不生成合并包 · zip-slip 防护]
   J --> K[卸载配置的 Windows 服务<br/>必要时 UAC 提权接管]
   K --> L[写本地 app.json<br/>清理下载缓存与超量旧版本]
   L --> M[更新完成<br/>拉起目标程序]
@@ -478,12 +478,13 @@ flowchart TD
 
     <h4>断点续传、分卷并发与磁盘预检</h4>
     <p>单包下载先写 <code>update_&lt;版本&gt;.zip.part</code>，完整收尾才改名成正式包，因此正式包任何时刻要么不存在、要么是完整数据。中断后下一次尝试带 <code>Range</code> 与 <code>If-Range</code> 只补剩余部分，SHA256 在续传前重读已有前缀补齐；服务端不支持 Range、<code>Content-Range</code> 起点不符或 <code>416</code> 时自动丢弃半包改为全量重下。续传要求地址一致且拿到强校验器（非弱 <code>ETag</code> 或 <code>Last-Modified</code>），拿不到就全量重下——宁可多下一次，也不拿旧版本前缀去赌。</p>
-    <p>分卷模式默认同时下载 3 卷（<code>parts_concurrency</code>，1~8），整体进度按各卷已下载字节之和推进、只增不减；右上角「分卷 x/y」里的 x 是<mark class="key">已完成卷数</mark>。任一卷失败即停止其余在途下载并进入重试，已下完的卷和半包都保留，下一轮从断点继续。</p>
-    <p>下载前按「约两倍包大小 + 256 MB 余量」检查下载目录所在磁盘（下载与应用新版本同时存在），解压前再按「解压后大小 + 256 MB 余量」检查一次；清单没给 <code>size_bytes</code> 或平台查不到可用空间时跳过，不会误拦。空间不足属于确定性错误，不自动重试、不给官网入口。</p>
+    <p>分卷模式默认同时下载 3 卷（<code>parts_concurrency</code>，1~8），整体进度按各卷已下载字节之和推进、只增不减；右上角「分卷 x/y」里的 x 是<mark class="key">已完成卷数</mark>。任一卷失败即停止其余在途下载并进入重试，已下完的卷和半包都保留，下一轮从断点继续。<code>part_sha256</code> 与 <code>parts</code> 一一对齐时，<mark class="key">不再生成合并 zip</mark>：安装阶段直接从 <code>part_001…</code> 拼接读取解压，省掉一次整包大小的写盘与回读，磁盘峰值也从「分卷 + 合并包 + 新版本目录」降到「分卷 + 新版本目录」。此时整包 <code>sha256</code> 不参与校验——同一份字节的二次计算证明不了新东西；逐卷校验不齐才回落到「合并写盘 + 合并时顺手算整包哈希再比对」。分卷要等安装成功后才随下载缓存清理，安装失败或重试时原样保留，不会退化成重新下载。</p>
+    <p>下载前按「约两倍包大小 + 256 MB 余量」检查下载目录所在磁盘（下载与应用新版本同时存在），解压前再按「解压后大小 + 256 MB 余量」检查一次；分卷直装不产生合并包，峰值正好是「分卷 + 新版本目录」。清单没给 <code>size_bytes</code> 或平台查不到可用空间时跳过，不会误拦。空间不足属于确定性错误，不自动重试、不给官网入口。</p>
 
     <h4>自动重试与失败兜底</h4>
     <p>下载环节（拉包、逐卷下载、分卷合并、下载后校验）与解压校验环节失败会<mark class="key">自动重试</mark>，节奏 1s → 2s → 3s → …（封顶 5s）。重试前只清掉上一轮的正式包，半包 <code>.part</code> 与已校验合格的卷会保留，下一轮从断点继续，不从头下载。重试期间界面停在「正在下载更新包…（第 2/3 次）」并写明上次失败原因——流程没死，不让用户以为卡住。</p>
     <p>两类失败会给出「前往官网重新下载」出口：<mark class="key">更新检查失败</mark>（<code>manifest_url</code> 全部地址失效）与<mark class="key">下载 / 合并环节重试用尽</mark>，错误界面除「重试」「关闭」外多一枚按钮，用系统默认浏览器打开 <code>homepage</code>。解压校验、磁盘写满这类本地问题换地址解决不了，只提示处理后重试，不给官网入口。</p>
+    <p>安装阶段同样有兜底：新版本目录就位后先做结构自检（<code>launch</code> 指向的程序或自动定位到的主程序必须存在且非空），自检失败<mark class="key">自动回滚</mark>——新目录移开、旧版本备份改名回正式路径，用户仍能启动旧版本；首装失败则清掉不完整目录。自检失败属于确定性错误，不进入自动重试。</p>
     <p>多个 <code>manifest_url</code> 并发请求、先成功者胜出，不再按序逐个超时等待。若全部失败且 <code>fail_open</code> 开启、本地安装仍有效，则直接拉起已安装版本并静默退出；该开关默认关闭，且只在这条「拿不到清单」的路径生效，能拿到清单时强制更新等判定不受影响。</p>
 
     <h4>Windows 服务与 UAC 提权</h4>
@@ -495,13 +496,13 @@ flowchart TD
 ├── app.json              # 本地版本记录（当前版本等）
 ├── updater.lock          # 单实例互斥锁：存活期间独占，退出（含被杀）由系统释放
 ├── logs/updater.log      # 运行日志（1 MiB 滚动，保留 .1/.2；release 无控制台时唯一排障线索）
-├── downloads/            # 下载暂存：完整 zip、续传半包（.zip.part / .part.meta）与分卷目录
+├── downloads/            # 下载暂存：完整 zip（分卷直装时不生成）、续传半包（.zip.part / .part.meta）与分卷目录
 │                         #   安装成功后清理；失败保留以便续传/复用；7 天未改动由启动 GC 删除
 └── app/
     ├── app_2.1.2/        # 当前版本
     └── app_2.1.1/        # 旧版本 = 回滚资产（保留 max_versions 个）</code></pre>
     <div class="grid3">
-      <div class="card feature"><h4>回滚</h4><p>旧版本目录按 max_versions 保留（含当前版本），需要回滚时把启动目标指回旧目录即可。</p></div>
+      <div class="card feature"><h4>回滚</h4><p>安装后自检失败会自动把旧版本还原（新目录移开、备份改回正式路径）；日常回滚资产仍按 <code>max_versions</code> 保留（含当前版本），需要时把启动目标指回旧目录即可。</p></div>
       <div class="card feature"><h4>清理</h4><p>安装成功后先清本次下载缓存（失败不清、便于续传/复用），再按版本从旧到新删除超出 max_versions 的目录，当前版本始终保留。</p></div>
       <div class="card feature"><h4>断点复用</h4><p>单包失败保留 <code>.part</code> 半包与校验器，下次按 Range 续传；分卷模式保留已校验合格的卷，下次直接复用。</p></div>
       <div class="card feature"><h4>日志</h4><p><code>logs/updater.log</code> 记录启动参数、manifest 拉取与下载/校验/合并/解压/清理各阶段耗时、失败原因；1 MiB 滚动保留三份。release 的 GUI 进程没有控制台，用户报障时优先取这份文件。</p></div>
@@ -598,7 +599,7 @@ launcherclient.exe --preview --template H --stage error</code></pre>
       <li class="card" style="font-size: 0.92rem;"><b>配置生效顺序：</b>启动器配置遵循「命令行参数 &gt; update.json &gt; 内置默认值」；pkgtool 界面修改必须点「保存配置」才写入 packtool.json。</li>
       <li class="card" style="font-size: 0.92rem;"><b>服务卸载不可逆：</b><code>services</code> 中列出的 Windows 服务在更新安装前会被停止并卸载，<mark class="key">卸载后不恢复、不重启</mark>，请把确实需要随更新移除的服务才写进该列表。</li>
       <li class="card" style="font-size: 0.92rem;"><b>强制更新由服务端控制：</b><code>min_version</code> / <code>force_update</code> / <code>store_url</code> 三个字段只能由服务器 version.json 下发，客户端本地无法覆盖；发布紧急安全修复时置 <code>force_update=true</code> 即可对全量用户阻断式要求升级。</li>
-      <li class="card" style="font-size: 0.92rem;"><b>回滚方式：</b>更新器不提供一键回滚界面；旧版本目录按 <code>max_versions</code> 保留，需要回滚时把启动目标（<code>--launch</code> 或 <code>launch</code> 配置）指回旧版本目录即可。</li>
+      <li class="card" style="font-size: 0.92rem;"><b>回滚方式：</b>更新器不提供一键回滚界面；安装后自检失败（主程序缺失或为空）会自动还原旧版本。日常回滚仍靠旧版本目录——按 <code>max_versions</code> 保留，需要时把启动目标（<code>--launch</code> 或 <code>launch</code> 配置）指回旧版本目录即可。</li>
       <li class="card" style="font-size: 0.92rem;"><b>pkgtool 暂不含：</b>文件 diff 勾选/筛选、发布通道概念、压缩级别与 SHA-256 开关、构建历史持久化与回滚、日志级别筛选。</li>
     </ul>
   </section>
