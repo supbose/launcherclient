@@ -24,6 +24,12 @@
 
 
 
+
+## v1.0.2 (2026-10-30)
+### 🚀 新增功能
+
+- [8f1ac81](/-/commit/8f1ac8147ff04eb89dc775a068ea23ecf43677d6) 新增(src-egui): 集成华为鸿蒙字体，替换系统字体加载逻辑 (README.md, docs/egui界面复刻说明.md, scripts/build.py, src-egui/assets/font/HarmonyOSSansSC-Bold.ttf, src-egui/assets/font/HarmonyOSSansSC-Medium.ttf, src-egui/assets/font/HarmonyOSSansSC-Regular.ttf, src-egui/assets/font/LICENSE.txt, src-egui/build.rs, src-egui/src/app.rs, src-ui/src/fonts.rs, src-ui/src/lib.rs, src-ui/src/theme.rs)
+
 ## v1.0.1 (2026-10-30)
 ### ♻️ 代码重构
 
