@@ -61,8 +61,8 @@ async fn recover_backups(app_dir: &Path) {
             remove_dir_smart(&path).await;
         } else {
             match tokio::fs::rename(&path, &target).await {
-                Ok(()) => eprintln!("[清理] 已还原上次中断安装的版本: {}", original),
-                Err(e) => eprintln!("[清理] 还原中断安装的备份失败 {}（{}）", name, e),
+                Ok(()) => crate::qlog!("[清理] 已还原上次中断安装的版本: {}", original),
+                Err(e) => crate::qlog!("[清理] 还原中断安装的备份失败 {}（{}）", name, e),
             }
         }
     }
@@ -102,7 +102,7 @@ async fn cleanup_manifest_temps(app_dir: &Path) {
         };
         if name.starts_with("app.json.") && name.ends_with(".tmp") {
             if let Err(e) = tokio::fs::remove_file(&path).await {
-                eprintln!("[清理] 版本记录临时文件删除失败 {}: {}", name, e);
+                crate::qlog!("[清理] 版本记录临时文件删除失败 {}: {}", name, e);
             }
         }
     }
@@ -139,8 +139,8 @@ async fn cleanup_stale_downloads(downloads_dir: &Path) {
             remove_dir_smart(&path).await;
         } else {
             match tokio::fs::remove_file(&path).await {
-                Ok(()) => eprintln!("[清理] 已删除过期更新包: {}", name),
-                Err(e) => eprintln!("[清理] 过期更新包删除失败 {}: {}", name, e),
+                Ok(()) => crate::qlog!("[清理] 已删除过期更新包: {}", name),
+                Err(e) => crate::qlog!("[清理] 过期更新包删除失败 {}: {}", name, e),
             }
         }
     }
@@ -161,8 +161,8 @@ pub async fn cleanup_pending(app_dir: &Path) {
             if let Some(name) = path.file_name().and_then(|n| n.to_str()) {
                 if name.starts_with(PENDING_DELETE_PREFIX) {
                     match tokio::fs::remove_dir_all(&path).await {
-                        Ok(_) => eprintln!("[清理] 已清理残留目录: {}", name),
-                        Err(e) => eprintln!("[清理] 残留目录清理失败 {}: {}", name, e),
+                        Ok(_) => crate::qlog!("[清理] 已清理残留目录: {}", name),
+                        Err(e) => crate::qlog!("[清理] 残留目录清理失败 {}: {}", name, e),
                     }
                 }
             }
@@ -237,15 +237,17 @@ async fn remove_dir_smart(dir: &Path) {
         .to_string();
 
     match tokio::fs::remove_dir_all(dir).await {
-        Ok(_) => eprintln!("[清理] 已删除旧版本目录: {}", name),
+        Ok(_) => crate::qlog!("[清理] 已删除旧版本目录: {}", name),
         Err(e) => {
             // 重命名为待删除前缀，目录占用解除后下次启动清理
             let renamed = dir.with_file_name(format!("{}{}", PENDING_DELETE_PREFIX, name));
             match tokio::fs::rename(dir, &renamed).await {
-                Ok(_) => eprintln!("[清理] 目录被占用，已重命名待下次清理: {}（{}）", name, e),
-                Err(re) => eprintln!(
+                Ok(_) => crate::qlog!("[清理] 目录被占用，已重命名待下次清理: {}（{}）", name, e),
+                Err(re) => crate::qlog!(
                     "[清理] 旧版本目录删除失败且重命名失败: {}（删除: {}，重命名: {}）",
-                    name, e, re
+                    name,
+                    e,
+                    re
                 ),
             }
         }

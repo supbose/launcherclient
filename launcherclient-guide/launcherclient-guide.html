@@ -489,6 +489,7 @@ flowchart TD
     <pre><code>&lt;root&gt;/
 ├── app.json              # 本地版本记录（当前版本等）
 ├── updater.lock          # 单实例互斥锁：存活期间独占，退出（含被杀）由系统释放
+├── logs/updater.log      # 运行日志（1 MiB 滚动，保留 .1/.2；release 无控制台时唯一排障线索）
 ├── downloads/            # 下载暂存：完整 zip、续传半包（.zip.part / .part.meta）与分卷目录
 │                         #   安装成功后清理；失败保留以便续传/复用；7 天未改动由启动 GC 删除
 └── app/
@@ -498,6 +499,7 @@ flowchart TD
       <div class="card feature"><h4>回滚</h4><p>旧版本目录按 max_versions 保留（含当前版本），需要回滚时把启动目标指回旧目录即可。</p></div>
       <div class="card feature"><h4>清理</h4><p>安装成功后先清本次下载缓存（失败不清、便于续传/复用），再按版本从旧到新删除超出 max_versions 的目录，当前版本始终保留。</p></div>
       <div class="card feature"><h4>断点复用</h4><p>单包失败保留 <code>.part</code> 半包与校验器，下次按 Range 续传；分卷模式保留已校验合格的卷，下次直接复用。</p></div>
+      <div class="card feature"><h4>日志</h4><p><code>logs/updater.log</code> 记录启动参数、manifest 拉取与下载/校验/合并/解压/清理各阶段耗时、失败原因；1 MiB 滚动保留三份。release 的 GUI 进程没有控制台，用户报障时优先取这份文件。</p></div>
       <div class="card feature"><h4>单实例</h4><p>启动时抢占 <code>updater.lock</code>，最多等 5 秒；拿不到就退出，避免两个更新器同时写 app.json、同时清理版本目录。提权交接（父进程 spawn 完提权副本立即退出）不会互锁，<code>--check-only</code> 与 <code>--preview</code> 不取锁。</p></div>
     </div>
 

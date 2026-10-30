@@ -147,7 +147,7 @@ impl LocalManifest {
         match serde_json::from_str::<Self>(&raw) {
             Ok(mut manifest) => {
                 if manifest.name.is_none() {
-                    eprintln!(
+                    crate::qlog!(
                         "[版本记录] 检测到旧格式 app.json（缺少 name 字段），自动迁移: {}",
                         path.display()
                     );

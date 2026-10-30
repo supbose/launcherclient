@@ -51,9 +51,10 @@ where
     match build() {
         Ok(client) => client,
         Err(e) => {
-            eprintln!(
+            crate::qlog!(
                 "[HTTP] {} Client 构建失败（{}），回退系统默认配置（自定义超时不再生效）",
-                kind, e
+                kind,
+                e
             );
             reqwest::Client::default()
         }

@@ -15,7 +15,7 @@
 //!    依次退回 `%LOCALAPPDATA%\<name>` → `%PROGRAMDATA%\QsLtdService\<name>` → 当前工作目录
 //!
 //! 与旧实现的两处**有意**差异：不引入 `dirs` crate（直接读环境变量，Windows 上
-//! 与 `dirs::config_dir()` 同值）；日志从 `tracing` 换成本仓库统一的 `eprintln!`。
+//! 与 `dirs::config_dir()` 同值）；日志从 `tracing` 换成本仓库统一的 `crate::qlog!`。
 
 use std::path::{Path, PathBuf};
 
@@ -108,9 +108,10 @@ pub fn app_dir(app_name: Option<&str>) -> PathBuf {
         Some(name) if !name.is_empty() => match validate_app_name(name) {
             Ok(()) => name.to_string(),
             Err(e) => {
-                eprintln!(
+                crate::qlog!(
                     "[路径] 应用名不可用（{}），改用默认目录名 {}",
-                    e, DEFAULT_APP_DIR_NAME
+                    e,
+                    DEFAULT_APP_DIR_NAME
                 );
                 DEFAULT_APP_DIR_NAME.to_string()
             }
@@ -122,13 +123,13 @@ pub fn app_dir(app_name: Option<&str>) -> PathBuf {
     if let Some(config_path) = config_file_path() {
         if let Some(override_dir) = read_appdata_dir(&config_path) {
             if is_valid_appdata_path(&override_dir) {
-                eprintln!(
+                crate::qlog!(
                     "[路径] 使用 config.toml 中的 appdata.dir: {:?}",
                     override_dir
                 );
                 return override_dir;
             }
-            eprintln!(
+            crate::qlog!(
                 "[路径] config.toml 的 appdata.dir 指向系统账户目录，忽略: {:?}",
                 override_dir
             );
@@ -140,7 +141,7 @@ pub fn app_dir(app_name: Option<&str>) -> PathBuf {
     // 规则 3：SYSTEM 上下文里的配置目录不能用来放用户数据
     if let Some(dir) = base.as_ref() {
         if is_system_profile(dir) {
-            eprintln!("[路径] 检测到 SYSTEM 用户目录 {:?}，改用备用路径", dir);
+            crate::qlog!("[路径] 检测到 SYSTEM 用户目录 {:?}，改用备用路径", dir);
             return system_fallback_dir(&name);
         }
     }
@@ -177,17 +178,17 @@ fn system_fallback_dir(name: &str) -> PathBuf {
     {
         if let Some(local) = std::env::var_os("LOCALAPPDATA") {
             let dir = PathBuf::from(local).join(name);
-            eprintln!("[路径] 使用 LOCALAPPDATA: {:?}", dir);
+            crate::qlog!("[路径] 使用 LOCALAPPDATA: {:?}", dir);
             return dir;
         }
         if let Some(program_data) = std::env::var_os("PROGRAMDATA") {
             let dir = PathBuf::from(program_data).join("QsLtdService").join(name);
-            eprintln!("[路径] 使用 PROGRAMDATA: {:?}", dir);
+            crate::qlog!("[路径] 使用 PROGRAMDATA: {:?}", dir);
             return dir;
         }
     }
     let dir = current_dir_or_dot().join(name);
-    eprintln!("[路径] 找不到合适的备用路径，使用当前工作目录: {:?}", dir);
+    crate::qlog!("[路径] 找不到合适的备用路径，使用当前工作目录: {:?}", dir);
     dir
 }
 

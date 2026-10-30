@@ -214,7 +214,7 @@ pub fn resolve_launcher_name(cli: Option<&str>, file: Option<&str>) -> String {
         .collect();
     let cleaned = cleaned.trim();
     if cleaned.is_empty() {
-        eprintln!(
+        crate::qlog!(
             "[配置] 启动器标题只有空白字符，回落到内置默认「{}」",
             defaults::DEFAULT_LAUNCHER_NAME
         );
@@ -222,9 +222,10 @@ pub fn resolve_launcher_name(cli: Option<&str>, file: Option<&str>) -> String {
     }
     if cleaned.chars().count() > LAUNCHER_NAME_MAX {
         let truncated: String = cleaned.chars().take(LAUNCHER_NAME_MAX).collect();
-        eprintln!(
+        crate::qlog!(
             "[配置] 启动器标题超过 {} 字符，已截断为 {:?}",
-            LAUNCHER_NAME_MAX, truncated
+            LAUNCHER_NAME_MAX,
+            truncated
         );
         return truncated;
     }
@@ -249,7 +250,7 @@ pub fn resolve_launcher_template(specified: Option<&str>, invoked_with_args: boo
     if VALID_LAUNCHER_TEMPLATES.contains(&normalized.as_str()) {
         return normalized;
     }
-    eprintln!(
+    crate::qlog!(
         "[配置] 不支持的启动器模板 '{}'（可选 {}），回落到主模板 {}",
         raw,
         VALID_LAUNCHER_TEMPLATES.join("/"),
@@ -267,12 +268,12 @@ pub fn load() -> UpdateSettings {
             match std::fs::read_to_string(&path) {
                 Ok(content) => match serde_json::from_str::<UpdateSettings>(&content) {
                     Ok(settings) => {
-                        eprintln!("[配置] 已加载配置文件: {}", path.display());
+                        crate::qlog!("[配置] 已加载配置文件: {}", path.display());
                         return settings;
                     }
-                    Err(e) => eprintln!("[配置] 配置文件解析失败 {}: {}", path.display(), e),
+                    Err(e) => crate::qlog!("[配置] 配置文件解析失败 {}: {}", path.display(), e),
                 },
-                Err(e) => eprintln!("[配置] 配置文件读取失败 {}: {}", path.display(), e),
+                Err(e) => crate::qlog!("[配置] 配置文件读取失败 {}: {}", path.display(), e),
             }
         }
     }
@@ -331,16 +332,16 @@ fn generate_default_template(dir: &std::path::Path) -> bool {
         "fail_open": false
     });
     let Ok(content) = serde_json::to_string_pretty(&template) else {
-        eprintln!("[配置] 默认模板序列化失败");
+        crate::qlog!("[配置] 默认模板序列化失败");
         return false;
     };
     match std::fs::write(&path, content) {
         Ok(_) => {
-            eprintln!("[配置] 未找到配置文件，已生成默认模板: {}", path.display());
+            crate::qlog!("[配置] 未找到配置文件，已生成默认模板: {}", path.display());
             true
         }
         Err(e) => {
-            eprintln!("[配置] 默认模板生成失败 {}: {}", path.display(), e);
+            crate::qlog!("[配置] 默认模板生成失败 {}: {}", path.display(), e);
             false
         }
     }

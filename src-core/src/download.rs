@@ -102,7 +102,7 @@ where
         if meta.total == Some(*len) {
             let (hasher, hashed) = hash_existing(&part).await?;
             if hashed == *len {
-                eprintln!("[下载] 发现已下完的半包，直接收尾: {}", part.display());
+                crate::qlog!("[下载] 发现已下完的半包，直接收尾: {}", part.display());
                 finish_part(&part, &meta_path, dest).await?;
                 return Ok((dest.to_path_buf(), hex::encode(hasher.finalize())));
             }
@@ -135,7 +135,7 @@ where
                     DOWNLOAD_FAIL_PREFIX
                 ));
             }
-            eprintln!("[下载] 续传位置被服务器拒绝（416），丢弃半包重新下载");
+            crate::qlog!("[下载] 续传位置被服务器拒绝（416），丢弃半包重新下载");
             remove_quietly(&part).await;
             remove_quietly(&meta_path).await;
             resume = None;
@@ -163,7 +163,7 @@ where
             {
                 Some((start, total)) if start == offset => range_total = total,
                 _ => {
-                    eprintln!("[下载] Content-Range 不可用，改为全量下载");
+                    crate::qlog!("[下载] Content-Range 不可用，改为全量下载");
                     is_resume = false;
                 }
             }
@@ -181,9 +181,10 @@ where
                     DOWNLOAD_FAIL_PREFIX, offset, len
                 ));
             } else {
-                eprintln!(
+                crate::qlog!(
                     "[下载] 续传半包长度变化（{} → {}），丢弃后全量下载",
-                    offset, len
+                    offset,
+                    len
                 );
                 remove_quietly(&part).await;
                 remove_quietly(&meta_path).await;
@@ -299,7 +300,7 @@ async fn load_resume(url: &str, part: &Path, meta_path: &Path) -> Option<(Partia
         Err(_) => None,
     };
     let Some(meta) = meta.filter(|m| m.url == url && !m.validator.trim().is_empty()) else {
-        eprintln!(
+        crate::qlog!(
             "[下载] 半包缺少可用续传信息，丢弃后重新下载: {}",
             part.display()
         );
@@ -315,9 +316,10 @@ async fn load_resume(url: &str, part: &Path, meta_path: &Path) -> Option<(Partia
     }
     if let Some(total) = meta.total {
         if len > total {
-            eprintln!(
+            crate::qlog!(
                 "[下载] 半包大于声明的总大小（{} > {}），丢弃后重新下载",
-                len, total
+                len,
+                total
             );
             remove_quietly(part).await;
             remove_quietly(meta_path).await;
@@ -355,7 +357,7 @@ async fn save_meta(path: &Path, meta: &PartialMeta) {
         return;
     };
     if let Err(e) = tokio::fs::write(path, json).await {
-        eprintln!("[下载] 续传元数据写入失败（忽略）: {}", e);
+        crate::qlog!("[下载] 续传元数据写入失败（忽略）: {}", e);
     }
 }
 
@@ -658,7 +660,7 @@ where
                     .map(|m| m.len())
                     .unwrap_or(0);
                 progress.complete(i, part_len);
-                eprintln!(
+                crate::qlog!(
                     "[下载] 复用分卷 {}/{}: {}",
                     i + 1,
                     total,
@@ -667,7 +669,7 @@ where
                 part_paths[i] = Some(part_path);
                 continue;
             }
-            eprintln!("[下载] 分卷 {}/{} 校验不通过，重新下载", i + 1, total);
+            crate::qlog!("[下载] 分卷 {}/{} 校验不通过，重新下载", i + 1, total);
             let _ = tokio::fs::remove_file(&part_path).await;
         }
         pending.push(i);
@@ -725,7 +727,7 @@ where
                     .map(|m| m.len())
                     .unwrap_or(0);
                 progress.complete(i, part_len);
-                eprintln!("[下载] 分卷 {}/{} 完成: {}", i + 1, total, url);
+                crate::qlog!("[下载] 分卷 {}/{} 完成: {}", i + 1, total, url);
                 Ok::<(usize, PathBuf), String>((i, part_path))
             }
         })
@@ -807,15 +809,15 @@ where
             merged += n as u64;
             on_progress(merged, total_bytes);
         }
-        eprintln!("[合并] 卷 {}/{} 完成", idx + 1, part_paths.len());
+        crate::qlog!("[合并] 卷 {}/{} 完成", idx + 1, part_paths.len());
     }
-    eprintln!("[合并] 读取循环全部完成，开始 flush");
+    crate::qlog!("[合并] 读取循环全部完成，开始 flush");
     // 与下载一致：只 flush 用户态缓冲，不 fsync。合并产物紧接着会被解压读取，
     // 崩溃后完整性由整包 SHA256 把关，机械盘上省掉一次 GB 级 FlushFileBuffers。
     out.flush()
         .await
         .map_err(|e| format!("合并文件刷新失败: {}", e))?;
-    eprintln!("[合并] flush 完成，开始 SHA256 校验");
+    crate::qlog!("[合并] flush 完成，开始 SHA256 校验");
 
     // 整体 SHA256 校验
     let actual = hex::encode(hasher.finalize());

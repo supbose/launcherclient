@@ -81,7 +81,7 @@ pub async fn fetch_with_failover(urls: &[String]) -> Result<FlatManifest, String
         return fetch(&urls[0]).await;
     }
 
-    eprintln!(
+    crate::qlog!(
         "[更新器] 并发拉取 {} 个 manifest 地址（取最先成功者）",
         urls.len()
     );
@@ -94,11 +94,11 @@ pub async fn fetch_with_failover(urls: &[String]) -> Result<FlatManifest, String
     while let Some((i, url, outcome)) = attempts.next().await {
         match outcome {
             Ok(m) => {
-                eprintln!("[更新器] manifest 地址 {} 拉取成功: {}", i + 1, url);
+                crate::qlog!("[更新器] manifest 地址 {} 拉取成功: {}", i + 1, url);
                 return Ok(m);
             }
             Err(e) => {
-                eprintln!(
+                crate::qlog!(
                     "[更新器] manifest 地址 {} 拉取失败: {}（{}）",
                     i + 1,
                     url,
@@ -278,7 +278,7 @@ struct CacheEntry {
 pub async fn fetch_with_cache(urls: &[String], app_name: &str) -> Result<FlatManifest, String> {
     let cache_path = manifest_cache_path(app_name);
     if let Some(cached) = load_fresh_cache(&cache_path) {
-        eprintln!(
+        crate::qlog!(
             "[更新器] 使用 manifest 缓存（{} 秒内刚检测过，跳过联网）",
             MANIFEST_CACHE_TTL.as_secs()
         );
@@ -328,7 +328,7 @@ fn save_cache(path: &Path, m: &FlatManifest) {
         let _ = std::fs::create_dir_all(parent);
     }
     if let Err(e) = std::fs::write(path, json) {
-        eprintln!("[更新器] manifest 缓存写入失败（忽略）: {}", e);
+        crate::qlog!("[更新器] manifest 缓存写入失败（忽略）: {}", e);
     }
 }
 

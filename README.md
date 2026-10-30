@@ -163,7 +163,7 @@ push 与 pull_request 触发同一条流水线（YAML 锚点复用），分两�
 | 硬门禁 | `cargo fmt --all -- --check` + pkgtool 的 `cargo fmt --check` | 只看源码不触发编译，UI crate 也能覆盖 |
 | 硬门禁 | `cargo clippy -p qsltd-updater-core --all-targets -- -D warnings` | 核心库 0 warning（本地已验证） |
 | 硬门禁 | `cargo clippy -p qsltd-ui --all-targets -- -D warnings` | 共享 UI 原语只依赖 egui，Linux 不需要图形系统包，可稳定复现 |
-| 硬门禁 | `cargo test -p qsltd-updater-core` | 217 个纯单元测试；`integration` feature 不开，不碰 `sc.exe` 与真实网络 |
+| 硬门禁 | `cargo test -p qsltd-updater-core` | 全部纯单元测试（数量以 CI 输出为准）；`integration` feature 不开，不碰 `sc.exe` 与真实网络 |
 | 软门禁 | `cargo clippy -p qsltdupdater-egui ...` / pkgtool 同上 | eframe/wgpu 在 Linux 需要 X11/Wayland + OpenSSL + Vulkan 系统包，镜像缺任一项就会变成「和代码无关的红」，故失败只打印不拦合并 |
 
 > 软门禁那两条在 Windows 开发机上是**能过且应当过**的：本地 `cargo clippy --workspace --all-targets -- -D warnings`
@@ -399,6 +399,7 @@ URL 归一化（`"` → `%22`），环境变量写法与换行会被解析器吃
 ├── app.json              # 本地版本记录（当前版本等；临时文件 + 原子替换写入）
 ├── updater.lock          # 单实例互斥锁：进程存活期间独占打开，退出（含被杀/崩溃）由系统释放
 ├── manifest_cache.json   # manifest 的 5 分钟 TTL 缓存（仅「重试」路径读取，按 app_name 隔离）
+├── logs/updater.log      # 运行日志（1 MiB 滚动，保留 updater.log.1/.2；release 无控制台时唯一排障线索）
 ├── downloads/            # 下载暂存：完整 zip（update_<版本>.zip）、续传半包（update_<版本>.zip.part
 │                         #   与 .part.meta）与分卷目录（update_<版本>_parts/part_001...）；安装成功后清理，
 │                         #   失败保留以便续传/复用；距上次改动超过 7 天的 update_* 由启动 GC 删除
@@ -410,6 +411,8 @@ URL 归一化（`"` → `%22`），环境变量写法与换行会被解析器吃
     └── _del_app_2.1.0/   # 删除失败（目录被占用）的残留，下次启动再清
 ```
 
+- **日志**：`logs/updater.log` 记录启动参数、manifest 拉取、下载/校验/合并/解压/清理各阶段耗时与失败原因；
+  单文件 1 MiB 滚动，保留 `updater.log.1` / `updater.log.2`。release 的 GUI 进程没有控制台，用户报障时优先取这份文件。
 - **启动 GC**（`cleanup::cleanup_startup`，在拉 manifest 前执行）：清 `_del_*`；处理 `_bak_*`
   （正式目录在则删备份，不在则还原）；删 `app_*_tmp` 解压半成品与 `app.json.*.tmp` 原子写残留；
   删 `downloads/` 里 7 天未改动的 `update_*`（按 mtime 判定，避免误删别的进程刚下好的包）。
@@ -525,13 +528,13 @@ pnpm pkgtool              # 构建 release：src-pkgtool/target/release/pkgtool.
 ## 6. 测试
 
 ```bash
-# 共享核心（纯单元测试，217 个）——workspace 根执行，无需 cd 进目录
+# 共享核心（纯单元测试）——workspace 根执行，无需 cd 进目录
 cargo test -p qsltd-updater-core
 
 # 服务模块真实 sc.exe 冒烟（需管理员权限，默认关闭）
 cargo test -p qsltd-updater-core --features integration
 
-# 启动器 UI 逻辑测试（标题/副标题兜底、动作行显示条件、进度条规格等 7 个）
+# 启动器 UI 逻辑测试（标题/副标题兜底、动作行显示条件、进度条规格等）
 cargo test -p qsltdupdater-egui
 
 # 打包工具（含打包/切分/取消/版本号推算等用例）：不在 workspace 内，仍进目录跑

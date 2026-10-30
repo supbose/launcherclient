@@ -95,9 +95,10 @@ fn normalize_app_name(raw: String) -> String {
     match crate::appdir::validate_app_name(&raw) {
         Ok(()) => raw,
         Err(e) => {
-            eprintln!(
+            crate::qlog!(
                 "[配置] 应用名不可用（{}），回退默认值 {}",
-                e, DEFAULT_APP_NAME
+                e,
+                DEFAULT_APP_NAME
             );
             DEFAULT_APP_NAME.to_string()
         }
@@ -215,8 +216,8 @@ async fn cleanup_download_cache(app_name: &str, version: &str) {
 
     if zip.exists() {
         match tokio::fs::remove_file(&zip).await {
-            Ok(()) => eprintln!("[更新器] 已清理下载缓存: {}", zip.display()),
-            Err(e) => eprintln!(
+            Ok(()) => crate::qlog!("[更新器] 已清理下载缓存: {}", zip.display()),
+            Err(e) => crate::qlog!(
                 "[更新器] 清理下载缓存失败（忽略）: {}（{}）",
                 zip.display(),
                 e
@@ -225,8 +226,8 @@ async fn cleanup_download_cache(app_name: &str, version: &str) {
     }
     if parts.exists() {
         match tokio::fs::remove_dir_all(&parts).await {
-            Ok(()) => eprintln!("[更新器] 已清理分卷缓存: {}", parts.display()),
-            Err(e) => eprintln!(
+            Ok(()) => crate::qlog!("[更新器] 已清理分卷缓存: {}", parts.display()),
+            Err(e) => crate::qlog!(
                 "[更新器] 清理分卷缓存失败（忽略）: {}（{}）",
                 parts.display(),
                 e
@@ -241,13 +242,20 @@ async fn cleanup_download_cache(app_name: &str, version: &str) {
 /// 3 = 必须更新（服务端 manifest 设了 `min_version` 门槛 / `force_update` 标记置真）。
 pub fn check_only_exit(args: &CliArgs) -> i32 {
     let cfg = resolve_config(args);
+    // check-only 不建窗，但同样要把结果落盘：CI/运维常用它做连通性探测
+    crate::log::init(&app_dir(&cfg.app_name));
+    crate::qlog!(
+        "[更新器] check-only 启动，版本 {}，应用: {}",
+        env!("CARGO_PKG_VERSION"),
+        cfg.app_name
+    );
     match tokio::runtime::Builder::new_multi_thread()
         .enable_all()
         .build()
     {
         Ok(rt) => rt.block_on(run_check_only(args, &cfg)),
         Err(e) => {
-            eprintln!("[更新器] 创建异步运行时失败: {}", e);
+            crate::qlog!("[更新器] 创建异步运行时失败: {}", e);
             1
         }
     }
@@ -255,25 +263,34 @@ pub fn check_only_exit(args: &CliArgs) -> i32 {
 
 /// --check-only 纯检测模式：只判断是否有更新，不建窗、不下载、不拉回目标程序。
 pub async fn run_check_only(args: &CliArgs, cfg: &ResolvedConfig) -> i32 {
+    let started = Instant::now();
     // 先清理上次删除失败的残留目录
     let app_root = install_root(&cfg.app_name);
     cleanup::cleanup_pending(&app_root).await;
 
     let current_version = resolve_current_version(args, &cfg.app_name).await;
-    eprintln!("[更新器] 当前版本: {}", current_version);
+    crate::qlog!("[更新器] 当前版本: {}", current_version);
 
-    eprintln!("[更新器] 开始拉取 manifest...");
+    crate::qlog!("[更新器] 开始拉取 manifest...");
     let m = match manifest::fetch_with_failover(&cfg.manifest_urls).await {
         Ok(m) => m,
         Err(e) => {
-            eprintln!("[更新器] 检查更新失败: {}", e);
+            crate::qlog!(
+                "[计时] check-only 失败，耗时 {:.2}s: {}",
+                started.elapsed().as_secs_f64(),
+                e
+            );
             return 1;
         }
     };
+    crate::qlog!(
+        "[计时] check-only manifest 拉取耗时: {:.2}s",
+        started.elapsed().as_secs_f64()
+    );
 
     // 首次安装（0.0.0）：没有可运行的旧版本，「可跳过」没有意义，按必须更新处理
     if is_first_install(&current_version) && manifest::need_update(&current_version, &m) {
-        eprintln!(
+        crate::qlog!(
             "[更新器] 未检测到已安装版本，按强制更新处理：最新 {}",
             m.version
         );
@@ -281,7 +298,7 @@ pub async fn run_check_only(args: &CliArgs, cfg: &ResolvedConfig) -> i32 {
     }
 
     if manifest::requires_force_update(&current_version, &m) {
-        eprintln!(
+        crate::qlog!(
             "[更新器] 检测到服务端强制更新要求：当前 {}，要求 {}",
             current_version,
             manifest::required_version(&m)
@@ -290,13 +307,14 @@ pub async fn run_check_only(args: &CliArgs, cfg: &ResolvedConfig) -> i32 {
     }
 
     if manifest::need_update(&current_version, &m) {
-        eprintln!(
+        crate::qlog!(
             "[更新器] 发现新版本（可跳过）: {} → {}",
-            current_version, m.version
+            current_version,
+            m.version
         );
         2
     } else {
-        eprintln!("[更新器] 已是最新版本: {}", current_version);
+        crate::qlog!("[更新器] 已是最新版本: {}", current_version);
         0
     }
 }
@@ -311,11 +329,16 @@ pub async fn run_startup(args: &CliArgs, cfg: &ResolvedConfig) -> StartupDecisio
     // 放在进程最前面：既让「上次崩溃」在下一次启动就自愈，也避免这些
     // 中间产物长期占着磁盘（旧实现只清 `_del_`，`_bak_`/`_tmp` 无人管）。
     let app_root = install_root(&cfg.app_name);
+    let cleanup_started = Instant::now();
     cleanup::cleanup_startup(&app_root, &download_dir(&cfg.app_name)).await;
+    crate::qlog!(
+        "[计时] 启动清理耗时: {:.3}s",
+        cleanup_started.elapsed().as_secs_f64()
+    );
 
     // 当前版本：命令行 > update.json > 本地 app.json > 0.0.0（视为未安装/损坏自恢复）
     let current_version = resolve_current_version(args, &cfg.app_name).await;
-    eprintln!("[更新器] 当前版本: {}", current_version);
+    crate::qlog!("[更新器] 当前版本: {}", current_version);
 
     // 旧版本目录按 max_versions 保留。清理从「安装收尾」挪到「启动」：
     // 删一个 GB 级旧目录要好几秒，不该压在「更新完成 → 拉起应用」之间；
@@ -324,11 +347,16 @@ pub async fn run_startup(args: &CliArgs, cfg: &ResolvedConfig) -> StartupDecisio
         cleanup::cleanup_old_versions(&app_root, &current_version, cfg.max_versions).await;
     }
 
-    eprintln!("[更新器] 开始拉取 manifest...");
+    crate::qlog!("[更新器] 开始拉取 manifest...");
+    let fetch_started = Instant::now();
     let m = match manifest::fetch_with_failover(&cfg.manifest_urls).await {
         Ok(m) => m,
         Err(e) => {
-            eprintln!("[更新器] 检查更新失败: {}", e);
+            crate::qlog!(
+                "[计时] manifest 拉取失败，耗时 {:.2}s: {}",
+                fetch_started.elapsed().as_secs_f64(),
+                e
+            );
             // fail-open（opt-in）：弱网/服务端故障时，已安装版本仍可运行时
             // 不把用户挡在错误窗口后面。「仅本地安装有效」是硬条件——没有
             // 可启动的程序时放行只会得到一次启动失败。
@@ -337,12 +365,12 @@ pub async fn run_startup(args: &CliArgs, cfg: &ResolvedConfig) -> StartupDecisio
                 if should_fail_open(cfg, &current_version, installed.as_deref()) {
                     match launch_outcome(cfg, installed.as_deref().map(Path::new)) {
                         Ok(()) => {
-                            eprintln!(
+                            crate::qlog!(
                                 "[更新器] fail_open 已开启：无法检查更新，直接启动本地已安装版本"
                             );
                             return StartupDecision::SilentExit(0);
                         }
-                        Err(detail) => eprintln!(
+                        Err(detail) => crate::qlog!(
                             "[更新器] fail_open 未能启动本地版本（{}），保留错误界面",
                             detail
                         ),
@@ -357,6 +385,11 @@ pub async fn run_startup(args: &CliArgs, cfg: &ResolvedConfig) -> StartupDecisio
         }
     };
 
+    crate::qlog!(
+        "[计时] manifest 拉取成功，耗时 {:.2}s",
+        fetch_started.elapsed().as_secs_f64()
+    );
+
     // 登记更新日志：此后所有阶段载荷都携带它，界面在发现新版本起到
     // 更新完成全程可见（下载/安装期间用户正好有空看更新了什么）
     phase::set_changelog(m.changelog.clone());
@@ -369,7 +402,7 @@ pub async fn run_startup(args: &CliArgs, cfg: &ResolvedConfig) -> StartupDecisio
     // - 服务端强制（`force_update` 或 `min_version`）：阻断式提示，必须升级。
     // - 其余有更新：非阻断提示，可稍后升级直接进应用。
     if !manifest::need_update(&current_version, &m) {
-        eprintln!("[更新器] 已是最新版本: {}", current_version);
+        crate::qlog!("[更新器] 已是最新版本: {}", current_version);
         // 拉起目标程序后静默退出；launch 失败时显示错误窗口让用户知道
         // 发生了什么（交接模式下旧客户端已退出，静默等于应用凭空消失）
         let installed = read_installed_path(&cfg.app_name).await;
@@ -420,9 +453,10 @@ fn update_available_decision(
     let has_store = m.store_url.as_ref().is_some_and(|s| !s.trim().is_empty());
 
     if is_first_install(current_version) {
-        eprintln!(
+        crate::qlog!(
             "[更新器] 未检测到已安装版本（当前 {}），按首次安装直接下载安装：最新 {}",
-            current_version, m.version
+            current_version,
+            m.version
         );
         return StartupDecision::Show(Box::new(StartupContext {
             cfg: cfg.clone(),
@@ -441,9 +475,10 @@ fn update_available_decision(
 
     if manifest::requires_force_update(current_version, &m) {
         let required = manifest::required_version(&m);
-        eprintln!(
+        crate::qlog!(
             "[更新器] 触发服务端强制更新（阻断）：当前 {}，要求 {}",
-            current_version, required
+            current_version,
+            required
         );
         StartupDecision::Show(Box::new(StartupContext {
             cfg: cfg.clone(),
@@ -452,9 +487,10 @@ fn update_available_decision(
             initial: PhasePayload::force_update(current_version, &required, true, has_store),
         }))
     } else {
-        eprintln!(
+        crate::qlog!(
             "[更新器] 发现新版本（可跳过）：当前 {}，最新 {}",
-            current_version, m.version
+            current_version,
+            m.version
         );
         let latest = m.version.clone();
         StartupDecision::Show(Box::new(StartupContext {
@@ -473,14 +509,14 @@ fn update_available_decision(
 /// disabled，双保险；脚本调用场景靠这里兜底）。
 pub fn spawn_flow(args: CliArgs, handle: PhaseHandle) {
     if CHECK_RUNNING.swap(true, Ordering::SeqCst) {
-        eprintln!("[更新器] 已有更新流程在运行，忽略本次启动");
+        crate::qlog!("[更新器] 已有更新流程在运行，忽略本次启动");
         return;
     }
     let spawned = std::thread::Builder::new()
         .name("update-flow".into())
         .spawn(move || {
             let cfg = resolve_config(&args);
-            eprintln!(
+            crate::qlog!(
                 "[更新器] 启动，应用: {}，标题: {}，界面模板: {}，manifest 地址 {} 个: {}",
                 cfg.app_name,
                 cfg.launcher_name,
@@ -498,12 +534,12 @@ pub fn spawn_flow(args: CliArgs, handle: PhaseHandle) {
             };
             if let Err(e) = result {
                 // 各失败点已把错误写回共享快照，这里只留运行日志
-                eprintln!("[更新器] 更新流程失败: {}", e);
+                crate::qlog!("[更新器] 更新流程失败: {}", e);
             }
             CHECK_RUNNING.store(false, Ordering::SeqCst);
         });
     if let Err(e) = spawned {
-        eprintln!("[更新器] 后台更新线程启动失败: {}", e);
+        crate::qlog!("[更新器] 后台更新线程启动失败: {}", e);
         CHECK_RUNNING.store(false, Ordering::SeqCst);
     }
 }
@@ -514,7 +550,7 @@ pub fn spawn_flow(args: CliArgs, handle: PhaseHandle) {
 /// 已完成检查），直接执行「下载 → 校验 → 安装 → 收尾」流程。
 pub fn spawn_flow_with(args: CliArgs, handle: PhaseHandle, m: manifest::FlatManifest) {
     if CHECK_RUNNING.swap(true, Ordering::SeqCst) {
-        eprintln!("[更新器] 已有更新流程在运行，忽略本次启动");
+        crate::qlog!("[更新器] 已有更新流程在运行，忽略本次启动");
         return;
     }
     let spawned = std::thread::Builder::new()
@@ -530,12 +566,12 @@ pub fn spawn_flow_with(args: CliArgs, handle: PhaseHandle, m: manifest::FlatMani
             };
             if let Err(e) = result {
                 // 各失败点已把错误写回共享快照，这里只留运行日志
-                eprintln!("[更新器] 更新流程失败: {}", e);
+                crate::qlog!("[更新器] 更新流程失败: {}", e);
             }
             CHECK_RUNNING.store(false, Ordering::SeqCst);
         });
     if let Err(e) = spawned {
-        eprintln!("[更新器] 后台更新线程启动失败: {}", e);
+        crate::qlog!("[更新器] 后台更新线程启动失败: {}", e);
         CHECK_RUNNING.store(false, Ordering::SeqCst);
     }
 }
@@ -552,7 +588,7 @@ async fn run_check_flow(
     handle: &PhaseHandle,
 ) -> Result<(), String> {
     let current_version = resolve_current_version(args, &cfg.app_name).await;
-    eprintln!("[更新器] 当前版本: {}", current_version);
+    crate::qlog!("[更新器] 当前版本: {}", current_version);
 
     handle.set(PhasePayload::new(
         Stage::Checking,
@@ -566,7 +602,7 @@ async fn run_check_flow(
     let m = match manifest::fetch_with_cache(&cfg.manifest_urls, &cfg.app_name).await {
         Ok(m) => m,
         Err(e) => {
-            eprintln!("[更新器] 检查更新失败: {}", e);
+            crate::qlog!("[更新器] 检查更新失败: {}", e);
             handle.set(PhasePayload::check_failure(&e));
             return Err(e);
         }
@@ -576,7 +612,7 @@ async fn run_check_flow(
     phase::set_changelog(m.changelog.clone());
 
     if !manifest::need_update(&current_version, &m) {
-        eprintln!("[更新器] 已是最新版本: {}", current_version);
+        crate::qlog!("[更新器] 已是最新版本: {}", current_version);
         handle.set(PhasePayload::new(
             Stage::UpToDate,
             "已是最新版本",
@@ -586,7 +622,7 @@ async fn run_check_flow(
         // launch 模式拉起目标程序后由调用方退出；失败切错误态
         let installed = read_installed_path(&cfg.app_name).await;
         if let Err(e) = launch_outcome(cfg, installed.as_deref().map(Path::new)) {
-            eprintln!("[更新器] 无更新但启动失败: {}", e);
+            crate::qlog!("[更新器] 无更新但启动失败: {}", e);
             handle.set(PhasePayload::new(Stage::Error, "启动失败", &e, None));
             return Err(e);
         }
@@ -616,12 +652,13 @@ pub async fn run_update_flow(
     m: &manifest::FlatManifest,
     handle: &PhaseHandle,
 ) -> Result<(), String> {
+    let flow_started = Instant::now();
     // 版本号会被拼进下载缓存名与安装目录名（`app_<version>`）：正常路径上
     // manifest::fetch 已校验，这里再挡一次（manifest 也可能由 UI 侧直接传入），
     // 确保任何入口都不会用未校验的版本串拼路径。
     if let Err(e) = crate::appdir::validate_version(&m.version) {
         let e = format!("服务器返回的版本号不可用: {}", e);
-        eprintln!("[更新器] 拒绝更新: {}", e);
+        crate::qlog!("[更新器] 拒绝更新: {}", e);
         handle.set(PhasePayload::failure("更新包信息无效", &e, true));
         return Err(e);
     }
@@ -636,7 +673,7 @@ pub async fn run_update_flow(
     if !is_parts && m.url.is_empty() {
         // 单包模式却没有地址：等于没有下载这条路，同属「拿不到安装包」
         let e = "manifest 缺少 url 字段（单包模式必填）".to_string();
-        eprintln!("[更新器] 下载失败: {}", e);
+        crate::qlog!("[更新器] 下载失败: {}", e);
         handle.set(PhasePayload::failure("更新包下载失败", &e, true));
         return Err(e);
     }
@@ -653,7 +690,7 @@ pub async fn run_update_flow(
             "manifest 缺少包完整性校验值：未提供整包 sha256"
         }
         .to_string();
-        eprintln!("[更新器] 拒绝安装: {}", e);
+        crate::qlog!("[更新器] 拒绝安装: {}", e);
         handle.set(PhasePayload::failure(
             "更新包缺少校验值，已拒绝安装",
             &format!(
@@ -673,7 +710,7 @@ pub async fn run_update_flow(
     if let Some(size) = m.size_bytes {
         let probe = download_dir(&cfg.app_name);
         if let Err(e) = disk::ensure_space(&probe, disk::required_for_download(size)) {
-            eprintln!("[更新器] 磁盘预检未通过: {}", e);
+            crate::qlog!("[更新器] 磁盘预检未通过: {}", e);
             handle.set(PhasePayload::failure("磁盘空间不足", &e, false));
             return Err(e);
         }
@@ -691,17 +728,18 @@ pub async fn run_update_flow(
         Ok(false) => {}
         Ok(true) => {
             // 已成功拉起提权副本：退出当前进程，避免两个更新器窗口并存
-            eprintln!("[更新器] 提权副本已拉起，退出当前（未提权）进程");
+            crate::qlog!("[更新器] 提权副本已拉起，退出当前（未提权）进程");
             std::process::exit(0);
         }
         Err(e) => {
-            eprintln!("[更新器] 提权前置检查失败，终止更新: {}", e);
+            crate::qlog!("[更新器] 提权前置检查失败，终止更新: {}", e);
             handle.set(PhasePayload::new(Stage::Error, "需要管理员权限", &e, None));
             return Err(e);
         }
     }
 
     let zip_path = download_dir(&cfg.app_name).join(format!("update_{}.zip", m.version));
+    let download_started = Instant::now();
 
     // ---- 下载 + 包完整性校验：同一环节自动重试（默认 3 次，含首次） ----
     //
@@ -712,7 +750,7 @@ pub async fn run_update_flow(
     // 界面此时给「前往官网」才是负责任的出口。
     let residual_free = residual_is_free(&zip_path);
     if !residual_free {
-        eprintln!(
+        crate::qlog!(
             "[更新器] 残留更新包被其他进程占用，本次不自动重试: {}",
             zip_path.display()
         );
@@ -754,9 +792,11 @@ pub async fn run_update_flow(
             // 本地写盘失败（磁盘满、目录只读）重下多少遍都是同一个结果，
             // 白等三轮外加一次 1.4 GB 的无效流量。
             Err(e) if attempt < download_max && download::is_retryable(&e) => {
-                eprintln!(
+                crate::qlog!(
                     "[更新器] 下载/校验失败（第 {}/{} 次），自动重试: {}",
-                    attempt, download_max, e
+                    attempt,
+                    download_max,
+                    e
                 );
                 notify_retrying(handle, "download", attempt, download_max, &e);
                 // 失败后清掉残缺产物，下一轮从零开始
@@ -765,7 +805,7 @@ pub async fn run_update_flow(
             }
             Err(e) => {
                 if attempt < download_max {
-                    eprintln!("[更新器] 该类失败重试无意义，停止自动重试: {}", e);
+                    crate::qlog!("[更新器] 该类失败重试无意义，停止自动重试: {}", e);
                 }
                 // 不可重试的错误把上限记成 0：界面文案只写「已尝试 N 次」，
                 // 不再暗示还有「共 M 次」轮次要来
@@ -779,7 +819,12 @@ pub async fn run_update_flow(
             }
         }
     }
-    eprintln!("[更新器] 更新包校验通过: {}", zip_path.display());
+    crate::qlog!("[更新器] 更新包校验通过: {}", zip_path.display());
+    crate::qlog!(
+        "[计时] 下载 + 校验完成: {:.2}s（目标 {}）",
+        download_started.elapsed().as_secs_f64(),
+        zip_path.display()
+    );
 
     // 安装前卸载用户配置的服务（运行中先停止；卸载后不恢复、不重启）。
     // 卸载失败必须在此终止：否则服务仍注册指向旧路径而新版本已装完，
@@ -807,7 +852,7 @@ pub async fn run_update_flow(
             Err(e) => Some(format!("服务卸载任务异常: {e}")),
         };
         if let Some(detail) = svc_detail {
-            eprintln!("[更新器] 服务卸载失败，终止更新: {}", detail);
+            crate::qlog!("[更新器] 服务卸载失败，终止更新: {}", detail);
             handle.set(PhasePayload::new(
                 Stage::Error,
                 "服务卸载失败，更新已终止",
@@ -818,6 +863,7 @@ pub async fn run_update_flow(
         }
     }
 
+    let install_started = Instant::now();
     // ---- 安装（解压 + 校验文件）：同样允许自动重试 ----
     //
     // 解压失败多为「包不完整 / 磁盘瞬时占用」，重试一次常常就好了；
@@ -841,15 +887,17 @@ pub async fn run_update_flow(
             // 与下载环节同一条原则：包非法 / 磁盘写不进去这类确定性失败
             // 不再陪着等两轮退避；只有改名交换阶段的瞬时占用值得重试。
             Err(e) if install_attempt < install_max && install::is_retryable_error(&e) => {
-                eprintln!(
+                crate::qlog!(
                     "[更新器] 安装失败（第 {}/{} 次），自动重试: {}",
-                    install_attempt, install_max, e
+                    install_attempt,
+                    install_max,
+                    e
                 );
                 notify_retrying(handle, "install", install_attempt, install_max, &e);
                 tokio::time::sleep(retry_backoff(install_attempt)).await;
             }
             Err(e) => {
-                eprintln!("[更新器] 安装失败: {}", e);
+                crate::qlog!("[更新器] 安装失败: {}", e);
                 let effective_max = if install::is_retryable_error(&e) {
                     install_max
                 } else {
@@ -866,7 +914,11 @@ pub async fn run_update_flow(
             }
         }
     }
-    eprintln!("[更新器] 安装完成: {}", target_dir.display());
+    crate::qlog!("[更新器] 安装完成: {}", target_dir.display());
+    crate::qlog!(
+        "[计时] 解压安装耗时: {:.2}s",
+        install_started.elapsed().as_secs_f64()
+    );
 
     // 写入本地版本记录，供下次检查与目标程序定位
     if let Err(e) = install::save_local_manifest(
@@ -878,7 +930,7 @@ pub async fn run_update_flow(
     )
     .await
     {
-        eprintln!("[更新器] 本地版本记录写入失败: {}", e);
+        crate::qlog!("[更新器] 本地版本记录写入失败: {}", e);
         handle.set(PhasePayload::new(
             Stage::Error,
             "本地版本记录写入失败",
@@ -891,7 +943,16 @@ pub async fn run_update_flow(
     // 清理本次更新的下载缓存（zip + 分卷），downloads 回归暂存区语义。
     // 旧版本目录不在这里删——那是回滚资产，交由下次启动的 cleanup_startup
     // 按 max_versions 处理，别让用户在「更新完成」前多等一次大目录删除。
+    let cleanup_started = Instant::now();
     cleanup_download_cache(&cfg.app_name, &m.version).await;
+    crate::qlog!(
+        "[计时] 下载缓存清理: {:.3}s",
+        cleanup_started.elapsed().as_secs_f64()
+    );
+    crate::qlog!(
+        "[计时] 更新流程总计（不含拉起应用）: {:.2}s",
+        flow_started.elapsed().as_secs_f64()
+    );
 
     let done_msg = format!("已更新到版本 {}", m.version);
     handle.set(PhasePayload::new(Stage::Done, "更新完成", &done_msg, None));
@@ -910,7 +971,7 @@ pub async fn run_update_flow(
     if let Err(e) = outcome {
         // 安装已成功（app.json 已写入新版本），仅启动失败：保留错误态，
         // 用户可点「重试」重走检测（无更新分支会再次尝试启动）或手动启动
-        eprintln!("[更新器] 更新完成但启动失败: {}", e);
+        crate::qlog!("[更新器] 更新完成但启动失败: {}", e);
         handle.set(PhasePayload::new(
             Stage::Error,
             "更新已完成，但启动应用失败",
@@ -1010,7 +1071,7 @@ async fn run_download_parts(
         "",
         Some(0.0),
     ));
-    eprintln!("[更新器] 合并 {} 个分卷...", result.part_paths.len());
+    crate::qlog!("[更新器] 合并 {} 个分卷...", result.part_paths.len());
     let merge_handle = handle.clone();
     // 合并是 GB 级顺序读写，按 256 KB 推一次进度会把 UI 锁砸出上万次；
     // 与下载一样 300ms 节流，末次强制推送 100%。
@@ -1054,12 +1115,12 @@ async fn run_download_parts(
             format!("{}分卷合并失败: {}", download::DOWNLOAD_FAIL_PREFIX, detail)
         }
     })?;
-    eprintln!("[更新器] 分卷合并完成: {}", zip_path.display());
+    crate::qlog!("[更新器] 分卷合并完成: {}", zip_path.display());
 
     // 合并产物已经过整体 SHA256 校验（或逐卷校验），分卷不再被任何后续步骤需要。
     // 立即删除，别让它一直占着与完整包等量的空间穿过解压/安装阶段。
     if let Err(e) = tokio::fs::remove_dir_all(&parts_dir).await {
-        eprintln!(
+        crate::qlog!(
             "[更新器] 清理分卷缓存失败（忽略）: {}（{}）",
             parts_dir.display(),
             e
@@ -1102,7 +1163,7 @@ async fn try_reuse_zip(
                 .await
                 .map(|m| m.len())
                 .unwrap_or(0);
-            eprintln!(
+            crate::qlog!(
                 "[更新器] 复用已下载的更新包: {}（{}）",
                 zip_path.display(),
                 crate::phase::format_bytes(size)
@@ -1118,7 +1179,7 @@ async fn try_reuse_zip(
             Some(actual)
         }
         Err(e) => {
-            eprintln!("[更新器] 本地更新包校验不通过，重新下载: {}", e);
+            crate::qlog!("[更新器] 本地更新包校验不通过，重新下载: {}", e);
             let _ = tokio::fs::remove_file(zip_path).await;
             None
         }
@@ -1178,7 +1239,7 @@ async fn run_download(
                 .await
                 .map(|m| m.len())
                 .unwrap_or(0);
-            eprintln!(
+            crate::qlog!(
                 "[更新器] 下载完成，大小 {}，SHA256: {}",
                 crate::phase::format_bytes(size),
                 sha
@@ -1261,16 +1322,17 @@ pub async fn resolve_current_version(args: &CliArgs, app_name: &str) -> String {
             Ok(Some(m)) if !m.version.is_empty() => {
                 // 校验安装目录是否存在，缺失则自恢复重装
                 if !m.installed_path.is_empty() && !Path::new(&m.installed_path).exists() {
-                    eprintln!(
+                    crate::qlog!(
                         "[更新器] 本地版本 {} 的安装目录缺失（{}），视为未安装并自动重装",
-                        m.version, m.installed_path
+                        m.version,
+                        m.installed_path
                     );
                     return "0.0.0".to_string();
                 }
                 return m.version;
             }
             Ok(_) => {}
-            Err(e) => eprintln!("[更新器] 本地版本记录读取失败: {}", e),
+            Err(e) => crate::qlog!("[更新器] 本地版本记录读取失败: {}", e),
         }
     }
     "0.0.0".to_string()
@@ -1399,7 +1461,7 @@ pub fn spawn_detached(exe_path: &Path) -> Result<(), String> {
         .spawn()
     {
         Ok(_) => {
-            eprintln!("[更新器] 已启动: {}", exe_path.display());
+            crate::qlog!("[更新器] 已启动: {}", exe_path.display());
             Ok(())
         }
         Err(e) => Err(format!("启动失败 {}: {}", exe_path.display(), e)),
@@ -1424,7 +1486,7 @@ pub async fn read_installed_path(app_name: &str) -> Option<String> {
 /// 磁盘满、创建目录失败这类本地问题不引导用户去官网——重试或清理磁盘才有用。
 fn record_download_failure(handle: &PhaseHandle, err: &str, attempt: u32, max_attempts: u32) {
     let is_download = err.starts_with(download::DOWNLOAD_FAIL_PREFIX);
-    eprintln!("[更新器] 下载失败: {}", err);
+    crate::qlog!("[更新器] 下载失败: {}", err);
     handle.set(
         PhasePayload::failure("更新包下载失败", err, is_download).with_attempt(
             "download",
@@ -1575,7 +1637,7 @@ pub fn open_store_url(store_url: Option<&str>) -> Result<(), String> {
     match crate::shell::sanitize_url(requested) {
         Ok(validated) => crate::shell::open_url(&validated),
         Err(e) => {
-            eprintln!("[更新器] 服务端 store_url 未通过校验（{e}），改开本地配置的官网首页");
+            crate::qlog!("[更新器] 服务端 store_url 未通过校验（{e}），改开本地配置的官网首页");
             crate::shell::open_url(&cfg.homepage)
         }
     }
@@ -1600,11 +1662,11 @@ pub fn register_cli_argv(argv: Vec<String>) {
 /// run_check_flow 首行即推送 checking 阶段，UI 自动回到检测态。
 pub fn retry(handle: PhaseHandle) {
     let Some(argv) = CLI_ARGV.get().cloned() else {
-        eprintln!("[更新器] 未登记命令行参数，无法重试");
+        crate::qlog!("[更新器] 未登记命令行参数，无法重试");
         return;
     };
     let args = crate::cli::parse_from(&argv);
-    eprintln!("[更新器] 用户请求重试，重新开始检查更新");
+    crate::qlog!("[更新器] 用户请求重试，重新开始检查更新");
     spawn_flow(args, handle);
 }
 
@@ -1624,7 +1686,7 @@ pub async fn finish_and_launch(handle: &PhaseHandle) -> Result<(), String> {
             Ok(())
         }
         Err(e) => {
-            eprintln!("[更新器] 「完成」启动失败: {}", e);
+            crate::qlog!("[更新器] 「完成」启动失败: {}", e);
             handle.set(PhasePayload::new(Stage::Error, "启动失败", &e, None));
             Err(e)
         }

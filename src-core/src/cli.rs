@@ -70,35 +70,35 @@ pub fn parse_from(argv: &[String]) -> CliArgs {
                     app_name = v.to_string();
                     i += 1;
                 }
-                None => eprintln!("[参数] --app-name 缺少值，使用默认值: {}", app_name),
+                None => crate::qlog!("[参数] --app-name 缺少值，使用默认值: {}", app_name),
             },
             "--name" => match value {
                 Some(v) => {
                     launcher_name = Some(v.to_string());
                     i += 1;
                 }
-                None => eprintln!("[参数] --name 缺少值，使用默认标题"),
+                None => crate::qlog!("[参数] --name 缺少值，使用默认标题"),
             },
             "--launch" => match value {
                 Some(v) => {
                     launch = Some(v.to_string());
                     i += 1;
                 }
-                None => eprintln!("[参数] --launch 缺少值，忽略该参数"),
+                None => crate::qlog!("[参数] --launch 缺少值，忽略该参数"),
             },
             "--manifest" => match value {
                 Some(v) => {
                     manifest_url = Some(v.to_string());
                     i += 1;
                 }
-                None => eprintln!("[参数] --manifest 缺少值，使用默认地址"),
+                None => crate::qlog!("[参数] --manifest 缺少值，使用默认地址"),
             },
             "--current-version" => match value {
                 Some(v) => {
                     current_version = Some(v.to_string());
                     i += 1;
                 }
-                None => eprintln!("[参数] --current-version 缺少值，忽略该参数"),
+                None => crate::qlog!("[参数] --current-version 缺少值，忽略该参数"),
             },
             "--check-only" => check_only = true,
             "--allow-missing-sha256" => allow_missing_sha256 = true,
@@ -109,9 +109,9 @@ pub fn parse_from(argv: &[String]) -> CliArgs {
                     template = Some(v.to_string());
                     i += 1;
                 }
-                None => eprintln!("[参数] --template 缺少值，使用默认模板"),
+                None => crate::qlog!("[参数] --template 缺少值，使用默认模板"),
             },
-            other => eprintln!("[参数] 未知参数: {}，已忽略", other),
+            other => crate::qlog!("[参数] 未知参数: {}，已忽略", other),
         }
         i += 1;
     }

@@ -227,7 +227,7 @@ pub async fn install(
             if had_existing {
                 if let Err(e) = tokio::fs::remove_dir_all(&backup_dir).await {
                     // 备份清不掉不影响新版本可用，下次安装/启动会再处理
-                    eprintln!(
+                    crate::qlog!(
                         "[更新器] 清理旧版本备份失败（忽略）: {}（{}）",
                         backup_dir.display(),
                         e
@@ -240,7 +240,7 @@ pub async fn install(
             // 回滚：把备份改回正式目录，尽量恢复可运行的旧版本
             if had_existing {
                 if let Err(re) = tokio::fs::rename(&backup_dir, install_dir).await {
-                    eprintln!(
+                    crate::qlog!(
                         "[更新器] 回滚旧版本失败（{} -> {}）: {}",
                         backup_dir.display(),
                         install_dir.display(),
@@ -296,7 +296,7 @@ async fn recover_interrupted_swap(install_dir: &Path, backup_dir: &Path) {
     }
     if install_dir.exists() {
         if let Err(e) = tokio::fs::remove_dir_all(backup_dir).await {
-            eprintln!(
+            crate::qlog!(
                 "[更新器] 清理上次安装残留备份失败（忽略）: {}（{}）",
                 backup_dir.display(),
                 e
@@ -304,11 +304,11 @@ async fn recover_interrupted_swap(install_dir: &Path, backup_dir: &Path) {
         }
     } else {
         match tokio::fs::rename(backup_dir, install_dir).await {
-            Ok(()) => eprintln!(
+            Ok(()) => crate::qlog!(
                 "[更新器] 已恢复上次中断安装的旧版本: {}",
                 install_dir.display()
             ),
-            Err(e) => eprintln!(
+            Err(e) => crate::qlog!(
                 "[更新器] 恢复上次中断安装的旧版本失败（{} -> {}）: {}",
                 backup_dir.display(),
                 install_dir.display(),
@@ -411,7 +411,7 @@ fn extract_zip_with_limits(
     if declared_total > 0 {
         crate::disk::ensure_space(dest, crate::disk::required_for_extract(declared_total))
             .map_err(|e| {
-                eprintln!("[安装] 解压前预检未通过: {}", e);
+                crate::qlog!("[安装] 解压前预检未通过: {}", e);
                 e
             })?;
     }

@@ -30,7 +30,19 @@ pub mod flow;
 pub mod install;
 pub mod instance;
 pub mod local_manifest;
+pub mod log;
 pub mod manifest;
 pub mod phase;
 pub mod services;
 pub mod shell;
+
+/// 写一行诊断日志（同时落盘到 `<app_dir>/logs/updater.log`）。
+///
+/// 用法与 `eprintln!` 完全一致；未初始化文件日志时回落到 stderr。
+/// release 的 GUI 进程没有控制台，落盘是唯一可事后追溯的通道。
+#[macro_export]
+macro_rules! qlog {
+    ($($arg:tt)*) => {
+        $crate::log::write_line(&format!($($arg)*))
+    };
+}

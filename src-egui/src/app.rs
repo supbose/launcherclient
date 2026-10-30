@@ -200,7 +200,7 @@ impl UpdaterApp {
                 // 成功时 finish_and_launch 已置位 PhaseHandle 退出信号，
                 // logic() 轮询到后关窗；失败时错误阶段已写回快照，UI 切错误态
                 if let Err(e) = result {
-                    eprintln!("[更新器] 「完成」启动失败: {}", e);
+                    qsltd_updater_core::qlog!("[更新器] 「完成」启动失败: {}", e);
                 }
             });
     }

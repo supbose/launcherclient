@@ -192,7 +192,7 @@ fn stop_and_wait(
 ) -> bool {
     on_event(&format!("正在停止服务 {name}..."));
     if let Err(e) = runner.run(&["stop", name]) {
-        eprintln!("[服务] {name} sc stop 执行失败: {e}（继续等待状态确认）");
+        crate::qlog!("[服务] {name} sc stop 执行失败: {e}（继续等待状态确认）");
     }
     let deadline = Instant::now() + timeout;
     loop {
@@ -201,7 +201,7 @@ fn stop_and_wait(
             _ => {}
         }
         if Instant::now() >= deadline {
-            eprintln!("[服务] {name} 停止等待超时（{}s）", timeout.as_secs());
+            crate::qlog!("[服务] {name} 停止等待超时（{}s）", timeout.as_secs());
             return false;
         }
         std::thread::sleep(Duration::from_millis(POLL_INTERVAL_MS));
@@ -231,7 +231,7 @@ fn uninstall_one(
 ) -> Result<(), String> {
     match query_state(runner, name) {
         ServiceState::NotInstalled => {
-            eprintln!("[服务] {name} 未安装，跳过");
+            crate::qlog!("[服务] {name} 未安装，跳过");
             return Ok(());
         }
         ServiceState::Stopped => {}
@@ -246,7 +246,7 @@ fn uninstall_one(
         DELETE_RETRY_ATTEMPTS,
         Duration::from_millis(DELETE_RETRY_INTERVAL_MS),
     )?;
-    eprintln!("[服务] {name} 已卸载");
+    crate::qlog!("[服务] {name} 已卸载");
     Ok(())
 }
 
@@ -293,7 +293,7 @@ fn delete_with_retry(
             }
             Ok(out) if failure_code(&out) == Some(SC_SERVICE_MARKED_FOR_DELETE) => {
                 if attempt < attempts {
-                    eprintln!("[服务] {name} 已被标记删除，第 {attempt} 次重试等待句柄释放");
+                    crate::qlog!("[服务] {name} 已被标记删除，第 {attempt} 次重试等待句柄释放");
                     std::thread::sleep(interval);
                     continue;
                 }

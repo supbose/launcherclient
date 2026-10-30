@@ -122,12 +122,12 @@ pub fn open_url(url: &str) -> Result<(), String> {
         Ok(mut child) => {
             // start/open 会立刻返回，但子进程未回收会留下僵尸，等一手即可
             let _ = child.wait();
-            eprintln!("[更新器] 已在浏览器打开: {}", url);
+            crate::qlog!("[更新器] 已在浏览器打开: {}", url);
             Ok(())
         }
         Err(e) => {
             let msg = format!("无法打开浏览器（{}）: {}", url, e);
-            eprintln!("[更新器] {}", msg);
+            crate::qlog!("[更新器] {}", msg);
             Err(msg)
         }
     }

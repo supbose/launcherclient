@@ -59,16 +59,16 @@ where
     }
     // 已处于提权重试副本仍非提权：不再重复拉起，交回 services.rs 的退出码 5 兜底
     if std::env::args().any(|a| a == ELEVATION_RETRY_FLAG) {
-        eprintln!("[更新器] 提权重试副本仍非管理员，停止重复拉起，交回 sc 退出码兜底");
+        crate::qlog!("[更新器] 提权重试副本仍非管理员，停止重复拉起，交回 sc 退出码兜底");
         return Ok(false);
     }
     match relaunch_fn() {
         Ok(()) => {
-            eprintln!("[更新器] 已请求以管理员身份重新运行更新器（runas），当前进程将退出");
+            crate::qlog!("[更新器] 已请求以管理员身份重新运行更新器（runas），当前进程将退出");
             Ok(true)
         }
         Err(e) => {
-            eprintln!("[更新器] 提权失败（用户可能取消了 UAC）: {e}");
+            crate::qlog!("[更新器] 提权失败（用户可能取消了 UAC）: {e}");
             Err(format!(
                 "提权失败: {e}（更新程序需以管理员身份运行才能卸载服务，请右键「以管理员身份运行」后重试）"
             ))
@@ -136,7 +136,7 @@ mod imp {
         unsafe {
             let mut token: *mut c_void = ptr::null_mut();
             if OpenProcessToken(GetCurrentProcess(), TOKEN_QUERY, &mut token) == 0 {
-                eprintln!(
+                crate::qlog!(
                     "[更新器] OpenProcessToken 失败（{}），保守视为未提权",
                     GetLastError()
                 );

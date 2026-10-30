@@ -55,6 +55,7 @@ fn main() {
     flow::register_cli_argv(argv.clone());
 
     // --check-only 纯检测：不建窗，输出结果后按退出码结束（0=无更新 1=失败 2=有更新可跳过 3=必须更新）
+    // 日志在 check_only_exit 内部初始化（那里已经解析出 app_name，避免重复读配置）
     if args.check_only {
         std::process::exit(flow::check_only_exit(&args));
     }
@@ -90,8 +91,14 @@ fn main() {
     }
 
     let cfg = flow::resolve_config(&args);
-    eprintln!(
-        "[更新器] 启动，应用: {}，标题: {}，界面模板: {}，manifest 地址 {} 个: {}",
+    let app_root = flow::app_dir(&cfg.app_name);
+    // 日志尽早初始化：release 的 GUI 进程没有控制台，之后所有 qlog! 是唯一可
+    // 事后追溯的通道（含单实例抢锁失败这类早期路径）。check-only 的日志
+    // 在 flow::check_only_exit 内部初始化，那边已经解析过 app_name。
+    qsltd_updater_core::log::init(&app_root);
+    qsltd_updater_core::qlog!(
+        "[更新器] 启动，版本 {}，应用: {}，标题: {}，界面模板: {}，manifest 地址 {} 个: {}",
+        env!("CARGO_PKG_VERSION"),
         cfg.app_name,
         cfg.launcher_name,
         cfg.template,
@@ -104,16 +111,14 @@ fn main() {
     // `--preview` 在上面就已经返回，不受这条影响——纯检测是只读的，预览是开发用的。
     // 最多等 5 秒是给提权交接留的：父进程 spawn 完管理员副本就退出，
     // 副本稍后必然能拿到锁；真正并存的另一个实例则会等满后安静退场。
-    let _instance = match qsltd_updater_core::instance::acquire(
-        &flow::app_dir(&cfg.app_name),
-        std::time::Duration::from_secs(5),
-    ) {
-        Ok(guard) => guard,
-        Err(e) => {
-            eprintln!("[更新器] {e}，本次启动退出");
-            return;
-        }
-    };
+    let _instance =
+        match qsltd_updater_core::instance::acquire(&app_root, std::time::Duration::from_secs(5)) {
+            Ok(guard) => guard,
+            Err(e) => {
+                qsltd_updater_core::qlog!("[更新器] {e}，本次启动退出");
+                return;
+            }
+        };
 
     // 启动决策在后台线程异步执行（窗口创建前不再同步 await）：
     // 无更新 + launch 模式静默退出；有更新才建窗。窗口以隐藏方式启动，
@@ -136,7 +141,7 @@ fn main() {
                     Ok(rt) => rt,
                     Err(e) => {
                         // 同样不能留空：写入错误决策让界面结束「检查中」
-                        eprintln!("[更新器] 创建异步运行时失败: {}", e);
+                        qsltd_updater_core::qlog!("[更新器] 创建异步运行时失败: {}", e);
                         let msg = format!("创建异步运行时失败: {}", e);
                         *startup_bg.lock().unwrap_or_else(|e| e.into_inner()) =
                             Some(StartupDecision::Show(Box::new(StartupContext {
@@ -158,7 +163,7 @@ fn main() {
         if let Err(e) = spawned {
             // 线程都没起来时不能把 startup 留空：界面会永远停在「正在检查更新」。
             // 写入一个错误决策，让 UI 正常显示失败原因并给出重试/官网入口。
-            eprintln!("[更新器] 启动检查线程创建失败: {}", e);
+            qsltd_updater_core::qlog!("[更新器] 启动检查线程创建失败: {}", e);
             let msg = format!("启动检查线程创建失败: {}", e);
             *startup.lock().unwrap_or_else(|e| e.into_inner()) =
                 Some(StartupDecision::Show(Box::new(StartupContext {
@@ -233,7 +238,7 @@ fn run_ui(
         }),
     );
     if let Err(e) = result {
-        eprintln!("[更新器] UI 循环异常退出: {}", e);
+        qsltd_updater_core::qlog!("[更新器] UI 循环异常退出: {}", e);
         std::process::exit(1);
     }
 }
@@ -248,7 +253,7 @@ fn load_window_icon() -> Option<egui::IconData> {
     let mut rgba = vec![0; reader.output_buffer_size()];
     let info = reader.next_frame(&mut rgba).ok()?;
     if info.color_type != png::ColorType::Rgba {
-        eprintln!("[更新器] 图标 PNG 非 RGBA 格式，跳过窗口图标设置");
+        qsltd_updater_core::qlog!("[更新器] 图标 PNG 非 RGBA 格式，跳过窗口图标设置");
         return None;
     }
     rgba.truncate(info.buffer_size());
