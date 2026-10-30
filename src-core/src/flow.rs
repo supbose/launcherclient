@@ -82,6 +82,23 @@ fn non_empty(s: Option<String>) -> Option<String> {
     s.filter(|v| !v.trim().is_empty())
 }
 
+/// 归一应用名：非法值回退内置默认名并留日志
+///
+/// 应用名会拼进 `%APPDATA%\<name>`、下载缓存、版本目录等全部落盘路径，
+/// 校验规则见 [`crate::appdir::validate_app_name`]。
+fn normalize_app_name(raw: String) -> String {
+    match crate::appdir::validate_app_name(&raw) {
+        Ok(()) => raw,
+        Err(e) => {
+            eprintln!(
+                "[配置] 应用名不可用（{}），回退默认值 {}",
+                e, DEFAULT_APP_NAME
+            );
+            DEFAULT_APP_NAME.to_string()
+        }
+    }
+}
+
 /// 合并命令行参数与 update.json 配置
 pub fn resolve_config(args: &CliArgs) -> ResolvedConfig {
     let settings = config::load();
@@ -92,6 +109,11 @@ pub fn resolve_config(args: &CliArgs) -> ResolvedConfig {
     } else {
         non_empty(settings.app_name.clone()).unwrap_or_else(|| DEFAULT_APP_NAME.to_string())
     };
+
+    // 应用名直接拼进 %APPDATA%\<name> 等路径：非法值（路径分隔符、盘符、
+    // `..` 等）不能带着写入任意位置，这里显式回退并留日志，而不是等到
+    // 建目录/解压时才出现难以理解的行为。
+    let app_name = normalize_app_name(app_name);
 
     // 界面模板优先级：命令行 --template > update.json launcher_template > 内置默认（F）。
     // 未配置或写了未知值时 resolve 内部回落默认，界面不会因配置笔误白屏。
@@ -496,6 +518,16 @@ pub async fn run_update_flow(
     m: &manifest::FlatManifest,
     handle: &PhaseHandle,
 ) -> Result<(), String> {
+    // 版本号会被拼进下载缓存名与安装目录名（`app_<version>`）：正常路径上
+    // manifest::fetch 已校验，这里再挡一次（manifest 也可能由 UI 侧直接传入），
+    // 确保任何入口都不会用未校验的版本串拼路径。
+    if let Err(e) = crate::appdir::validate_version(&m.version) {
+        let e = format!("服务器返回的版本号不可用: {}", e);
+        eprintln!("[更新器] 拒绝更新: {}", e);
+        handle.set(PhasePayload::failure("更新包信息无效", &e, true));
+        return Err(e);
+    }
+
     // ---- 清单体检（在下载、提权之前）----
     //
     // 「没有下载地址」和「没有任何完整性校验值」都属于服务端配置问题：
@@ -1435,6 +1467,48 @@ mod tests {
             force_update: None,
             store_url: None,
         }
+    }
+
+    // ---------- 应用名 / 版本号的路径安全 ----------
+
+    #[test]
+    fn normalize_app_name_keeps_safe_names() {
+        assert_eq!(normalize_app_name("qsm".to_string()), "qsm");
+        assert_eq!(normalize_app_name("我的应用".to_string()), "我的应用");
+        assert_eq!(normalize_app_name("My App".to_string()), "My App");
+    }
+
+    #[test]
+    fn normalize_app_name_falls_back_for_unsafe_names() {
+        for bad in ["../evil", r"C:\evil", "a/b", "", "."] {
+            assert_eq!(
+                normalize_app_name(bad.to_string()),
+                DEFAULT_APP_NAME,
+                "非法应用名应回落默认值: {:?}",
+                bad
+            );
+        }
+    }
+
+    #[tokio::test]
+    async fn run_update_flow_rejects_unsafe_version_before_network() {
+        // 版本号会被拼进 app_<version> / update_<version>.zip：非法版本必须
+        // 在下载、提权之前被拒，而不是先弹 UAC 再失败
+        let cfg = cfg_for_test();
+        let mut m = manifest_with_hash(Some(&"a".repeat(64)));
+        m.version = "../../Startup".to_string();
+        m.url = "http://127.0.0.1:9/unreachable.zip".to_string();
+        let handle = PhaseHandle::new();
+
+        let err = run_update_flow(&cfg, &m, &handle)
+            .await
+            .err()
+            .expect("非法版本号应拒绝更新");
+        assert!(err.contains("版本号"), "错误应指明版本号问题: {err}");
+        assert_eq!(
+            handle.snapshot().expect("应写入错误阶段快照").stage(),
+            Stage::Error
+        );
     }
 
     #[tokio::test]

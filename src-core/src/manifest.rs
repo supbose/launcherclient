@@ -118,10 +118,23 @@ async fn fetch(url: &str) -> Result<FlatManifest, String> {
         return Err(format!("服务器返回错误状态码: {}", response.status()));
     }
 
-    response
+    let manifest = response
         .json::<FlatManifest>()
         .await
-        .map_err(|e| format!("manifest 解析失败（结构不符合规范）: {}", e))
+        .map_err(|e| format!("manifest 解析失败（结构不符合规范）: {}", e))?;
+
+    validate_manifest(manifest)
+}
+
+/// 校验 manifest 中会参与路径拼接的字段
+///
+/// 版本号会拼进下载缓存名与安装目录名（`app_<version>`）：字符非法时
+/// 直接判本次拉取失败（多地址故障转移会继续试下一个镜像），绝不让
+/// 形如 `../../Startup` 的版本串进入后续路径拼接。
+fn validate_manifest(manifest: FlatManifest) -> Result<FlatManifest, String> {
+    crate::appdir::validate_version(&manifest.version)
+        .map_err(|e| format!("manifest 版本号不可用: {}", e))?;
+    Ok(manifest)
 }
 
 /// 判断是否需要更新：manifest.update 为 false 时直接返回 false；
@@ -333,6 +346,28 @@ mod tests {
 
     fn needs(cur: &str, latest: &str) -> bool {
         need_update(cur, &m(latest, true))
+    }
+
+    // ---------- 版本号路径安全 ----------
+
+    #[test]
+    fn rejects_manifest_version_that_escapes_paths() {
+        let err = validate_manifest(m("../../Startup", true)).unwrap_err();
+        assert!(err.contains("版本号"), "错误应指明版本号问题: {err}");
+        assert!(
+            validate_manifest(m(r"1.0\..\x", true)).is_err(),
+            "反斜杠路径穿越同样要拒绝"
+        );
+    }
+
+    #[test]
+    fn accepts_historical_version_formats() {
+        for ok in ["1.0", "1.2.3.4", "2.1.2-beta.1"] {
+            assert!(
+                validate_manifest(m(ok, true)).is_ok(),
+                "历史版本格式应继续可用: {ok}"
+            );
+        }
     }
 
     // ---------- update 开关 ----------

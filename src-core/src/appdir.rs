@@ -22,12 +22,99 @@ use std::path::{Path, PathBuf};
 /// `app_name` 缺省时使用的固定目录名（与旧 `qingshu` 实现一致）
 pub const DEFAULT_APP_DIR_NAME: &str = "qsltd-update";
 
+/// 校验应用名可作为**单级目录名**
+///
+/// `app_name` 来自命令行 / update.json，版本号来自服务器 manifest，两者都会
+/// 直接拼进文件系统路径（`%APPDATA%\<app_name>`、`app_<version>`、
+/// `update_<version>.zip`）。若不校验，`--app-name D:\x` 或恶意 manifest 的
+/// `version: "../../Startup"` 就能把更新包解到任意位置。规则：
+/// - 非空、不是 `.` / `..`、首尾无空白（Windows 会静默裁剪尾随空格/点）
+/// - 不含路径分隔符 `/` `\`、盘符冒号 `:`、控制字符
+/// - 不含 Windows 文件名保留字符 `* ? " < > |`
+/// - 不以 `.` 结尾（`a.` 与 `a` 在 Windows 上是同一文件，避开歧义）
+/// - 不是 `CON`/`NUL`/`COM1` 等设备名
+/// - 长度不超过 64 个字符（足够覆盖真实应用名）
+pub fn validate_app_name(name: &str) -> Result<(), String> {
+    validate_component("应用名", name)
+}
+
+/// 校验 manifest 版本号可作为单级目录名
+///
+/// 除通用分量规则外，版本号只允许 ASCII 字母数字与 `.` `-` `_` `+`：
+/// 版本串会拼进下载缓存与安装目录名，其他字符（空白、中文、通配符）在
+/// Windows 上要么建目录失败要么产生歧义。不要求 semver——历史 manifest 用
+/// 过 `1.0`、`1.2.3.4` 这类非严格三段式版本，版本比较逻辑本身也不依赖 semver。
+pub fn validate_version(version: &str) -> Result<(), String> {
+    validate_component("版本号", version)?;
+    if !version
+        .bytes()
+        .all(|b| b.is_ascii_alphanumeric() || matches!(b, b'.' | b'-' | b'_' | b'+'))
+    {
+        return Err(format!("版本号含非法字符: {:?}", version));
+    }
+    Ok(())
+}
+
+/// 单个路径分量的通用校验（应用名 / 版本号共用）
+fn validate_component(kind: &str, value: &str) -> Result<(), String> {
+    if value.is_empty() {
+        return Err(format!("{}为空", kind));
+    }
+    if value == "." || value == ".." {
+        return Err(format!("{}不能是 . 或 ..", kind));
+    }
+    if value != value.trim() {
+        return Err(format!("{}首尾不能有空白: {:?}", kind, value));
+    }
+    if value.chars().any(|c| c.is_control()) {
+        return Err(format!("{}含控制字符: {:?}", kind, value));
+    }
+    if value.contains(['/', '\\', ':', '*', '?', '"', '<', '>', '|']) {
+        return Err(format!("{}含路径/文件名非法字符: {:?}", kind, value));
+    }
+    if value.ends_with('.') {
+        return Err(format!("{}不能以 . 结尾: {:?}", kind, value));
+    }
+    if is_reserved_device_name(value) {
+        return Err(format!("{}是 Windows 保留设备名: {:?}", kind, value));
+    }
+    if value.chars().count() > 64 {
+        return Err(format!("{}过长（上限 64 字符）: {:?}", kind, value));
+    }
+    Ok(())
+}
+
+/// 是否命中 Windows 保留设备名（`CON`、`NUL`、`COM1`~`COM9`、`LPT1`~`LPT9`，
+/// 带扩展名同样命中）
+fn is_reserved_device_name(value: &str) -> bool {
+    let stem = value.split('.').next().unwrap_or("");
+    let upper = stem.to_ascii_uppercase();
+    if matches!(upper.as_str(), "CON" | "PRN" | "AUX" | "NUL") {
+        return true;
+    }
+    upper.is_ascii()
+        && upper.len() == 4
+        && (upper.starts_with("COM") || upper.starts_with("LPT"))
+        && upper.as_bytes()[3].is_ascii_digit()
+}
+
 /// 应用数据根目录：`<配置目录>\<app_name>`
 ///
 /// 见模块头的三条规则。返回值不保证存在，调用方按需 `create_dir_all`。
+/// 应用名不合法时回落默认名（并在日志里说明），保证任何调用方都不会把
+/// 数据写到配置目录之外。
 pub fn app_dir(app_name: Option<&str>) -> PathBuf {
     let name = match app_name {
-        Some(name) if !name.is_empty() => name.to_string(),
+        Some(name) if !name.is_empty() => match validate_app_name(name) {
+            Ok(()) => name.to_string(),
+            Err(e) => {
+                eprintln!(
+                    "[路径] 应用名不可用（{}），改用默认目录名 {}",
+                    e, DEFAULT_APP_DIR_NAME
+                );
+                DEFAULT_APP_DIR_NAME.to_string()
+            }
+        },
         _ => DEFAULT_APP_DIR_NAME.to_string(),
     };
 
@@ -217,6 +304,99 @@ mod tests {
     fn app_dir_uses_default_name_for_none_and_empty() {
         assert!(app_dir(None).ends_with(DEFAULT_APP_DIR_NAME));
         assert!(app_dir(Some("")).ends_with(DEFAULT_APP_DIR_NAME));
+    }
+
+    // ---------- 路径分量校验 ----------
+
+    #[test]
+    fn validate_app_name_accepts_typical_names() {
+        for ok in ["qsm", "QsLtd", "my-app_2", "我的应用", "My App"] {
+            assert!(validate_app_name(ok).is_ok(), "应接受: {ok}");
+        }
+    }
+
+    #[test]
+    fn validate_app_name_rejects_path_escapes() {
+        for bad in [
+            "",
+            ".",
+            "..",
+            "../evil",
+            r"..\evil",
+            "/abs",
+            r"C:\evil",
+            r"D:/evil",
+            "a/b",
+            r"a\b",
+            "name ",
+            " name",
+            "name.",
+            "a*b",
+            "a?b",
+            "a|b",
+            "a<b",
+            "a>b",
+            "a\"b",
+            "tab\tname",
+            "new\nline",
+            "con",
+            "NUL.txt",
+            "com1",
+            "LPT9.log",
+        ] {
+            assert!(validate_app_name(bad).is_err(), "应拒绝: {:?}", bad);
+        }
+        assert!(
+            validate_app_name(&"x".repeat(65)).is_err(),
+            "应拒绝超长名称"
+        );
+    }
+
+    #[test]
+    fn validate_version_accepts_historical_formats() {
+        // 不强制 semver：历史 manifest 用过 1.0 / 1.2.3.4 这类版本
+        for ok in [
+            "1.0",
+            "1.2.3.4",
+            "v1.2.3",
+            "2.1.2-beta.1",
+            "2026.06.09+hotfix",
+        ] {
+            assert!(validate_version(ok).is_ok(), "应接受: {ok}");
+        }
+    }
+
+    #[test]
+    fn validate_version_rejects_injection_and_odd_chars() {
+        for bad in [
+            "",
+            ".",
+            "..",
+            "../../Startup",
+            r"..\Startup",
+            "1.0/../x",
+            r"1.0\x",
+            "1.0 2",
+            "1.0*",
+            "版本1.0",
+            "1.0:ads",
+        ] {
+            assert!(validate_version(bad).is_err(), "应拒绝: {:?}", bad);
+        }
+    }
+
+    #[test]
+    fn app_dir_falls_back_to_default_for_unsafe_name() {
+        // 即使调用方漏校验，app_dir 也不能拼出配置目录以外的路径
+        for bad in ["../escape", r"C:\Windows\Temp", "a/b"] {
+            let dir = app_dir(Some(bad));
+            assert!(
+                dir.ends_with(DEFAULT_APP_DIR_NAME),
+                "非法应用名应回落默认目录: {:?} -> {:?}",
+                bad,
+                dir
+            );
+        }
     }
 
     // ---------- 配置文件解析 ----------

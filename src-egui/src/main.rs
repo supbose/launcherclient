@@ -21,8 +21,8 @@ mod widgets;
 use std::sync::{Arc, Mutex};
 
 use qsltd_updater_core::cli::CliArgs;
-use qsltd_updater_core::flow::{self, StartupDecision};
-use qsltd_updater_core::phase::PhaseHandle;
+use qsltd_updater_core::flow::{self, StartupContext, StartupDecision};
+use qsltd_updater_core::phase::{PhaseHandle, PhasePayload, Stage};
 
 fn main() {
     // --preview 模板预览模式（复刻 preview.html，仅本地验证八套布局，
@@ -113,7 +113,7 @@ fn main() {
         let startup_bg = startup.clone();
         let argv_bg = argv.clone();
         let cfg_bg = cfg.clone();
-        std::thread::Builder::new()
+        let spawned = std::thread::Builder::new()
             .name("startup-check".into())
             .spawn(move || {
                 let args_bg = qsltd_updater_core::cli::parse_from(&argv_bg);
@@ -123,14 +123,38 @@ fn main() {
                 {
                     Ok(rt) => rt,
                     Err(e) => {
+                        // 同样不能留空：写入错误决策让界面结束「检查中」
                         eprintln!("[更新器] 创建异步运行时失败: {}", e);
+                        let msg = format!("创建异步运行时失败: {}", e);
+                        *startup_bg.lock().unwrap_or_else(|e| e.into_inner()) =
+                            Some(StartupDecision::Show(Box::new(StartupContext {
+                                cfg: cfg_bg,
+                                manifest: None,
+                                initial: PhasePayload::new(
+                                    Stage::Error,
+                                    "更新检查失败",
+                                    &msg,
+                                    None,
+                                ),
+                            })));
                         return;
                     }
                 };
                 let decision = rt.block_on(flow::run_startup(&args_bg, &cfg_bg));
                 *startup_bg.lock().unwrap_or_else(|e| e.into_inner()) = Some(decision);
-            })
-            .ok();
+            });
+        if let Err(e) = spawned {
+            // 线程都没起来时不能把 startup 留空：界面会永远停在「正在检查更新」。
+            // 写入一个错误决策，让 UI 正常显示失败原因并给出重试/官网入口。
+            eprintln!("[更新器] 启动检查线程创建失败: {}", e);
+            let msg = format!("启动检查线程创建失败: {}", e);
+            *startup.lock().unwrap_or_else(|e| e.into_inner()) =
+                Some(StartupDecision::Show(Box::new(StartupContext {
+                    cfg: cfg.clone(),
+                    manifest: None,
+                    initial: PhasePayload::new(Stage::Error, "更新检查失败", &msg, None),
+                })));
+        }
     }
 
     run_ui(&args, phase, startup, false, 0, &cfg.launcher_name);
