@@ -21,6 +21,16 @@
 
 
 
+
+## v0.2.6-beta.0 (2026-10-30)
+### 🚀 新增功能
+
+- [589cfbb](/-/commit/589cfbb2304e0e327a5bb2994a69a9341798b859) 新增(src-core): 支持更新检查失败时提供官网下载入口 (README.md, launcherclient-guide/launcherclient-guide.html, src-core/src/config.rs, src-core/src/flow.rs, src-core/src/phase.rs, src-egui/src/widgets.rs, src-pkgtool/Cargo.lock)
+
+### 📦 构建系统
+
+- [c5ecbae](/-/commit/c5ecbae18490492db8673242f96277b8744e78af) 构建(src-pkgtool): 更新版本号至 0.2.5 (Cargo.lock, Cargo.toml, src-egui/version.rc, src-pkgtool/Cargo.toml, src-pkgtool/icon.rc)
+
 ## v0.2.5 (2026-10-30)
 ### 🚀 新增功能
 
