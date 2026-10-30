@@ -371,7 +371,7 @@ footer { border-top: 1px solid var(--rule); margin-top: 64px; padding: 28px 0 44
           <tr><td><code>max_versions</code></td><td>数字</td><td>保留的版本目录数量（含当前版本，旧目录即回滚资产），默认 <code>2</code></td></tr>
           <tr><td><code>services</code></td><td>字符串数组</td><td>更新前需卸载的 Windows 服务名；运行中的先停止后卸载，<mark class="key">卸载后不恢复、不重启</mark>；单个失败不中断流程</td></tr>
           <tr><td><code>launcher_template</code></td><td>字符串</td><td>界面模板 A~H（大小写不敏感）；留空或未知值回落默认 <code>F</code>（未知值在 stderr 告警，不会白屏）</td></tr>
-          <tr><td><code>homepage</code></td><td>字符串</td><td>官网首页地址；下载/合并环节自动重试用尽后，错误态出现「前往官网重新下载」按钮，点击用系统浏览器打开这里。留空用内置默认 <code>https://www.qcsm.ltd</code></td></tr>
+          <tr><td><code>homepage</code></td><td>字符串</td><td>官网首页地址：<mark class="key">更新检查失败</mark>（清单全部地址失效）或<mark class="key">下载/合并环节重试用尽</mark>时，错误态出现「前往官网重新下载」按钮，点击用系统浏览器打开这里。留空用内置默认 <code>https://www.qcsm.ltd</code></td></tr>
           <tr><td><code>retry_times</code></td><td>数字</td><td>同一环节的自动重试次数（<mark class="key">含首次尝试</mark>），默认 <code>3</code> = 首次 + 重试 2 次；下载与解压校验各自独立计数；写 <code>0</code> 视为 <code>1</code>，上限 <code>10</code></td></tr>
           <tr><td><code>require_sha256</code></td><td>布尔</td><td><mark class="key">包完整性校验闸，默认开启</mark>。开启时若清单既没有整包 <code>sha256</code>、分卷模式的 <code>part_sha256</code> 也没与 <code>parts</code> 一一对齐，则在<mark class="key">弹 UAC 之前</mark>直接拒绝安装，错误态引导去官网下载。写 <code>false</code>（或加 <code>--allow-missing-sha256</code>）可放行无校验值的包——只建议用于内网 / 自建源这类链路可信的环境；缺省即 <code>true</code>，无需显式写</td></tr>
         </tbody>
@@ -467,7 +467,7 @@ flowchart TD
 
     <h4>自动重试与失败兜底</h4>
     <p>下载环节（拉包、逐卷下载、分卷合并、下载后校验）与解压校验环节失败会<mark class="key">自动重试</mark>，节奏 1s → 2s → 3s → …（封顶 5s），每次重试前清掉失败产物，避免把半包当完整包复用。重试期间界面停在「正在下载更新包…（第 2/3 次）」并写明上次失败原因——流程没死，不让用户以为卡住。</p>
-    <p>重试用尽仍失败时：<mark class="key">下载 / 合并环节</mark>的错误界面除「重试」「关闭」外，多一个「前往官网重新下载」按钮，用系统默认浏览器打开 <code>homepage</code>；解压校验、磁盘写满这类本地问题换地址解决不了，只提示处理后重试，不给官网入口。</p>
+    <p>两类失败会给出「前往官网重新下载」出口：<mark class="key">更新检查失败</mark>（<code>manifest_url</code> 全部地址失效）与<mark class="key">下载 / 合并环节重试用尽</mark>，错误界面除「重试」「关闭」外多一枚按钮，用系统默认浏览器打开 <code>homepage</code>。解压校验、磁盘写满这类本地问题换地址解决不了，只提示处理后重试，不给官网入口。</p>
 
     <h4>Windows 服务与 UAC 提权</h4>
     <p>配置了 <code>services</code> 且当前进程未提权时，安装前会先通过 <code>runas</code> 重新拉起自身（触发一次 UAC），由提权后的副本接管后续流程；<mark class="key">未配置服务则完全不弹 UAC</mark>，避免每次更新打扰用户。服务逐个卸载（先停止后卸载），单个失败不中断，卸载后不恢复、不重启。</p>

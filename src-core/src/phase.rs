@@ -99,6 +99,11 @@ pub struct PhasePayload {
     /// 下载地址全挂时再点「重试」也是徒劳，得让用户有条直接拿到安装包的路。
     #[serde(default)]
     pub download_failed: bool,
+    /// 本次失败是否出在「拉取 manifest」环节（所有地址都失败）。
+    /// 此时本地没有任何版本信息，重试未必解决问题（清单结构变了、
+    /// 被劫持返回网页），同样需要一条「前往官网拿完整包」的退路。
+    #[serde(default)]
+    pub check_failed: bool,
     /// 本次失败的环节：download / install / ""（其它）。界面据此把
     /// 「自动重试的哪些环节」说清楚——用户有权知道重试的是下载还是解压。
     #[serde(default)]
@@ -139,6 +144,7 @@ impl PhasePayload {
             template: String::new(),
             badge: None,
             download_failed: false,
+            check_failed: false,
             failed_stage: String::new(),
             attempt: 0,
             max_attempts: 0,
@@ -153,6 +159,19 @@ impl PhasePayload {
     pub fn failure(message: &str, sub: &str, download_failed: bool) -> Self {
         let mut p = Self::new(Stage::Error, message, sub, None);
         p.download_failed = download_failed;
+        p
+    }
+
+    /// 构造「更新检查失败」错误载荷（所有 manifest 地址都拉取/解析失败）
+    ///
+    /// 与 [`Self::failure`] 的区别：这里本地拿不到任何版本信息，失败环节
+    /// 记为 `check`，并打上 [`PhasePayload::check_failed`]，界面据此额外
+    /// 亮出「前往官网」入口（见 [`PhaseView::needs_homepage`]）——重试要
+    /// 等网络恢复或服务端修好清单，先给用户一条直接拿到完整包的路。
+    pub fn check_failure(sub: &str) -> Self {
+        let mut p = Self::new(Stage::Error, "更新检查失败", sub, None);
+        p.check_failed = true;
+        p.failed_stage = "check".to_string();
         p
     }
 
@@ -186,6 +205,7 @@ impl PhasePayload {
             template: String::new(),
             badge,
             download_failed: false,
+            check_failed: false,
             failed_stage: String::new(),
             attempt: 0,
             max_attempts: 0,
@@ -237,9 +257,10 @@ impl PhasePayload {
         }
     }
 
-    /// 失败环节的中文名（"下载" / "解压校验" / 空串）
+    /// 失败环节的中文名（"更新检查" / "下载" / "解压校验" / 空串）
     pub fn failed_stage_name(&self) -> &'static str {
         match self.failed_stage.as_str() {
+            "check" => "更新检查",
             "download" => "下载",
             "install" => "解压校验",
             _ => "",
@@ -446,6 +467,14 @@ impl<'a> PhaseView<'a> {
         self.stage() == Stage::Error && self.payload.download_failed
     }
 
+    /// 错误是否出在「拉取 manifest」环节（所有地址都失败）
+    ///
+    /// 这类失败拿不到任何版本信息，重试依赖网络或服务端恢复；
+    /// 界面因此也提供「前往官网」入口（见 [`Self::needs_homepage`]）。
+    pub fn check_failed(&self) -> bool {
+        self.stage() == Stage::Error && self.payload.check_failed
+    }
+
     /// 失败环节的自动重试次数说明（未走重试时为空串；错误态文案用）
     pub fn attempt_text(&self) -> String {
         self.payload.attempt_text()
@@ -483,15 +512,21 @@ impl<'a> PhaseView<'a> {
 
     /// 错误态是否该亮「前往官网」而不是继续劝「重试」
     ///
-    /// 判据：失败出在下载链路，且该环节的自动重试已经用尽。自动重试还没
-    /// 用完时（流程本身在跑）压根不在 error 态，这里多一层判断是为了让
-    /// 语义自证：重试还有余地就不该跳官网。
+    /// 两类失败才引导用户去官网：
+    /// - **下载链路**且自动重试用尽：所有下载地址都挂了，再点重试也是徒劳；
+    /// - **更新检查**（manifest 所有地址都拉取/解析失败）：本地没有任何版本
+    ///   信息，重试要等网络恢复或服务端修好清单，先留一条拿完整包的路。
+    ///
+    /// 解压失败、磁盘写不进这类本地问题不在此列：换个地址重下也会踩同一个坑。
     ///
     /// 注：重试期间流程仍在 running 态（不在 error），所以实际到达这一屏时
     /// 重试次数早已用尽；`has_retry_left` 的判断是防止调用方硬置 download_failed
     /// 时冒出「还能重试却劝跳官网」的自相矛盾。
     pub fn needs_homepage(&self) -> bool {
-        self.download_failed() && !self.has_retry_left()
+        if self.stage() != Stage::Error {
+            return false;
+        }
+        self.check_failed() || (self.payload.download_failed && !self.has_retry_left())
     }
 
     /// 该环节还有没有自动重试次数（0/0 视为没有重试机制）
@@ -728,6 +763,21 @@ mod tests {
         let q = PhasePayload::failure("更新安装失败", "读取更新包结构失败", false)
             .with_attempt("install", 3, 3);
         assert!(!PhaseView::new(&q, true).needs_homepage());
+    }
+
+    #[test]
+    fn check_failure_offers_homepage_without_retry_budget() {
+        // manifest 全部地址失败：没有自动重试机制，也要给「前往官网」出口
+        let p = PhasePayload::check_failure("全部 2 个 manifest 地址均拉取失败");
+        let v = PhaseView::new(&p, true);
+        assert!(v.check_failed());
+        assert!(v.needs_homepage());
+        assert!(!v.download_failed(), "检查失败不等于下载失败");
+        assert_eq!(v.failed_stage_name(), "更新检查");
+        // 非错误阶段一律不算
+        let q = PhasePayload::new(Stage::Checking, "正在检查更新...", "", None);
+        assert!(!PhaseView::new(&q, false).check_failed());
+        assert!(!PhaseView::new(&q, false).needs_homepage());
     }
 
     #[test]

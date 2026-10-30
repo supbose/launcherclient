@@ -104,9 +104,9 @@ pub fn inline_log(ui: &mut Ui, items: &[&str]) {
 
 /// 底部动作行（.tpl-x__actions：gap 10）
 ///
-/// - 错误态：重试 + 关闭；若自动重试已用尽且失败出在下载链路
-///   （`show_homepage`），再加一枚「前往官网」——地址全挂时重试是徒劳，
-///   得给条能拿到包的路
+/// - 错误态：重试 + 关闭；若失败出在下载链路（重试用尽）或 manifest
+///   所有地址都失效（`show_homepage`），再加一枚「前往官网」——这两类
+///   失败重试未必有解，得给条能直接拿到完整包的路
 /// - 完成态：完成
 pub fn actions_row(
     ui: &mut Ui,
@@ -151,8 +151,8 @@ pub fn actions_row(
 /// 错误态一句话说明（接在错误详情下方）
 ///
 /// 说清两件事：这次失败在哪个环节试了几次、接下来该点哪个按钮。
-/// 只有下载链路的重试用尽才把用户往官网引——解压失败让他去官网重下，
-/// 相当于让他重走一遍一模一样的坑。
+/// 只有「下载链路的重试用尽」与「manifest 全部地址失效」才把用户往官网引——
+/// 解压失败让他去官网重下，相当于让他重走一遍一模一样的坑。
 pub fn error_hint(attempt_text: &str, stage_name: &str, needs_homepage: bool) -> String {
     // 环节名 + 已试次数：「下载已自动重试 2 次（共 3 次尝试）」
     let tried = if attempt_text.is_empty() {
@@ -170,6 +170,10 @@ pub fn error_hint(attempt_text: &str, stage_name: &str, needs_homepage: bool) ->
         format!("{}{}", stage_name, attempt_text)
     };
     if needs_homepage {
+        // 检查失败时标题已经是「更新检查失败」，这里不再复述标题
+        if stage_name == "更新检查" {
+            return "所有更新地址均不可用。可点击「前往官网重新下载」获取完整安装包".to_string();
+        }
         return format!("{}。可点击「前往官网重新下载」获取完整安装包", tried);
     }
     if attempt_text.is_empty() {
@@ -222,4 +226,35 @@ pub fn force_update_actions_row(ui: &mut Ui, blocking: bool, has_store: bool) ->
         }
     });
     act
+}
+
+#[cfg(test)]
+mod tests {
+    use super::error_hint;
+
+    #[test]
+    fn check_failure_hint_points_to_homepage_without_repeating_title() {
+        // 检查失败：标题已是「更新检查失败」，提示不再复述，直接给出路
+        let hint = error_hint("", "更新检查", true);
+        assert_eq!(
+            hint,
+            "所有更新地址均不可用。可点击「前往官网重新下载」获取完整安装包"
+        );
+        assert!(!hint.contains("更新检查失败"), "不应重复窗口标题: {hint}");
+    }
+
+    #[test]
+    fn download_failure_hint_keeps_attempt_count() {
+        let hint = error_hint("已自动重试 2 次（共 3 次尝试）", "下载", true);
+        assert!(hint.starts_with("下载已自动重试 2 次（共 3 次尝试）"));
+        assert!(hint.contains("前往官网重新下载"));
+    }
+
+    #[test]
+    fn local_failure_hint_does_not_send_user_to_homepage() {
+        // 解压/落盘失败：换地址重下会踩同一个坑，不该引导去官网
+        let hint = error_hint("已尝试 1 次", "解压校验", false);
+        assert!(hint.contains("请检查网络或磁盘后点「重试」"));
+        assert!(!hint.contains("前往官网"));
+    }
 }

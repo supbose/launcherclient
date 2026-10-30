@@ -314,7 +314,7 @@ pub async fn run_startup(args: &CliArgs, cfg: &ResolvedConfig) -> StartupDecisio
             return StartupDecision::Show(Box::new(StartupContext {
                 cfg: cfg.clone(),
                 manifest: None,
-                initial: PhasePayload::new(Stage::Error, "更新检查失败", &e, None),
+                initial: PhasePayload::check_failure(&e),
             }));
         }
     };
@@ -518,7 +518,7 @@ async fn run_check_flow(
         Ok(m) => m,
         Err(e) => {
             eprintln!("[更新器] 检查更新失败: {}", e);
-            handle.set(PhasePayload::new(Stage::Error, "更新检查失败", &e, None));
+            handle.set(PhasePayload::check_failure(&e));
             return Err(e);
         }
     };
@@ -1390,8 +1390,9 @@ fn first_line(s: &str) -> &str {
 
 /// 在系统浏览器打开官网首页（错误态「前往官网」）
 ///
-/// 地址取生效配置 `homepage`（update.json > 内置默认），与流程同源，
-/// 避免界面和配置各说各话。
+/// 两个场景共用：更新检查失败（manifest 全部地址失效）与下载/合并环节
+/// 重试用尽。地址取生效配置 `homepage`（update.json > 内置默认），与流程
+/// 同源，避免界面和配置各说各话。
 pub fn open_homepage() -> Result<(), String> {
     let args = crate::cli::parse();
     let cfg = resolve_config(&args);
