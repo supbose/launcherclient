@@ -1,22 +1,48 @@
-node_modules
-dist
-src-tauri/target
-src-tauri/gen/schemas
-*.local
-.DS_Store
-target
-.vscode
-.git
-.idea
-.gitignore
-.env
-.env.local
-.env.development.local
-.env.test.local
-.env.production.local
+# Rust / 构建产物
+# `target` 不带路径，一条覆盖根 workspace（target/、src-core/target/、src-egui/target/）
+# 与独立 crate src-pkgtool/target/
+target/
+# 版本只能有一处：package.json → 根 Cargo.toml 的 [workspace.package]。
+# workspace 成员本不该再生成自己的 Cargo.lock，若哪天冒出来说明有人把 crate 跑在 workspace 之外，
+# 这里显式忽略以免误提交（根 Cargo.lock 是要提交的，不要加进本表）
+src-core/Cargo.lock
+src-egui/Cargo.lock
+# pybuild 原子写入的临时文件（正常流程下会被 os.replace 掉，中断时才会留下）
+*.tmp
+
+# Python 构建脚本的字节码缓存
+__pycache__/
+*.py[cod]
+
+# 日志与崩溃转储（pkgtool 曾在工作目录留下 bt.log / crash.log）
+*.log
+
+# 打包产物与本地配置副本（dist/<版本号>/ 由 scripts/build.py 生成，不入库）
+dist/
+
+# 工具与助手的工作目录（内容已在历史中，不再新增跟踪）
+# .dumate/
+# .workbuddy/
+# .trae-html-share-packages/
+# .screenshots/
+
+# Node / pnpm：仓库已移除 Tauri 与 Vue 工具链，只保留 package.json 作为构建入口，
+# 万一有人本地 pnpm install，别把 node_modules 带进来
+node_modules/
+.pnp.*
+.yarn/
+pnpm-debug.log*
 npm-debug.log*
 yarn-debug.log*
 yarn-error.log*
-pnpm-debug.log*
-.pnp.*
-.yarn/*
+
+# 本地覆盖与环境变量
+*.local
+.env
+.env.*
+
+# 编辑器与系统
+.vscode/
+.idea/
+.DS_Store
+Thumbs.db

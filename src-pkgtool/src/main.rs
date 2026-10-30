@@ -23,6 +23,10 @@ use std::time::Instant;
 
 use chrono::Utc;
 use egui::Context;
+use qsltd_ui::theme::{
+    self, apply_theme, install_fonts, tint, ACCENT, ACCENT_SOFT, MUTED, SUCCESS, TEXT,
+};
+use qsltd_ui::widgets::{draw_titlebar, paint_bg, progress_track, TitleBarAction};
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 
@@ -606,207 +610,17 @@ fn scan_history(output_dir: &str, app: &str) -> Vec<HistoryItem> {
     items
 }
 
-// ---- 深色主题色板（对齐 launcherclient `src-egui/src/theme.rs`）----
+// ---- 深色主题（共享 qsltd-ui：与 launcherclient 同一份色板）----
+//
+// 色值、透明度层级、标题栏、背景渐变、进度条、字体安装都来自 `qsltd-ui`，
+// 这样两个 exe 的观感不会再各自漂移。pkgtool 专属的少量别名保留在下面。
 
-/// 根背景渐变起色（#1e2430）
-const BG_TOP: egui::Color32 = egui::Color32::from_rgb(0x1e, 0x24, 0x30);
-/// 根背景渐变止色（#171c26）
-const BG_BOTTOM: egui::Color32 = egui::Color32::from_rgb(0x17, 0x1c, 0x26);
-/// 主文字色（#e8eaf0）
-const TEXT: egui::Color32 = egui::Color32::from_rgb(0xe8, 0xea, 0xf0);
-/// 强调蓝（#4a9eff）：主按钮、导航选中、进度、当前阶段
-const ACCENT: egui::Color32 = egui::Color32::from_rgb(0x4a, 0x9e, 0xff);
-/// 成功绿（#35c26e）：已完成阶段、进度渐变终点
-const SUCCESS: egui::Color32 = egui::Color32::from_rgb(0x35, 0xc2, 0x6e);
-/// 错误红（#e81123）：关闭按钮悬停底色
-const DANGER: egui::Color32 = egui::Color32::from_rgb(0xe8, 0x11, 0x23);
+/// 主按钮文字色（白）
 const ACCENT_TEXT: egui::Color32 = egui::Color32::WHITE;
-/// 导航选中态：蓝色低透明叠层（rgba(74,158,255,0.16)）
-const ACCENT_SOFT: egui::Color32 =
-    egui::Color32::from_rgba_unmultiplied_const(0x4a, 0x9e, 0xff, 40);
-/// 卡片/侧栏底（白色 4% 叠层）
-const CARD_BG: egui::Color32 = egui::Color32::from_rgba_unmultiplied_const(255, 255, 255, 10);
-/// 卡片描边（白色 8% 叠层）
-const BORDER: egui::Color32 = egui::Color32::from_rgba_unmultiplied_const(255, 255, 255, 20);
-/// 次要文字（主文字色 55%）
-const MUTED: egui::Color32 = egui::Color32::from_rgba_unmultiplied_const(0xe8, 0xea, 0xf0, 140);
-/// 标题栏高度 / 按钮宽度（theme.rs TITLEBAR_HEIGHT / TITLEBAR_BTN_WIDTH）
-const TITLEBAR_HEIGHT: f32 = 32.0;
-const TITLEBAR_BTN_WIDTH: f32 = 46.0;
-
-/// 主文字色低透明叠层
-#[inline]
-fn text_alpha(a: u8) -> egui::Color32 {
-    egui::Color32::from_rgba_unmultiplied(0xe8, 0xea, 0xf0, a)
-}
-
-/// 语义色低透明叠层
-#[inline]
-fn tint(c: egui::Color32, a: u8) -> egui::Color32 {
-    egui::Color32::from_rgba_unmultiplied(c.r(), c.g(), c.b(), a)
-}
-
-/// 标准控件（输入框/按钮/DragValue/滚动条）配色对齐深色色板；
-/// 面板背景置透明，由 paint_bg 统一绘制渐变底。
-fn apply_theme(ctx: &egui::Context) {
-    ctx.all_styles_mut(|style| {
-        let v = &mut style.visuals;
-        *v = egui::Visuals::dark();
-        v.panel_fill = egui::Color32::TRANSPARENT;
-        v.window_fill = BG_BOTTOM;
-        v.faint_bg_color = CARD_BG;
-        v.extreme_bg_color = egui::Color32::from_rgb(0x14, 0x18, 0x21);
-        v.hyperlink_color = ACCENT;
-        v.widgets.noninteractive.fg_stroke.color = TEXT;
-        v.widgets.noninteractive.bg_fill = CARD_BG;
-        v.widgets.noninteractive.bg_stroke.color = BORDER;
-        v.widgets.inactive.fg_stroke.color = TEXT;
-        v.widgets.inactive.bg_fill = egui::Color32::from_rgba_unmultiplied(255, 255, 255, 18);
-        v.widgets.inactive.bg_stroke.color = BORDER;
-        v.widgets.hovered.fg_stroke.color = TEXT;
-        v.widgets.hovered.bg_fill = egui::Color32::from_rgba_unmultiplied(255, 255, 255, 30);
-        v.widgets.hovered.bg_stroke.color = tint(ACCENT, 140);
-        v.widgets.active.fg_stroke.color = TEXT;
-        v.widgets.active.bg_fill = ACCENT_SOFT;
-        v.widgets.active.bg_stroke.color = ACCENT;
-        v.selection.bg_fill = tint(ACCENT, 90);
-        v.selection.stroke = egui::Stroke::new(1.0, ACCENT);
-    });
-}
-
-/// 背景垂直渐变（#1e2430 → #171c26，gouraud 四顶点网格，复刻 widgets.rs::paint_bg）
-fn paint_bg(painter: &egui::Painter, rect: egui::Rect) {
-    let mut mesh = egui::Mesh::default();
-    mesh.colored_vertex(rect.left_top(), BG_TOP);
-    mesh.colored_vertex(egui::pos2(rect.right(), rect.top()), BG_TOP);
-    mesh.colored_vertex(rect.right_bottom(), BG_BOTTOM);
-    mesh.colored_vertex(rect.left_bottom(), BG_BOTTOM);
-    mesh.add_triangle(0, 1, 2);
-    mesh.add_triangle(0, 2, 3);
-    painter.add(egui::Shape::mesh(mesh));
-}
-
-/// 标题栏按钮动作
-enum TitleBarAction {
-    None,
-    Minimize,
-    Close,
-}
-
-/// 自绘标题栏：32px 高、左侧标题、右侧最小化/关闭按钮，其余区域可拖拽
-/// （复刻 widgets.rs::draw_titlebar：悬停白 10% 底、关闭悬停红底白叉）
-fn draw_titlebar(ui: &mut egui::Ui, title: &str) -> TitleBarAction {
-    let scope = ui.scope_id().with("titlebar");
-    let (rect, _) = ui.allocate_exact_size(
-        egui::vec2(ui.available_width(), TITLEBAR_HEIGHT),
-        egui::Sense::hover(),
-    );
-    let painter = ui.painter_at(rect);
-
-    painter.text(
-        rect.left_top() + egui::vec2(12.0, TITLEBAR_HEIGHT / 2.0),
-        egui::Align2::LEFT_CENTER,
-        title,
-        egui::FontId::proportional(13.0),
-        text_alpha(220),
-    );
-
-    // 拖拽区（按钮区除外）
-    let drag_rect = egui::Rect::from_min_max(
-        rect.left_top(),
-        egui::pos2(rect.right() - TITLEBAR_BTN_WIDTH * 2.0, rect.bottom()),
-    );
-    let drag = ui.interact(drag_rect, scope.with("drag"), egui::Sense::click_and_drag());
-    if drag.drag_started() {
-        ui.ctx().send_viewport_cmd(egui::ViewportCommand::StartDrag);
-    }
-
-    let mut action = TitleBarAction::None;
-    let cy = rect.center().y;
-    let close_rect = egui::Rect::from_min_size(
-        egui::pos2(rect.right() - TITLEBAR_BTN_WIDTH, rect.top()),
-        egui::vec2(TITLEBAR_BTN_WIDTH, TITLEBAR_HEIGHT),
-    );
-    let min_rect = egui::Rect::from_min_size(
-        egui::pos2(close_rect.left() - TITLEBAR_BTN_WIDTH, rect.top()),
-        egui::vec2(TITLEBAR_BTN_WIDTH, TITLEBAR_HEIGHT),
-    );
-
-    // 最小化
-    let min_resp = ui.interact(min_rect, scope.with("min"), egui::Sense::click());
-    if min_resp.hovered() {
-        painter.rect_filled(
-            min_rect,
-            0.0,
-            egui::Color32::from_rgba_unmultiplied(255, 255, 255, 26),
-        );
-    }
-    let mc = if min_resp.hovered() {
-        egui::Color32::WHITE
-    } else {
-        text_alpha(178)
-    };
-    let mx = min_rect.center().x;
-    painter.line_segment(
-        [egui::pos2(mx - 7.0, cy), egui::pos2(mx + 7.0, cy)],
-        egui::Stroke::new(2.0, mc),
-    );
-    if min_resp.clicked() {
-        action = TitleBarAction::Minimize;
-    }
-
-    // 关闭
-    let close_resp = ui.interact(close_rect, scope.with("close"), egui::Sense::click());
-    if close_resp.hovered() {
-        painter.rect_filled(close_rect, 0.0, DANGER);
-    }
-    let cc = if close_resp.hovered() {
-        egui::Color32::WHITE
-    } else {
-        text_alpha(178)
-    };
-    let cx = close_rect.center().x;
-    painter.line_segment(
-        [
-            egui::pos2(cx - 6.0, cy - 6.0),
-            egui::pos2(cx + 6.0, cy + 6.0),
-        ],
-        egui::Stroke::new(2.0, cc),
-    );
-    painter.line_segment(
-        [
-            egui::pos2(cx - 6.0, cy + 6.0),
-            egui::pos2(cx + 6.0, cy - 6.0),
-        ],
-        egui::Stroke::new(2.0, cc),
-    );
-    if close_resp.clicked() {
-        action = TitleBarAction::Close;
-    }
-    action
-}
-
-/// 进度条（8px 圆角轨道 + 蓝→绿渐变填充，复刻 widgets.rs::progress_track）
-fn progress_track(ui: &mut egui::Ui, width: f32, percent: f32) {
-    let height = 8.0;
-    let (rect, _) = ui.allocate_exact_size(egui::vec2(width, height), egui::Sense::hover());
-    let painter = ui.painter_at(rect);
-    painter.rect_filled(
-        rect,
-        4.0,
-        egui::Color32::from_rgba_unmultiplied(255, 255, 255, 26),
-    );
-    let fill_w = (rect.width() * percent.clamp(0.0, 100.0) / 100.0).max(6.0);
-    let fill = egui::Rect::from_min_size(rect.left_top(), egui::vec2(fill_w, height));
-    let mut mesh = egui::Mesh::default();
-    mesh.colored_vertex(fill.left_top(), ACCENT);
-    mesh.colored_vertex(fill.right_top(), SUCCESS);
-    mesh.colored_vertex(fill.right_bottom(), SUCCESS);
-    mesh.colored_vertex(fill.left_bottom(), ACCENT);
-    mesh.add_triangle(0, 1, 2);
-    mesh.add_triangle(0, 2, 3);
-    painter.add(egui::Shape::mesh(mesh));
-}
+/// 卡片/侧栏底（白色 4% 叠层，= qsltd-ui 的 W04）
+const CARD_BG: egui::Color32 = theme::W04;
+/// 卡片描边（白色 8% 叠层，= qsltd-ui 的 W08）
+const BORDER: egui::Color32 = theme::W08;
 
 /// 两色线性插值（进度环 蓝→绿 渐变用）
 fn lerp_color(a: egui::Color32, b: egui::Color32, t: f32) -> egui::Color32 {
@@ -1999,45 +1813,6 @@ impl eframe::App for PackToolApp {
             }
         });
     }
-}
-
-/// Windows 系统中文字体候选（按序取第一个存在的；微软雅黑优先）。
-/// egui 默认字体无 CJK 字形（会显示豆腐块），从系统字体目录加载中文字体修复。
-/// 与 `src-egui/src/theme.rs::install_fonts` 同方案。
-const FONT_CANDIDATES: [&str; 5] = [
-    "C:/Windows/Fonts/msyh.ttc",
-    "C:/Windows/Fonts/msyhl.ttc",
-    "C:/Windows/Fonts/simhei.ttf",
-    "C:/Windows/Fonts/Deng.ttf",
-    "C:/Windows/Fonts/simsun.ttc",
-];
-
-/// 安装中文字体：把系统中文字体插到 egui 字体族最前，修复中文豆腐块显示。
-fn install_fonts(ctx: &Context) {
-    let Some(path) = FONT_CANDIDATES
-        .iter()
-        .find(|p| std::path::Path::new(p).exists())
-    else {
-        eprintln!("[pkgtool] 未找到系统中文字体，中文将无法显示");
-        return;
-    };
-    let Ok(data) = std::fs::read(path) else {
-        eprintln!("[pkgtool] 读取系统字体失败: {}", path);
-        return;
-    };
-    eprintln!("[pkgtool] 使用中文字体: {}", path);
-
-    let mut fonts = egui::FontDefinitions::default();
-    fonts
-        .font_data
-        .insert("cjk".to_owned(), egui::FontData::from_owned(data).into());
-    if let Some(prop) = fonts.families.get_mut(&egui::FontFamily::Proportional) {
-        prop.insert(0, "cjk".to_owned());
-    }
-    if let Some(mono) = fonts.families.get_mut(&egui::FontFamily::Monospace) {
-        mono.insert(0, "cjk".to_owned());
-    }
-    ctx.set_fonts(fonts);
 }
 
 /// 把 `assets/icon.ico` 编进二进制并解码为 egui::IconData，用于窗口/任务栏图标。

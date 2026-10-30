@@ -3175,8 +3175,15 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "d55d956fa96f5ec02be2e13af0e20391a5aa83d6a074e3ad368959d0fab299ea"
 
 [[package]]
+name = "qsltd-ui"
+version = "0.2.2"
+dependencies = [
+ "egui",
+]
+
+[[package]]
 name = "qsltd-updater-core"
-version = "0.2.1"
+version = "0.2.2"
 dependencies = [
  "chrono",
  "futures-util",
@@ -3192,12 +3199,13 @@ dependencies = [
 
 [[package]]
 name = "qsltdupdater-egui"
-version = "0.2.1"
+version = "0.2.2"
 dependencies = [
  "eframe",
  "egui",
  "embed-resource",
  "png 0.17.16",
+ "qsltd-ui",
  "qsltd-updater-core",
  "tokio",
 ]

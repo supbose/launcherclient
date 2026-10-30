@@ -23,6 +23,8 @@ tokio = { version = "1", features = ["full"] }
 # 共享核心：cli/config/manifest/download/install/cleanup/services + phase/flow（无 UI）
 # 应用目录与本地版本记录（原外部 qingshu 能力）已内聚到 src-core 的 appdir / local_manifest
 qsltd-updater-core = { path = "../src-core" }
+# 共享 UI 原语（主题/标题栏/spinner/进度条），src-pkgtool 用的也是这份
+qsltd-ui = { path = "../src-ui" }
 
 [build-dependencies]
 # Windows exe 图标资源嵌入（调用系统 rc.exe；非 Windows 平台自动跳过）

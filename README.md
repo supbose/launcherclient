@@ -10,6 +10,7 @@
 | `src-egui` | 启动器 / 更新器主程序，产物 `launcherclient.exe` |
 | `src-pkgtool` | 更新包打包工具，产物 `pkgtool.exe` |
 | `src-core` | 两个程序共享的无 UI 核心：配置、清单、下载、安装、清理、Windows 服务、阶段编排 |
+| `src-ui` | 启动器与打包工具共享的 UI 原语：色板 / 字体 / 主题、标题栏、进度条、圆环、胶囊、按钮（只依赖 egui） |
 
 ---
 
@@ -17,9 +18,9 @@
 
 ```
 launcherclient/
-├── Cargo.toml             # 根 workspace：成员 = src-core + src-egui；src-pkgtool 刻意排除（见 §7）
+├── Cargo.toml             # 根 workspace：成员 = src-core + src-egui + src-ui；src-pkgtool 刻意排除（见 §7）
 │                          # 也是版本号的 Rust 侧唯一写入点（[workspace.package]），由 pybuild 从 package.json 同步
-├── Cargo.lock             # workspace 共享的一份锁文件（两个成员 crate 不再各编一遍依赖）
+├── Cargo.lock             # workspace 共享的一份锁文件（三个成员 crate 不再各编一遍依赖）
 ├── .cnb.yml               # CNB 流水线：版本号一致性 + fmt + clippy + 单测门禁（见 §3.3）
 ├── target/                # workspace 成员的构建产物（launcherclient.exe 在这里）
 ├── src-core/              # 共享核心库（无 UI，可被任何外壳复用）
@@ -28,8 +29,15 @@ launcherclient/
 │              appdir.rs local_manifest.rs instance.rs
 │              elevation.rs shell.rs client.rs
 │              phase.rs flow.rs
+│   └── examples/gen_cli_docs.rs  # 从 cli.rs 的 CLI_SPECS 生成 README/手册的参数表（--check / --write）
+├── src-ui/                # 共享 UI 原语（只依赖 egui，无产品语义）
+│   └── src/    theme.rs widgets.rs
+│                # theme：色板、text_alpha 等色值工具、字体安装、apply_theme
+│                # widgets：标题栏、进度条、圆环、状态点、胶囊、按钮、背景绘制
 ├── src-egui/              # 启动器主程序（egui 0.37）
 │   ├── src/    main.rs app.rs templates.rs widgets.rs theme.rs preview.rs
+│   │            # templates：A~H 八套布局（共用 EndStyle/TailStyle/BulletLogStyle 骨架）
+│   │            # widgets/theme：启动器专属控件 + 对 qsltd-ui 的转出层
 │   ├── assets/icon.ico  icon.png
 │   └── version.rc         # exe 图标 + 文件版本信息（build.rs 嵌入）
 ├── src-pkgtool/           # 打包工具（egui 0.37，独立 crate + 自己的 target/）
@@ -90,6 +98,10 @@ python scripts/pybuild.py --show-paths
 # 版本号：校验 / 只同步不构建
 pnpm version:check     # python scripts/pybuild.py --check-version（CI 用的同一件事）
 pnpm version:sync      # python scripts/pybuild.py --sync-version
+
+# CLI 文档：校验 / 重新生成（README §4.2 与使用手册 4.1 的参数表都来自 src-core/src/cli.rs）
+pnpm docs:cli:check    # cargo run -q -p qsltd-updater-core --example gen_cli_docs -- --check
+pnpm docs:cli:sync     # cargo run -q -p qsltd-updater-core --example gen_cli_docs -- --write
 ```
 
 ### 3.1 构建期产品线参数（qsm:release）
@@ -123,13 +135,13 @@ pnpm qsm:release --name MyApp --app-name myapp --manifest-url https://a.cdn.myap
 | 位置 | 形式 | 说明 |
 | --- | --- | --- |
 | `package.json` → `version` | `0.2.1` 或 `0.2.1.4` | **权威来源**，人工只改这里 |
-| `Cargo.toml` → `[workspace.package] version` | `0.2.1` | src-core / src-egui 都写 `version.workspace = true` 继承；Cargo 只接受三段 semver，四段版本的第四段进不了这里 |
+| `Cargo.toml` → `[workspace.package] version` | `0.2.1` | src-core / src-egui / src-ui 都写 `version.workspace = true` 继承；Cargo 只接受三段 semver，四段版本的第四段进不了这里 |
 | `src-pkgtool/Cargo.toml` → `[package] version` | `0.2.1` | 该 crate 不在 workspace 内，单独写一份 |
 | `src-egui/version.rc` | `FILEVERSION 0,2,1,0` + `FileVersion`/`ProductVersion` 字符串 | exe 属性面板「文件版本」 |
 | `src-pkgtool/icon.rc` | 同上 | 同上 |
 
 > Cargo 的字段继承是**逐字段声明**的：成员只写 `version.workspace = true` 而漏掉 `edition.workspace = true`，
-> edition 会静默退回 2015，`async` 代码直接编不过（本项目踩过，故两个成员的 `edition`/`license`/`authors` 都显式继承）。
+> edition 会静默退回 2015，`async` 代码直接编不过（本项目踩过，故三个成员的 `edition`/`license`/`authors` 都显式继承）。
 
 同步时机与兜底：
 
@@ -145,9 +157,11 @@ push 与 pull_request 触发同一条流水线（YAML 锚点复用），分两�
 | 档 | 检查 | 说明 |
 | --- | --- | --- |
 | 硬门禁 | `--check-version` | 版本漂移 = 产物「关于」页与 exe 属性自相矛盾，直接拦 |
+| 硬门禁 | CLI 文档一致性（`gen_cli_docs -- --check`） | README / 使用手册里的参数表与 `cli.rs` 的 `CLI_SPECS` 不同步即失败，杜绝「代码加了参数、文档没跟」 |
 | 硬门禁 | `cargo fmt --all -- --check` + pkgtool 的 `cargo fmt --check` | 只看源码不触发编译，UI crate 也能覆盖 |
 | 硬门禁 | `cargo clippy -p qsltd-updater-core --all-targets -- -D warnings` | 核心库 0 warning（本地已验证） |
-| 硬门禁 | `cargo test -p qsltd-updater-core` | 214 个纯单元测试；`integration` feature 不开，不碰 `sc.exe` 与真实网络 |
+| 硬门禁 | `cargo clippy -p qsltd-ui --all-targets -- -D warnings` | 共享 UI 原语只依赖 egui，Linux 不需要图形系统包，可稳定复现 |
+| 硬门禁 | `cargo test -p qsltd-updater-core` | 217 个纯单元测试；`integration` feature 不开，不碰 `sc.exe` 与真实网络 |
 | 软门禁 | `cargo clippy -p qsltdupdater-egui ...` / pkgtool 同上 | eframe/wgpu 在 Linux 需要 X11/Wayland + OpenSSL + Vulkan 系统包，镜像缺任一项就会变成「和代码无关的红」，故失败只打印不拦合并 |
 
 > 软门禁那两条在 Windows 开发机上是**能过且应当过**的：本地 `cargo clippy --workspace --all-targets -- -D warnings`
@@ -185,24 +199,31 @@ python scripts/pybuild.py egui --codesign-pfx D:\certs\qsltd.pfx --codesign-tsa 
 
 ### 4.2 命令行参数
 
+<!-- 本节内容由 src-core/src/cli.rs 的 CLI_SPECS 生成。
+     改参数请先改代码与解析逻辑，再运行：
+     cargo run -p qsltd-updater-core --example gen_cli_docs -- --write -->
+<!-- cli-doc:begin -->
 ```
-launcherclient.exe [--app-name <名称>] [--name <标题>] [--launch <目标程序路径>]
-                   [--manifest <manifest地址>] [--current-version <版本>]
-                   [--template <A~H>] [--check-only] [--allow-missing-sha256]
-                   [--preview [--stage <0-10|名称>]]
+launcherclient.exe [--app-name <名称>] [--name <标题>]
+                   [--launch <目标程序路径>] [--manifest <manifest地址>]
+                   [--current-version <版本>] [--template <A~H>]
+                   [--check-only] [--allow-missing-sha256] [--preview]
+                   [--stage <0-10|名称>]
 ```
 
 | 参数 | 说明 | 默认 |
 | --- | --- | --- |
-| `--app-name` | 应用名，决定配置/下载/安装目录与拉取的清单 | 未给时取 update.json 的 `app_name`，再回落内置默认 `qsm` |
-| `--name` | 启动器标题：标题栏左侧文字 + 系统窗口标题（单行，最长 64 字符，超长截断）。只影响显示，不参与目录派生 | 未给时取 update.json 的 `name`，再回落编译期烘焙标题（无烘焙即「启动器」） |
-| `--launch` | 更新完成后拉起的目标程序；相对路径按安装目录解析；留空则自动定位安装目录中的主程序 | 空 |
-| `--manifest` | 服务器 version.json 地址，覆盖 update.json | 见 `defaults::DEFAULT_MANIFEST_URLS` |
-| `--current-version` | 强制指定当前版本，覆盖本地 app.json | 自动探测 |
-| `--template` | 启动器界面模板 A~H（大小写不敏感，见 4.7） | 未给时取 update.json 的 `launcher_template`，再回落编译期烘焙值（无烘焙即 `F`） |
-| `--check-only` | 纯检测：不建窗、不下载、不拉起目标程序，按退出码结束（见下表） | 关闭 |
-| `--allow-missing-sha256` | 放行「清单没给 SHA256」的更新包，关闭 `require_sha256` 校验闸（见 4.3）。仅在服务端确实无法提供校验值时临时使用 | 关闭（即校验闸开启） |
-| `--preview` / `--stage` | 仅 src-egui：本地预览八套布局与各阶段画面，不联网 | 关闭 |
+| `--app-name <名称>` | 应用名，决定配置 / 下载 / 安装目录与拉取的清单 | 未给时取 update.json 的 `app_name`，再回落内置默认 `qsm` |
+| `--name <标题>` | 启动器标题：标题栏左侧文字与系统窗口标题。单行、最长 64 字符（换行剔除、超长截断，界面上再按可用宽度以省略号收尾）。只影响显示，不参与目录派生 | 未给时取 update.json 的 `name`，再回落编译期烘焙标题（无烘焙即「启动器」） |
+| `--launch <目标程序路径>` | 更新完成后拉起的目标程序；相对路径按安装目录解析 | 空 = 自动定位安装目录中的主程序 |
+| `--manifest <manifest地址>` | 服务器 version.json 地址，覆盖 update.json 中的配置 | 见 `defaults::DEFAULT_MANIFEST_URLS` |
+| `--current-version <版本>` | 强制指定当前版本，覆盖本地 app.json 的探测结果 | 自动探测 |
+| `--template <A~H>` | 界面模板 A~H（大小写不敏感） | 未给时取 update.json 的 `launcher_template`，再回落编译期烘焙值（无烘焙即 `F`） |
+| `--check-only` | 纯检测模式：不建窗、不下载、不拉起目标程序，按退出码结束（0 无更新 / 1 检测失败 / 2 有更新可跳过 / 3 必须更新） | 关闭 |
+| `--allow-missing-sha256` | 放行「清单没给 SHA256」的更新包，关闭 `require_sha256` 校验闸。仅在服务端确实无法提供校验值时临时使用；只能关不能开 | 关闭（即校验闸开启） |
+| `--preview` | 仅 src-egui：本地预览八套布局与各阶段画面，不联网 | 关闭 |
+| `--stage <0-10\|名称>` | 仅 src-egui：`--preview` 的阶段。0 检测中、1 下载中（分卷）、2 校验中、3 解压/安装中、4 发现新版本、5 已是最新、6 更新完成、7 错误、8 重试中、9 强制更新（阻断）、10 强制更新（可稍后升级）；也可传中文名称，未知值回落 1 | 1 |
+<!-- cli-doc:end -->
 
 未知参数只打印告警并忽略，不会中断启动。
 
@@ -450,18 +471,22 @@ pnpm pkgtool              # 构建 release：src-pkgtool/target/release/pkgtool.
 ## 6. 测试
 
 ```bash
-# 共享核心（纯单元测试，214 个）——workspace 根执行，无需 cd 进目录
+# 共享核心（纯单元测试，217 个）——workspace 根执行，无需 cd 进目录
 cargo test -p qsltd-updater-core
 
 # 服务模块真实 sc.exe 冒烟（需管理员权限，默认关闭）
 cargo test -p qsltd-updater-core --features integration
 
+# 启动器 UI 逻辑测试（标题/副标题兜底、动作行显示条件、进度条规格等 7 个）
+cargo test -p qsltdupdater-egui
+
 # 打包工具（含打包/切分/取消/版本号推算等用例）：不在 workspace 内，仍进目录跑
 cd src-pkgtool && cargo test
 
-# 门禁三件套（CI 里跑的同一组命令；src-egui/src-pkgtool 见 3.3 的软门禁说明）
+# 门禁命令（CI 里跑的同一组；src-egui/src-pkgtool 见 3.3 的软门禁说明）
 cargo fmt --all -- --check
 cargo clippy -p qsltd-updater-core --all-targets -- -D warnings
+cargo clippy -p qsltd-ui --all-targets -- -D warnings
 ```
 
 lint 口径：`unwrap_used = "deny"` / `expect_used = "warn"` 是生产代码的约束，两处刻意开口子——

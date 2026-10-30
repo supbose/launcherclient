@@ -5,9 +5,11 @@
 # 门禁分两档，刻意不是一锅端：
 #   硬门禁（失败即红）= 不需要在 Linux 上编译 UI 的检查项
 #     · 版本号一致性（package.json 为唯一来源）
+#     · CLI 文档一致性（README / 手册的参数表由 src-core/src/cli.rs 生成）
 #     · rustfmt 检查（只看源码，不触发编译，所以 UI crate 也能覆盖）
 #     · src-core clippy -D warnings
 #     · src-core 单元测试（214 个，纯单元、无系统副作用）
+#     · src-ui clippy（只依赖 egui 纯 Rust 库，不需要窗口/GPU 系统包，可以硬拦）
 #   软门禁（失败只打印，不拦合并）= 需要在 Linux 上真的编译 UI 的检查项
 #     · src-egui / src-pkgtool 的 clippy
 #     原因：eframe/wgpu 在 Linux 要 X11/Wayland 与 OpenSSL 系统包，wgpu 还要求 Vulkan/GL 栈，
@@ -36,14 +38,25 @@ main:
 
         - name: 格式检查（硬门禁）
           script:
-            # --all 覆盖 workspace 成员（src-core + src-egui）；src-pkgtool 被 workspace 刻意排除，单独查
+            # --all 覆盖 workspace 成员（src-core + src-egui + src-ui）；src-pkgtool 被 workspace 刻意排除，单独查
             - cargo fmt --all -- --check
             - (cd src-pkgtool && cargo fmt --check)
+
+        - name: CLI 文档一致性（硬门禁）
+          script:
+            # README §4.2 与使用手册 4.1 的用法/参数表由 src-core/src/cli.rs 的 CLI_SPECS 生成；
+            # 代码改了文档没重生成时这里会红（本地用 `pnpm docs:cli:sync` 重写）
+            - cargo run -q -p qsltd-updater-core --example gen_cli_docs -- --check
 
         - name: Clippy src-core（硬门禁）
           script:
             # 只编 src-core，不碰 UI crate，因此这条在 Linux 上稳定可复现
             - cargo clippy -p qsltd-updater-core --all-targets -- -D warnings
+
+        - name: Clippy src-ui（硬门禁）
+          script:
+            # 只依赖 egui（不含 eframe/wgpu），Linux 镜像无需任何图形系统包，稳定可复现
+            - cargo clippy -p qsltd-ui --all-targets -- -D warnings
 
         - name: 单元测试 src-core（硬门禁）
           script:

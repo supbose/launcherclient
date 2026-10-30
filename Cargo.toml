@@ -9,7 +9,7 @@
 # 顺带把发布产物 launcherclient.exe 的 LTO/strip 也一起退化。它继续独立构建。
 [workspace]
 resolver = "2"
-members = ["src-core", "src-egui"]
+members = ["src-core", "src-egui", "src-ui"]
 exclude = ["src-pkgtool"]
 
 # 版本号的 Rust 侧唯一写入点。
@@ -17,7 +17,7 @@ exclude = ["src-pkgtool"]
 # （以及 src-pkgtool/Cargo.toml 与两个 rc 文件）；`--check-version` 负责校验一致性。
 # 手改这里会在下一次构建被覆盖，且 CI 会报漂移。
 [workspace.package]
-version = "0.2.1"
+version = "0.2.2"
 edition = "2021"
 license = "MIT"
 authors = ["supbose <supbose@qq.com>"]

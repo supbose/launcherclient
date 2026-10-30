@@ -1,0 +1,23 @@
+[package]
+name = "qsltd-ui"
+# 版本与 edition/license/authors 继承根 workspace 的 [workspace.package]
+# （继承需按字段逐个声明，缺 edition 会退回 2015）
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+authors.workspace = true
+description = "QsLtd 原生 UI 原语（主题色板 / 字体 / 标题栏 / spinner / 进度条），launcherclient 与 pkgtool 共用"
+
+[dependencies]
+# 只依赖 egui（不含 eframe/wgpu）：本 crate 只画控件，不持有窗口与事件循环
+egui = "0.37"
+
+[lints.rust]
+unused_imports = "allow"
+unused_variables = "allow"
+dead_code = "allow"
+
+[lints.clippy]
+unwrap_used = "deny"
+expect_used = "warn"
+print_stdout = "warn"

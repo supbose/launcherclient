@@ -330,26 +330,31 @@ footer { border-top: 1px solid var(--rule); margin-top: 64px; padding: 28px 0 44
     <h2>四、启动器使用说明</h2>
 
     <h3><span class="no">4.1</span>命令行参数</h3>
-    <pre><code>launcherclient.exe [--app-name &lt;名称&gt;] [--name &lt;标题&gt;] [--launch &lt;目标程序路径&gt;]
-                   [--manifest &lt;manifest地址&gt;] [--current-version &lt;版本&gt;]
-                   [--template &lt;A~H&gt;] [--check-only] [--allow-missing-sha256]
-                   [--preview [--stage &lt;0-10|名称&gt;]]</code></pre>
+    <!-- 本节内容由 src-core/src/cli.rs 的 CLI_SPECS 生成（cargo run -p qsltd-updater-core --example gen_cli_docs -- --write） -->
+    <!-- cli-doc:begin -->
+<pre><code>launcherclient.exe [--app-name &lt;名称&gt;] [--name &lt;标题&gt;]
+                   [--launch &lt;目标程序路径&gt;] [--manifest &lt;manifest地址&gt;]
+                   [--current-version &lt;版本&gt;] [--template &lt;A~H&gt;]
+                   [--check-only] [--allow-missing-sha256] [--preview]
+                   [--stage &lt;0-10|名称&gt;]</code></pre>
     <div class="table-wrap">
       <table>
         <thead><tr><th>参数</th><th>说明</th><th>默认</th></tr></thead>
         <tbody>
-          <tr><td class="nowrap"><code>--app-name</code></td><td>应用名，决定配置 / 下载 / 安装目录与拉取的清单</td><td>未给时取 update.json 的 <code>app_name</code>，再回落内置默认 <code>qsm</code></td></tr>
-          <tr><td class="nowrap"><code>--name</code></td><td>启动器标题：标题栏左侧文字与系统窗口标题。单行、最长 64 字符（换行剔除、超长截断，界面上再按可用宽度以省略号收尾）。只影响显示，不参与目录派生</td><td>未给时取 update.json 的 <code>name</code>，再回落打包时烘焙的标题（默认「启动器」）</td></tr>
-          <tr><td class="nowrap"><code>--launch</code></td><td>更新完成后拉起的目标程序；相对路径按安装目录解析</td><td>空 = 自动定位安装目录中的主程序</td></tr>
-          <tr><td class="nowrap"><code>--manifest</code></td><td>服务器 version.json 地址，覆盖 update.json 中的配置</td><td>见内置默认地址</td></tr>
-          <tr><td class="nowrap"><code>--current-version</code></td><td>强制指定当前版本，覆盖本地 app.json 的探测结果</td><td>自动探测</td></tr>
-          <tr><td class="nowrap"><code>--template</code></td><td>界面模板 A~H（大小写不敏感），覆盖 update.json</td><td><code>F</code></td></tr>
+          <tr><td class="nowrap"><code>--app-name &lt;名称&gt;</code></td><td>应用名，决定配置 / 下载 / 安装目录与拉取的清单</td><td>未给时取 update.json 的 <code>app_name</code>，再回落内置默认 <code>qsm</code></td></tr>
+          <tr><td class="nowrap"><code>--name &lt;标题&gt;</code></td><td>启动器标题：标题栏左侧文字与系统窗口标题。单行、最长 64 字符（换行剔除、超长截断，界面上再按可用宽度以省略号收尾）。只影响显示，不参与目录派生</td><td>未给时取 update.json 的 <code>name</code>，再回落编译期烘焙标题（无烘焙即「启动器」）</td></tr>
+          <tr><td class="nowrap"><code>--launch &lt;目标程序路径&gt;</code></td><td>更新完成后拉起的目标程序；相对路径按安装目录解析</td><td>空 = 自动定位安装目录中的主程序</td></tr>
+          <tr><td class="nowrap"><code>--manifest &lt;manifest地址&gt;</code></td><td>服务器 version.json 地址，覆盖 update.json 中的配置</td><td>见 <code>defaults::DEFAULT_MANIFEST_URLS</code></td></tr>
+          <tr><td class="nowrap"><code>--current-version &lt;版本&gt;</code></td><td>强制指定当前版本，覆盖本地 app.json 的探测结果</td><td>自动探测</td></tr>
+          <tr><td class="nowrap"><code>--template &lt;A~H&gt;</code></td><td>界面模板 A~H（大小写不敏感）</td><td>未给时取 update.json 的 <code>launcher_template</code>，再回落编译期烘焙值（无烘焙即 <code>F</code>）</td></tr>
           <tr><td class="nowrap"><code>--check-only</code></td><td>纯检测模式：不建窗、不下载、不拉起目标程序，按退出码结束（0 无更新 / 1 检测失败 / 2 有更新可跳过 / 3 必须更新）</td><td>关闭</td></tr>
-          <tr><td class="nowrap"><code>--allow-missing-sha256</code></td><td>放行「清单没给 SHA256」的更新包，关闭 <code>require_sha256</code> 校验闸（见 4.2）。仅在服务端确实无法提供校验值时临时使用；<mark class="key">只能关不能开</mark></td><td>关闭（即校验闸开启）</td></tr>
-          <tr><td class="nowrap"><code>--preview</code> / <code>--stage</code></td><td>本地预览各套布局与阶段画面，不联网。<code>--stage</code> 取 0~10（也可传中文名称，未知值回落 1）：0 检测中、1 下载中（分卷）、2 校验中、3 解压/安装中、4 发现新版本、5 已是最新、6 更新完成、7 错误、8 重试中、9 强制更新（阻断）、10 强制更新（可稍后升级）</td><td>关闭</td></tr>
+          <tr><td class="nowrap"><code>--allow-missing-sha256</code></td><td>放行「清单没给 SHA256」的更新包，关闭 <code>require_sha256</code> 校验闸。仅在服务端确实无法提供校验值时临时使用；只能关不能开</td><td>关闭（即校验闸开启）</td></tr>
+          <tr><td class="nowrap"><code>--preview</code></td><td>仅 src-egui：本地预览八套布局与各阶段画面，不联网</td><td>关闭</td></tr>
+          <tr><td class="nowrap"><code>--stage &lt;0-10|名称&gt;</code></td><td>仅 src-egui：<code>--preview</code> 的阶段。0 检测中、1 下载中（分卷）、2 校验中、3 解压/安装中、4 发现新版本、5 已是最新、6 更新完成、7 错误、8 重试中、9 强制更新（阻断）、10 强制更新（可稍后升级）；也可传中文名称，未知值回落 1</td><td>1</td></tr>
         </tbody>
       </table>
     </div>
+<!-- cli-doc:end -->
     <p>未知参数只打印告警并忽略，<mark class="key">不会中断启动</mark>。</p>
 
     <h3><span class="no">4.2</span>update.json — 本地配置文件</h3>

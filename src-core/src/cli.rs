@@ -118,6 +118,205 @@ pub fn parse_from(argv: &[String]) -> CliArgs {
     }
 }
 
+// ---- 参数清单：文档的唯一来源 ----
+//
+// README §4.2 的用法行与参数表、使用手册 4.1 的同名两段，都由下面的
+// `CLI_SPECS` 渲染出来：
+//     cargo run -p qsltd-updater-core --example gen_cli_docs -- --write   # 重写文档
+//     cargo run -p qsltd-updater-core --example gen_cli_docs -- --check   # 校验（CI 硬门禁）
+// 新增/修改参数时改这里 + `parse_from`，再让脚本重写文档；手改 README/手册
+// 会被一致性检查打回。
+
+/// 一个命令行参数的文档元数据
+pub struct CliSpec {
+    /// 参数名（含 `--`）
+    pub flag: &'static str,
+    /// 值占位符；`None` = 布尔开关
+    pub value: Option<&'static str>,
+    /// 说明（支持 `反引号` 行内代码）
+    pub desc: &'static str,
+    /// 默认值说明（支持 `反引号` 行内代码）
+    pub default: &'static str,
+    /// 仅 src-egui 提供（本地预览）
+    pub egui_only: bool,
+}
+
+impl CliSpec {
+    /// 「--flag <值>」或「--flag」
+    fn signature(&self) -> String {
+        match self.value {
+            Some(v) => format!("{} <{}>", self.flag, v),
+            None => self.flag.to_string(),
+        }
+    }
+}
+
+/// 全部对外参数（内部提权标记 `--__elevated-retry` 不在此列）
+pub const CLI_SPECS: &[CliSpec] = &[
+    CliSpec {
+        flag: "--app-name",
+        value: Some("名称"),
+        desc: "应用名，决定配置 / 下载 / 安装目录与拉取的清单",
+        default: "未给时取 update.json 的 `app_name`，再回落内置默认 `qsm`",
+        egui_only: false,
+    },
+    CliSpec {
+        flag: "--name",
+        value: Some("标题"),
+        desc: "启动器标题：标题栏左侧文字与系统窗口标题。单行、最长 64 字符（换行剔除、超长截断，界面上再按可用宽度以省略号收尾）。只影响显示，不参与目录派生",
+        default: "未给时取 update.json 的 `name`，再回落编译期烘焙标题（无烘焙即「启动器」）",
+        egui_only: false,
+    },
+    CliSpec {
+        flag: "--launch",
+        value: Some("目标程序路径"),
+        desc: "更新完成后拉起的目标程序；相对路径按安装目录解析",
+        default: "空 = 自动定位安装目录中的主程序",
+        egui_only: false,
+    },
+    CliSpec {
+        flag: "--manifest",
+        value: Some("manifest地址"),
+        desc: "服务器 version.json 地址，覆盖 update.json 中的配置",
+        default: "见 `defaults::DEFAULT_MANIFEST_URLS`",
+        egui_only: false,
+    },
+    CliSpec {
+        flag: "--current-version",
+        value: Some("版本"),
+        desc: "强制指定当前版本，覆盖本地 app.json 的探测结果",
+        default: "自动探测",
+        egui_only: false,
+    },
+    CliSpec {
+        flag: "--template",
+        value: Some("A~H"),
+        desc: "界面模板 A~H（大小写不敏感）",
+        default: "未给时取 update.json 的 `launcher_template`，再回落编译期烘焙值（无烘焙即 `F`）",
+        egui_only: false,
+    },
+    CliSpec {
+        flag: "--check-only",
+        value: None,
+        desc: "纯检测模式：不建窗、不下载、不拉起目标程序，按退出码结束（0 无更新 / 1 检测失败 / 2 有更新可跳过 / 3 必须更新）",
+        default: "关闭",
+        egui_only: false,
+    },
+    CliSpec {
+        flag: "--allow-missing-sha256",
+        value: None,
+        desc: "放行「清单没给 SHA256」的更新包，关闭 `require_sha256` 校验闸。仅在服务端确实无法提供校验值时临时使用；只能关不能开",
+        default: "关闭（即校验闸开启）",
+        egui_only: false,
+    },
+    CliSpec {
+        flag: "--preview",
+        value: None,
+        desc: "仅 src-egui：本地预览八套布局与各阶段画面，不联网",
+        default: "关闭",
+        egui_only: true,
+    },
+    CliSpec {
+        flag: "--stage",
+        value: Some("0-10|名称"),
+        desc: "仅 src-egui：`--preview` 的阶段。0 检测中、1 下载中（分卷）、2 校验中、3 解压/安装中、4 发现新版本、5 已是最新、6 更新完成、7 错误、8 重试中、9 强制更新（阻断）、10 强制更新（可稍后升级）；也可传中文名称，未知值回落 1",
+        default: "1",
+        egui_only: true,
+    },
+];
+
+/// 用法行（多行、按宽度折行；`indent` 用于续行对齐）
+pub fn usage_text() -> String {
+    /// 终端显示宽度：ASCII 记 1，CJK 等宽字符记 2（避免中文占位符把行撑长）
+    fn width(s: &str) -> usize {
+        s.chars()
+            .map(|c| if (c as u32) < 0x1100 { 1 } else { 2 })
+            .sum()
+    }
+
+    let mut lines: Vec<String> = Vec::new();
+    let mut cur = String::from("launcherclient.exe");
+    let mut cur_w = width(&cur);
+    const INDENT: &str = "                   ";
+    for spec in CLI_SPECS {
+        let token = format!("[{}]", spec.signature());
+        let token_w = width(&token);
+        // 约 78 列折行：一行放不下就换到缩进续行
+        if cur_w + 1 + token_w > 78 && cur != "launcherclient.exe" {
+            lines.push(cur);
+            cur = String::from(INDENT);
+            cur_w = INDENT.len();
+        }
+        if cur == INDENT {
+            cur.push_str(&token);
+        } else {
+            cur.push(' ');
+            cur.push_str(&token);
+        }
+        cur_w += token_w + 1;
+    }
+    lines.push(cur);
+    lines.join("\n")
+}
+
+/// Markdown 表格（README §4.2）
+pub fn table_markdown() -> String {
+    let mut out = String::from("| 参数 | 说明 | 默认 |\n| --- | --- | --- |\n");
+    for spec in CLI_SPECS {
+        out.push_str(&format!(
+            "| `{}` | {} | {} |\n",
+            md_cell(&spec.signature()),
+            md_cell(spec.desc),
+            md_cell(spec.default)
+        ));
+    }
+    out
+}
+
+/// HTML 表格（使用手册 4.1，与站内样式一致）
+pub fn table_html() -> String {
+    let mut out = String::from(
+        "<div class=\"table-wrap\">\n      <table>\n        <thead><tr><th>参数</th><th>说明</th><th>默认</th></tr></thead>\n        <tbody>\n",
+    );
+    for spec in CLI_SPECS {
+        out.push_str(&format!(
+            "          <tr><td class=\"nowrap\"><code>{}</code></td><td>{}</td><td>{}</td></tr>\n",
+            html_inline(&spec.signature()),
+            html_inline(spec.desc),
+            html_inline(spec.default)
+        ));
+    }
+    out.push_str("        </tbody>\n      </table>\n    </div>\n");
+    out
+}
+
+/// Markdown 表格单元格转义（竖线会破坏表格结构）
+fn md_cell(s: &str) -> String {
+    s.replace('|', "\\|")
+}
+
+/// HTML 行内转义 + `反引号` → `<code>`
+fn html_inline(s: &str) -> String {
+    let mut out = String::with_capacity(s.len());
+    let mut in_code = false;
+    for ch in s.chars() {
+        match ch {
+            '`' => {
+                out.push_str(if in_code { "</code>" } else { "<code>" });
+                in_code = !in_code;
+            }
+            '&' => out.push_str("&amp;"),
+            '<' => out.push_str("&lt;"),
+            '>' => out.push_str("&gt;"),
+            _ => out.push(ch),
+        }
+    }
+    if in_code {
+        out.push_str("</code>");
+    }
+    out
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -260,5 +459,60 @@ mod tests {
     fn parse_repeated_flag_takes_last() {
         let c = parse_from(&args(&["--app-name", "a", "--app-name", "b"]));
         assert_eq!(c.app_name, "b");
+    }
+
+    #[test]
+    fn cli_specs_have_unique_flags_and_cover_parse_targets() {
+        // 文档表里每个参数都必须是解析器认识的那个名字，且不能重复
+        let mut seen = std::collections::HashSet::new();
+        for spec in CLI_SPECS {
+            assert!(
+                spec.flag.starts_with("--"),
+                "参数名必须带 --：{}",
+                spec.flag
+            );
+            assert!(seen.insert(spec.flag), "参数名重复：{}", spec.flag);
+        }
+        // 内部提权标记不进文档
+        assert!(!seen.contains("--__elevated-retry"));
+        for expect in [
+            "--app-name",
+            "--name",
+            "--launch",
+            "--manifest",
+            "--current-version",
+            "--template",
+            "--check-only",
+            "--allow-missing-sha256",
+            "--preview",
+            "--stage",
+        ] {
+            assert!(seen.contains(expect), "CLI_SPECS 缺少 {expect}");
+        }
+    }
+
+    #[test]
+    fn rendered_docs_mention_every_spec() {
+        let usage = usage_text();
+        let md = table_markdown();
+        let html = table_html();
+        for spec in CLI_SPECS {
+            assert!(usage.contains(spec.flag), "用法行缺少 {}", spec.flag);
+            assert!(md.contains(spec.flag), "Markdown 表缺少 {}", spec.flag);
+            assert!(html.contains(spec.flag), "HTML 表缺少 {}", spec.flag);
+            // 一行一个参数：表格行数必须与清单一致
+        }
+        assert_eq!(md.lines().count(), CLI_SPECS.len() + 2);
+    }
+
+    #[test]
+    fn html_escapes_angle_brackets_and_markdown_escapes_pipes() {
+        // 占位符里的 <名称> 在 HTML 里必须转义，否则被当成标签吞掉
+        let html = table_html();
+        assert!(html.contains("&lt;名称&gt;"));
+        assert!(!html.contains("--app-name <"));
+        // 竖线在 Markdown 表格里会切列，必须转义
+        let md = table_markdown();
+        assert!(md.contains("0-10\\|名称"));
     }
 }

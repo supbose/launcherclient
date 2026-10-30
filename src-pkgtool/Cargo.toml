@@ -1,6 +1,6 @@
 [package]
 name = "qsltd-pkgtool"
-version = "0.2.1"
+version = "0.2.2"
 edition = "2021"
 description = "QsLtd 更新包打包工具（egui 版，versionTools.py 的纯 Rust GUI 重实现）"
 license = "MIT"
@@ -33,6 +33,9 @@ walkdir = "2"
 regex = "1"
 # 原生文件/目录选择对话框（Windows 走系统对话框）
 rfd = "0.14"
+# 共享 UI 原语（主题色板 / 标题栏 / 背景渐变 / 进度条 / 中文字体安装）。
+# 与本 crate 一样是 egui 0.37，不引入 eframe 之外的额外依赖树。
+qsltd-ui = { path = "../src-ui" }
 # 解析 icon.ico → egui::IconData（窗口/任务栏图标，直接 embed 进二进制，免运行时文件依赖）
 ico = "0.4"
 
