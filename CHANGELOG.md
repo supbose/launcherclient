@@ -25,6 +25,12 @@
 
 
 
+
+## v1.0.3 (2026-10-30)
+### 🚀 新增功能
+
+- [04e1fdf](/-/commit/04e1fdfaaa8ecab648f1140b45288232f9e5d0a4) 新增(src-egui): 将华为 HarmonyOS 字体内嵌进 exe，移除外部字体目录依赖 (README.md, docs/egui界面复刻说明.md, scripts/build.py, src-egui/build.rs, src-egui/src/app.rs, src-ui/src/fonts.rs)
+
 ## v1.0.2 (2026-10-30)
 ### 🚀 新增功能
 
