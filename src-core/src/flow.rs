@@ -262,6 +262,15 @@ pub async fn run_check_only(args: &CliArgs, cfg: &ResolvedConfig) -> i32 {
         }
     };
 
+    // 首次安装（0.0.0）：没有可运行的旧版本，「可跳过」没有意义，按必须更新处理
+    if is_first_install(&current_version) && manifest::need_update(&current_version, &m) {
+        eprintln!(
+            "[更新器] 未检测到已安装版本，按强制更新处理：最新 {}",
+            m.version
+        );
+        return 3;
+    }
+
     if manifest::requires_force_update(&current_version, &m) {
         eprintln!(
             "[更新器] 检测到服务端强制更新要求：当前 {}，要求 {}",
@@ -314,17 +323,13 @@ pub async fn run_startup(args: &CliArgs, cfg: &ResolvedConfig) -> StartupDecisio
     // 更新完成全程可见（下载/安装期间用户正好有空看更新了什么）
     phase::set_changelog(m.changelog.clone());
 
-    // ---- 更新决策：是否强制完全由服务端 manifest 决定 ----
+    // ---- 更新决策 ----
     //
-    // 服务端 manifest 通过 `force_update`（版本级强制标记）与 `min_version`
-    // （最低允许版本）下发强制更新策略：
-    // - 任一成立（`requires_force_update`）：**阻断**启动，用户必须升级到要求版本，
-    //   不给「稍后升级」出口。
-    // - 否则（有更新但服务端未强制）：展示「发现新版本，可稍后升级」界面，
-    //   用户可选择稍后升级直接进应用。
-    let server_forces = manifest::requires_force_update(&current_version, &m);
-    let has_store = m.store_url.as_ref().is_some_and(|s| !s.trim().is_empty());
-
+    // 三种形态：
+    // - 首次安装（本地 0.0.0 / app.json 缺失 / 安装目录丢失）：没有可运行的
+    //   旧版本，「稍后升级」无处可去 → 直接进入下载安装，不展示选择界面。
+    // - 服务端强制（`force_update` 或 `min_version`）：阻断式提示，必须升级。
+    // - 其余有更新：非阻断提示，可稍后升级直接进应用。
     if !manifest::need_update(&current_version, &m) {
         eprintln!("[更新器] 已是最新版本: {}", current_version);
         // 拉起目标程序后静默退出；launch 失败时显示错误窗口让用户知道
@@ -339,8 +344,53 @@ pub async fn run_startup(args: &CliArgs, cfg: &ResolvedConfig) -> StartupDecisio
                 initial: PhasePayload::new(Stage::Error, "启动失败", &e, None),
             })),
         }
-    } else if server_forces {
-        // 服务端 manifest 要求强制更新：阻断式（必须升级，无跳过出口）
+    } else {
+        update_available_decision(cfg, &current_version, m)
+    }
+}
+
+/// 当前版本是否代表「尚未安装」
+///
+/// `resolve_current_version` 在 app.json 缺失、读取失败、或记录的安装目录
+/// 已不存在时都返回 `0.0.0`（见其文档）。这类机器上没有可启动的程序，
+/// 「稍后升级」只会得到一次启动失败，因此必须按强制安装处理。
+fn is_first_install(current_version: &str) -> bool {
+    current_version.trim() == "0.0.0"
+}
+
+/// 有可用更新时的启动决策（从 [`run_startup`] 抽出的纯决策，便于单测）
+///
+/// - 首次安装：首帧即 `Downloading`，由 UI 自动拉起更新流程（无选择界面）
+/// - 服务端强制：阻断式 `force-update`，按钮驱动更新
+/// - 其余：非阻断式 `force-update`，可稍后升级
+fn update_available_decision(
+    cfg: &ResolvedConfig,
+    current_version: &str,
+    m: manifest::FlatManifest,
+) -> StartupDecision {
+    let has_store = m.store_url.as_ref().is_some_and(|s| !s.trim().is_empty());
+
+    if is_first_install(current_version) {
+        eprintln!(
+            "[更新器] 未检测到已安装版本（当前 {}），按首次安装直接下载安装：最新 {}",
+            current_version, m.version
+        );
+        return StartupDecision::Show(Box::new(StartupContext {
+            cfg: cfg.clone(),
+            // 携带 manifest：UI 消费决策时据此自动启动下载流程
+            manifest: Some(m),
+            // 非 force-update 阶段：app.rs 会自动 spawn 更新流程，
+            // 窗口直接呈现下载进度，不出现「稍后升级」
+            initial: PhasePayload::new(
+                Stage::Downloading,
+                "正在下载更新包...",
+                "首次安装，完成后将自动启动",
+                None,
+            ),
+        }));
+    }
+
+    if manifest::requires_force_update(current_version, &m) {
         let required = manifest::required_version(&m);
         eprintln!(
             "[更新器] 触发服务端强制更新（阻断）：当前 {}，要求 {}",
@@ -350,10 +400,9 @@ pub async fn run_startup(args: &CliArgs, cfg: &ResolvedConfig) -> StartupDecisio
             cfg: cfg.clone(),
             // 保存 manifest：强制更新界面「下载升级包」按钮据此走更新流程
             manifest: Some(m),
-            initial: PhasePayload::force_update(&current_version, &required, true, has_store),
+            initial: PhasePayload::force_update(current_version, &required, true, has_store),
         }))
     } else {
-        // 有更新但服务端未强制：可跳过，展示「可稍后升级」界面
         eprintln!(
             "[更新器] 发现新版本（可跳过）：当前 {}，最新 {}",
             current_version, m.version
@@ -364,7 +413,7 @@ pub async fn run_startup(args: &CliArgs, cfg: &ResolvedConfig) -> StartupDecisio
             // 保存 manifest：界面「下载升级包」据此走更新流程；
             // 「稍后升级」则启动当前已安装应用并退出（见 app.rs ForceLater）
             manifest: Some(m),
-            initial: PhasePayload::force_update(&current_version, &latest, false, has_store),
+            initial: PhasePayload::force_update(current_version, &latest, false, has_store),
         }))
     }
 }
@@ -1487,6 +1536,86 @@ mod tests {
                 "非法应用名应回落默认值: {:?}",
                 bad
             );
+        }
+    }
+
+    // ---------- 首次安装 / 强制更新决策 ----------
+
+    #[test]
+    fn is_first_install_only_matches_zero_placeholder() {
+        assert!(is_first_install("0.0.0"));
+        assert!(is_first_install(" 0.0.0 "));
+        assert!(!is_first_install("0.0.1"));
+        assert!(!is_first_install("0.4.38"));
+        assert!(!is_first_install(""));
+    }
+
+    #[test]
+    fn first_install_starts_download_without_prompt() {
+        // 首装没有可运行的旧版本：必须直接下载安装，不能出现「稍后升级」
+        let cfg = cfg_for_test();
+        let m = manifest_with_hash(Some(&"a".repeat(64)));
+        let decision = update_available_decision(&cfg, "0.0.0", m);
+        match decision {
+            StartupDecision::Show(ctx) => {
+                assert_eq!(ctx.initial.stage(), Stage::Downloading);
+                assert!(
+                    !ctx.initial.force_update_blocking,
+                    "首装不应进入需要点击的强制更新提示界面"
+                );
+                assert!(
+                    ctx.manifest.is_some(),
+                    "必须携带 manifest，UI 才能自动拉起下载流程"
+                );
+            }
+            _ => panic!("首次安装应直接显示下载进度"),
+        }
+    }
+
+    #[test]
+    fn first_install_overrides_non_forced_prompt() {
+        // 服务端没写 force_update/min_version 时，0.0.0 仍按首装直接安装
+        let cfg = cfg_for_test();
+        let m = manifest_with_hash(Some(&"a".repeat(64)));
+        assert!(!manifest::requires_force_update("0.0.0", &m));
+        let decision = update_available_decision(&cfg, "0.0.0", m);
+        match decision {
+            StartupDecision::Show(ctx) => {
+                assert_eq!(ctx.initial.stage(), Stage::Downloading);
+            }
+            _ => panic!("首次安装应直接显示下载进度"),
+        }
+    }
+
+    #[test]
+    fn existing_install_keeps_later_option_when_not_forced() {
+        let cfg = cfg_for_test();
+        let m = manifest_with_hash(Some(&"a".repeat(64)));
+        let decision = update_available_decision(&cfg, "9.9.8", m);
+        match decision {
+            StartupDecision::Show(ctx) => {
+                assert_eq!(ctx.initial.stage(), Stage::ForceUpdate);
+                assert!(
+                    !ctx.initial.force_update_blocking,
+                    "已有安装的非强制更新应保留「稍后升级」"
+                );
+            }
+            _ => panic!("已有安装应展示可稍后升级的提示"),
+        }
+    }
+
+    #[test]
+    fn server_forced_update_stays_blocking() {
+        let cfg = cfg_for_test();
+        let mut m = manifest_with_hash(Some(&"a".repeat(64)));
+        m.force_update = Some(true);
+        let decision = update_available_decision(&cfg, "9.9.8", m);
+        match decision {
+            StartupDecision::Show(ctx) => {
+                assert_eq!(ctx.initial.stage(), Stage::ForceUpdate);
+                assert!(ctx.initial.force_update_blocking, "服务端强制更新应阻断");
+            }
+            _ => panic!("服务端强制更新应展示阻断式提示"),
         }
     }
 
