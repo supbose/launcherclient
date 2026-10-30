@@ -1,0 +1,12 @@
+# CNB 分支详情页自定义按钮：点击「发布可信度门禁」即触发 .cnb.yml 里的 web_trigger_quality_gate 流水线。
+#
+# 按钮仅支持配置在「代码-分支详情页」；门禁事件只挂在 main 分支下，
+# 因此用 reg 限定按钮只在 main 分支页显示，避免在其他分支点了没反应。
+# 权限：未配 permissions，默认有仓库写权限即可点击触发。
+branch:
+  - reg: ^main$
+    buttons:
+      - name: 发布可信度门禁
+        description: 跑 launcherclient 质量门禁（版本号 / 格式 / CLI 文档 / clippy / 单元测试）
+        event: web_trigger_quality_gate
+        isDefault: true

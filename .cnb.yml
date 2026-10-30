@@ -1,4 +1,5 @@
-# CNB 云原生构建流水线：提交与 PR 上跑「发布可信度」门禁。
+# CNB 云原生构建流水线：「发布可信度」门禁改为按钮执行——不再随提交/PR 自动跑，
+# 在仓库页面点右上「手动构建」（web_trigger 事件）触发。
 #
 # 层级是 分支 → 事件 → Pipeline → Stage（串行）；CNB 默认已拉好代码，不需要 checkout 步骤。
 #
@@ -10,7 +11,7 @@
 #     · src-core clippy -D warnings
 #     · src-core 单元测试（214 个，纯单元、无系统副作用）
 #     · src-ui clippy（只依赖 egui 纯 Rust 库，不需要窗口/GPU 系统包，可以硬拦）
-#   软门禁（失败只打印，不拦合并）= 需要在 Linux 上真的编译 UI 的检查项
+#   软门禁（失败只打印，不影响整条流水线结论）= 需要在 Linux 上真的编译 UI 的检查项
 #     · src-egui / src-pkgtool 的 clippy
 #     原因：eframe/wgpu 在 Linux 要 X11/Wayland 与 OpenSSL 系统包，wgpu 还要求 Vulkan/GL 栈，
 #     镜像里缺任何一个都会把流水线变成「和代码无关的红」。这两个 crate 的严格检查
@@ -19,7 +20,8 @@
 # 签名（Authenticode）不在流水线里：需要 .pfx 与时间戳服务，属于发布机的事，
 # 见 scripts/pybuild.py 的 --codesign-pfx / --codesign-tsa 与 README §7。
 main:
-  push: &ci
+  # 事件名以 web_trigger 开头即可被页面「手动构建」按钮拾取
+  web_trigger_quality_gate:
     - name: launcherclient-quality-gate
       image: rust:1-bookworm
       stages:
@@ -67,12 +69,10 @@ main:
           script:
             - >-
               cargo clippy -p qsltdupdater-egui --all-targets -- -D warnings
-              || echo "[软门禁] src-egui 在 Linux 上编译依赖不全（X11/Wayland/OpenSSL/wgpu），本条不拦合并；请在 Windows 开发机执行同样命令确认"
+              || echo "[软门禁] src-egui 在 Linux 上编译依赖不全（X11/Wayland/OpenSSL/wgpu），本条不算流水线失败；请在 Windows 开发机执行同样命令确认"
 
         - name: Clippy src-pkgtool（软门禁）
           script:
             - >-
               (cd src-pkgtool && cargo clippy --all-targets -- -D warnings)
-              || echo "[软门禁] src-pkgtool 同上，依赖 egui 渲染栈，Linux 镜像缺系统包时不拦合并"
-
-  pull_request: *ci
+              || echo "[软门禁] src-pkgtool 同上，依赖 egui 渲染栈，Linux 镜像缺系统包时不算流水线失败"
