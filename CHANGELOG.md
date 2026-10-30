@@ -28,6 +28,12 @@
 
 
 
+
+## v1.0.6 (2026-10-30)
+### 🚀 新增功能
+
+- [190f2e5](/-/commit/190f2e5897842ffc044715211d6c9c63a83f2a6e) 新增(src-core): 新增磁盘空间预检、原子写 manifest 和并发拉取 (Cargo.lock, Cargo.toml, README.md, src-core/src/cleanup.rs, src-core/src/config.rs, src-core/src/disk.rs, src-core/src/download.rs, src-core/src/elevation.rs, src-core/src/flow.rs, src-core/src/install.rs, src-core/src/lib.rs, src-core/src/local_manifest.rs, src-core/src/manifest.rs, src-egui/version.rc, src-pkgtool/Cargo.lock, src-pkgtool/Cargo.toml, src-pkgtool/icon.rc)
+
 ## v1.0.5 (2026-10-30)
 ### 📝 文档更新
 
