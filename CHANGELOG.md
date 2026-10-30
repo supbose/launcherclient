@@ -26,6 +26,12 @@
 
 
 
+
+## v1.0.4 (2026-10-30)
+### ♻️ 代码重构
+
+- [1746d1f](/-/commit/1746d1f7af64565bb4292c82fdd63852c6b76f4b) 重构(src-egui): 简化界面模板为 F 主 / H 副两套，优化启动逻辑 (Cargo.lock, Cargo.toml, README.md, docs/egui界面复刻说明.md, launcherclient-guide/launcherclient-guide.html, package.json, src-core/src/cli.rs, src-core/src/config.rs, src-core/src/defaults.rs, src-core/src/flow.rs, src-core/src/lib.rs, src-core/src/phase.rs, src-egui/src/app.rs, src-egui/src/main.rs, src-egui/src/preview.rs, src-egui/src/templates.rs, src-egui/src/theme.rs, src-egui/src/widgets.rs, src-egui/version.rc, src-pkgtool/Cargo.toml, src-pkgtool/icon.rc, src-ui/src/widgets.rs, update.json)
+
 ## v1.0.3 (2026-10-30)
 ### 🚀 新增功能
 
