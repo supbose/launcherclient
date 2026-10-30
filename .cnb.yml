@@ -1,5 +1,5 @@
 # CNB 云原生构建流水线：「发布可信度」门禁改为按钮执行——不再随提交/PR 自动跑，
-# 在仓库页面点右上「手动构建」（web_trigger 事件）触发。
+# 在 main 分支详情页点「发布可信度门禁」按钮触发（按钮定义见 .cnb/web_trigger.yml）。
 #
 # 层级是 分支 → 事件 → Pipeline → Stage（串行）；CNB 默认已拉好代码，不需要 checkout 步骤。
 #
@@ -20,7 +20,7 @@
 # 签名（Authenticode）不在流水线里：需要 .pfx 与时间戳服务，属于发布机的事，
 # 见 scripts/pybuild.py 的 --codesign-pfx / --codesign-tsa 与 README §7。
 main:
-  # 事件名以 web_trigger 开头即可被页面「手动构建」按钮拾取
+  # 按钮触发事件，由 .cnb/web_trigger.yml 的「发布可信度门禁」按钮绑定
   web_trigger_quality_gate:
     - name: launcherclient-quality-gate
       image: rust:1-bookworm
