@@ -137,12 +137,22 @@ pub fn verify_sha256(file: &Path, expected: &Option<String>) -> Result<(), Strin
     };
 
     let actual = sha256_of_file(file)?;
+    compare_sha256(expected, &actual)
+}
+
+/// 比对已经算好的 SHA256 与期望值（大小写不敏感，期望值前后空白先 trim）。
+///
+/// 供「下载/合并时已流式算出哈希」的调用方复用，避免为了校验再把 GB 级
+/// 文件整读一遍。不匹配属于下载链路问题，错误带 [`DOWNLOAD_FAIL_PREFIX`]，
+/// 错误态因此能给出「前往官网重新下载」出口。
+pub fn compare_sha256(expected: &str, actual: &str) -> Result<(), String> {
+    let expected = expected.trim();
     if actual.eq_ignore_ascii_case(expected) {
         Ok(())
     } else {
         Err(format!(
-            "SHA256 校验不匹配，期望: {}，实际: {}",
-            expected, actual
+            "{}SHA256 校验不匹配，期望: {}，实际: {}",
+            DOWNLOAD_FAIL_PREFIX, expected, actual
         ))
     }
 }
@@ -272,7 +282,16 @@ where
                 .await
                 .unwrap_or_else(|e| Err(format!("校验任务异常: {}", e)));
             if let Err(e) = check {
-                return Err(format!("分卷 {}/{} 校验失败: {}", i + 1, total, e));
+                // 逐卷校验失败同为下载链路问题：统一带前缀，编排层据此
+                // 在重试用尽后提供「前往官网重新下载」出口
+                let detail = e.strip_prefix(DOWNLOAD_FAIL_PREFIX).unwrap_or(&e);
+                return Err(format!(
+                    "{}分卷 {}/{} 校验失败: {}",
+                    DOWNLOAD_FAIL_PREFIX,
+                    i + 1,
+                    total,
+                    detail
+                ));
             }
         }
 
@@ -294,12 +313,15 @@ where
 /// - `dest`: 合并输出路径
 /// - `expected_sha256`: 完整 zip 的期望 SHA256（空则跳过整体校验）
 /// - `on_progress`: 合并进度回调（已合并字节, 总字节），供 UI 展示实时进度
+///
+/// 返回合并产物的实际 SHA256（十六进制）。调用方可直接拿它与清单比对，
+/// 不必再读一遍 GB 级文件。
 pub async fn merge_parts<F>(
     part_paths: &[PathBuf],
     dest: &Path,
     expected_sha256: &Option<String>,
     on_progress: F,
-) -> Result<(), String>
+) -> Result<String, String>
 where
     F: Fn(u64, u64),
 {
@@ -356,21 +378,21 @@ where
     eprintln!("[合并] sync_all 完成，开始 SHA256 校验");
 
     // 整体 SHA256 校验
+    let actual = hex::encode(hasher.finalize());
     if let Some(expected) = expected_sha256
         .as_deref()
         .map(str::trim)
         .filter(|s| !s.is_empty())
     {
-        let actual = hex::encode(hasher.finalize());
         if !actual.eq_ignore_ascii_case(expected) {
             return Err(format!(
-                "合并后整体 SHA256 校验不匹配，期望: {}，实际: {}",
-                expected, actual
+                "{}合并后整体 SHA256 校验不匹配，期望: {}，实际: {}",
+                DOWNLOAD_FAIL_PREFIX, expected, actual
             ));
         }
     }
 
-    Ok(())
+    Ok(actual)
 }
 
 // 测试里构造失败即用例本身失败，按 clippy 惯例局部放行 expect/unwrap
@@ -469,6 +491,10 @@ mod tests {
         let p = write_temp("mismatch", b"hello").expect("写临时文件");
         let err = verify_sha256(&p, &Some(sha_of(b"world"))).unwrap_err();
         assert!(err.contains("校验不匹配"), "错误应说明不匹配: {err}");
+        assert!(
+            err.starts_with(DOWNLOAD_FAIL_PREFIX),
+            "校验不匹配属于下载链路问题，需带统一前缀: {err}"
+        );
         let _ = std::fs::remove_file(&p);
     }
 
@@ -513,9 +539,15 @@ mod tests {
         let out = temp_path("merged", "zip");
         let expected = sha_of(b"AAABBBB");
 
-        merge_parts(&[p1.clone(), p2.clone()], &out, &Some(expected), |_, _| {})
-            .await
-            .expect("合并并校验应成功");
+        let actual = merge_parts(
+            &[p1.clone(), p2.clone()],
+            &out,
+            &Some(expected.clone()),
+            |_, _| {},
+        )
+        .await
+        .expect("合并并校验应成功");
+        assert_eq!(actual, expected, "应返回合并产物的实际 SHA256");
 
         let merged = std::fs::read(&out).expect("读合并产物");
         assert_eq!(merged, b"AAABBBB");
@@ -540,6 +572,10 @@ mod tests {
         assert!(
             err.contains("整体 SHA256 校验不匹配"),
             "错误应说明整体不匹配: {err}"
+        );
+        assert!(
+            err.starts_with(DOWNLOAD_FAIL_PREFIX),
+            "合并后哈希不匹配属于下载链路问题，需带统一前缀: {err}"
         );
         let _ = std::fs::remove_file(&p1);
         let _ = std::fs::remove_file(&out);

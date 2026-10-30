@@ -588,9 +588,10 @@ pub async fn run_update_flow(
             run_download(handle, m, &zip_path, attempt, download_max).await
         };
 
-        // 下载成功后再核一遍完整包 SHA256：早期中断/磁盘写坏都在这关露头
+        // 下载成功后再核一遍完整包 SHA256：早期中断/磁盘写坏都在这关露头。
+        // 下载/合并阶段已流式算出的哈希直接复用（Some），没有才回落到整读校验。
         let result = match outcome {
-            Ok(()) => verify_package(handle, &zip_path, &m.sha256).await,
+            Ok(precomputed) => verify_package(handle, &zip_path, &m.sha256, precomputed).await,
             Err(e) => Err(e),
         };
 
@@ -762,7 +763,7 @@ async fn run_download_parts(
     zip_path: &Path,
     attempt: u32,
     max_attempts: u32,
-) -> Result<(), String> {
+) -> Result<Option<String>, String> {
     let urls = m.parts.as_ref().ok_or("分卷地址列表缺失")?;
     let parts_dir = download_dir(app_name).join(format!("update_{}_parts", m.version));
     let sha256s = m.part_sha256.as_deref().filter(|s| s.len() == urls.len());
@@ -822,7 +823,7 @@ async fn run_download_parts(
     ));
     eprintln!("[更新器] 合并 {} 个分卷...", result.part_paths.len());
     let merge_handle = handle.clone();
-    download::merge_parts(
+    let merged_sha = download::merge_parts(
         &result.part_paths,
         zip_path,
         &m.sha256,
@@ -842,11 +843,13 @@ async fn run_download_parts(
     )
     .await
     .map_err(|e| {
-        // 合并失败多为分卷本身残缺（下载环节的锅），统一按下载环节处理
-        format!("{}分卷合并失败: {}", download::DOWNLOAD_FAIL_PREFIX, e)
+        // 合并失败多为分卷本身残缺（下载环节的锅），统一按下载环节处理；
+        // 错误本身可能已带前缀（整体哈希不匹配），避免重复拼接
+        let detail = e.strip_prefix(download::DOWNLOAD_FAIL_PREFIX).unwrap_or(&e);
+        format!("{}分卷合并失败: {}", download::DOWNLOAD_FAIL_PREFIX, detail)
     })?;
     eprintln!("[更新器] 分卷合并完成: {}", zip_path.display());
-    Ok(())
+    Ok(Some(merged_sha))
 }
 
 /// 执行下载：本地已有同名包且校验通过则复用，否则流式下载并推送进度
@@ -856,7 +859,7 @@ async fn run_download(
     zip_path: &Path,
     attempt: u32,
     max_attempts: u32,
-) -> Result<(), String> {
+) -> Result<Option<String>, String> {
     // 复用前提：manifest 提供了非空整包 SHA256。无校验值时 verify_sha256 直接
     // 放行，等于把上次下载中断的半包当完整包复用（后面安装的就是损坏包），
     // 故强制重新下载。（缺校验值的包能否走到这一步，由上面的 require_sha256
@@ -865,11 +868,16 @@ async fn run_download(
     if zip_path.exists() && has_hash {
         let cached = zip_path.to_path_buf();
         let sha256 = m.sha256.clone();
-        let ok = tokio::task::spawn_blocking(move || download::verify_sha256(&cached, &sha256))
-            .await
-            .unwrap_or_else(|e| Err(format!("校验任务异常: {}", e)))
-            .is_ok();
-        if ok {
+        // 复用校验只读一次：算出实际哈希的同时完成比对，并把结果上抛，
+        // 外层 verify_package 直接复用，不再整读第二遍（GB 级包差别明显）
+        let verified = tokio::task::spawn_blocking(move || {
+            let actual = download::sha256_of_file(&cached)?;
+            let expected = sha256.as_deref().unwrap_or_default();
+            download::compare_sha256(expected, &actual).map(|()| actual)
+        })
+        .await
+        .unwrap_or_else(|e| Err(format!("校验任务异常: {}", e)));
+        if let Ok(actual) = verified {
             let size = tokio::fs::metadata(zip_path)
                 .await
                 .map(|m| m.len())
@@ -887,7 +895,7 @@ async fn run_download(
                 Some(size),
                 None,
             ));
-            return Ok(());
+            return Ok(Some(actual));
         }
         eprintln!("[更新器] 本地更新包校验不通过，重新下载");
         let _ = tokio::fs::remove_file(zip_path).await;
@@ -934,7 +942,8 @@ async fn run_download(
                 crate::phase::format_bytes(size),
                 sha
             );
-            Ok(())
+            // 哈希是下载时流式算出的，交给外层直接比对，避免再读一遍
+            Ok(Some(sha))
         }
         Err(e) => Err(e),
     }
@@ -1212,20 +1221,30 @@ fn residual_is_free(path: &Path) -> bool {
 }
 
 /// 校验完整包 SHA256（期望值为空时跳过）
+///
+/// `precomputed` 为下载/合并阶段已经算出的实际哈希：给出时直接比对，
+/// 不再整读文件；没有才回落到 [`download::verify_sha256`] 的流式读盘。
 async fn verify_package(
     handle: &PhaseHandle,
     zip_path: &Path,
     sha256: &Option<String>,
+    precomputed: Option<String>,
 ) -> Result<(), String> {
+    let Some(expected) = sha256.as_deref().map(str::trim).filter(|s| !s.is_empty()) else {
+        return Ok(());
+    };
     handle.set(PhasePayload::new(
         Stage::Checking,
         "正在校验更新包...",
         "",
         None,
     ));
+    if let Some(actual) = precomputed {
+        return download::compare_sha256(expected, &actual);
+    }
     let zip_path = zip_path.to_path_buf();
-    let sha256 = sha256.clone();
-    tokio::task::spawn_blocking(move || download::verify_sha256(&zip_path, &sha256))
+    let expected = expected.to_string();
+    tokio::task::spawn_blocking(move || download::verify_sha256(&zip_path, &Some(expected)))
         .await
         .unwrap_or_else(|e| Err(format!("校验任务异常: {}", e)))
 }
@@ -1556,9 +1575,14 @@ mod tests {
         m.url = "http://127.0.0.1:9/unreachable.zip".to_string();
         let handle = PhaseHandle::new();
 
-        run_download(&handle, &m, &zip, 1, 3)
+        let reused_hash = run_download(&handle, &m, &zip, 1, 3)
             .await
             .expect("校验合格的本地包应被复用");
+        assert_eq!(
+            reused_hash.as_deref(),
+            Some(expected.as_str()),
+            "复用分支应返回已算出的实际哈希，供外层免二次读盘"
+        );
         assert!(zip.exists(), "复用不得删掉本地包");
         assert_eq!(
             std::fs::read(&zip).expect("读回"),
@@ -1594,6 +1618,53 @@ mod tests {
             err.starts_with(download::DOWNLOAD_FAIL_PREFIX),
             "应落到下载环节: {err}"
         );
+
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[tokio::test]
+    async fn verify_package_uses_precomputed_hash_without_reading_file() {
+        // 下载/合并阶段已算出的哈希应直接用于比对：文件路径故意不存在，
+        // 只要没有回落到读盘就会成功
+        let handle = PhaseHandle::new();
+        let missing = temp_dir("precomputed").join("absent.zip");
+        let actual = "ab".repeat(32);
+
+        verify_package(&handle, &missing, &Some(actual.clone()), Some(actual))
+            .await
+            .expect("给出预计算哈希时不应再读文件");
+        let _ = std::fs::remove_dir_all(missing.parent().expect("父目录"));
+    }
+
+    #[tokio::test]
+    async fn sha_mismatch_is_classified_as_download_failure() {
+        // 下载完成但哈希对不上属于下载链路问题：错误必须带统一前缀，
+        // 重试用尽后界面才会出现「前往官网重新下载」出口
+        let dir = temp_dir("sha_mismatch");
+        let zip = dir.join("update_9.9.9.zip");
+        std::fs::write(&zip, b"corrupted-payload").expect("写本地包");
+        let handle = PhaseHandle::new();
+        let expected = "00".repeat(32);
+        let actual = "11".repeat(32);
+
+        let err = verify_package(&handle, &zip, &Some(expected), Some(actual))
+            .await
+            .expect_err("哈希不匹配应失败");
+        assert!(
+            err.starts_with(download::DOWNLOAD_FAIL_PREFIX),
+            "校验失败应归入下载环节: {err}"
+        );
+
+        record_download_failure(&handle, &err, 3, 3);
+        let snap = handle.snapshot().expect("应写入错误阶段快照");
+        assert_eq!(snap.stage(), Stage::Error);
+        assert!(
+            snap.download_failed,
+            "哈希不匹配应提供「前往官网重新下载」出口"
+        );
+        assert_eq!(snap.failed_stage, "download");
+        assert_eq!(snap.attempt, 3);
+        assert_eq!(snap.max_attempts, 3);
 
         let _ = std::fs::remove_dir_all(&dir);
     }
