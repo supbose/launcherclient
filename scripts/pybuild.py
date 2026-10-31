@@ -13,6 +13,9 @@
 rc 与 Cargo 此前只有「被构建的那个目标」会被同步，所以长期漂移（icon.rc 停在旧版本）；
 现在每次构建统一铺开，--check-version 再兜一层。
 
+两个 Cargo.lock（仓库根与 src-pkgtool/）里也记录着本地包版本，清单改动后由
+cargo metadata 顺带刷新，避免每次构建都把 lock 改脏；lock 文件本身随仓库提交。
+
 可选构建参数（编译期烘焙进 exe 内置默认值，替代 qsm 默认产品线；未传项保持默认）：
     --name <标题>              默认启动器标题（窗口标题栏左侧显示文字）
     --app-name <名称>          默认应用名（决定配置/下载/安装目录）
@@ -37,6 +40,7 @@ rc 与 Cargo 此前只有「被构建的那个目标」会被同步，所以长�
 流程：
 1. 读取 package.json 的 version 字段；
 2. 将版本号写入根 Cargo.toml、src-pkgtool/Cargo.toml 与两个 rc，并回读校验；
+   lock 里的本地包版本落后时再跑一次 cargo metadata 让它跟上（本步需要 cargo 在 PATH 中）；
 3. 执行 cargo build --release（附带构建参数环境变量）；
 4. 校验 release 产物存在、内嵌版本号一致；
 5. 仅在传入 --codesign-pfx 时签名并 verify /pa 校验。
@@ -62,6 +66,8 @@ WORKSPACE_MANIFEST = PROJECT_ROOT / "Cargo.toml"
 WORKSPACE_LABEL = "Cargo.toml [workspace.package]"
 PKGTOOL_MANIFEST = PROJECT_ROOT / "src-pkgtool" / "Cargo.toml"
 PKGTOOL_LABEL = "src-pkgtool/Cargo.toml [package]"
+ROOT_LOCK = PROJECT_ROOT / "Cargo.lock"
+PKGTOOL_LOCK = PROJECT_ROOT / "src-pkgtool" / "Cargo.lock"
 
 
 class Target:
@@ -104,6 +110,10 @@ CARGO_VERSION_RE = re.compile(r'^version\s*=\s*"([^"]*)"', re.MULTILINE)
 # rc 里的字符串版本（VALUE "FileVersion", "x.y.z.w"）；rc 资源块是缩进的，行首要跳过
 RC_STRING_VERSION_RE = re.compile(r'^\s*VALUE\s+"FileVersion",\s*"([^"]*)"', re.MULTILINE)
 
+# Cargo.lock 里每个 [[package]] 块的 name/version（紧挨着写，格式由 Cargo 生成）
+LOCK_PACKAGE_RE = re.compile(
+    r'^\[\[package\]\]\r?\nname = "([^"]+)"\r?\nversion = "([^"]+)"', re.MULTILINE
+)
 
 
 class BuildError(Exception):
@@ -268,6 +278,62 @@ def read_rc_version(path: Path, label: str) -> str:
     return matches[0]
 
 
+# 每个 lock 里版本跟随 package.json 的本地包；第三方依赖的版本不归本脚本管
+LOCK_LOCAL_PACKAGES: dict[Path, tuple[str, ...]] = {
+    ROOT_LOCK: ("qsltd-updater-core", "qsltdupdater-egui", "qsltd-ui"),
+    PKGTOOL_LOCK: ("qsltd-pkgtool", "qsltd-ui"),
+}
+
+
+def read_lock_versions(lock_path: Path) -> dict[str, str]:
+    try:
+        text = lock_path.read_text(encoding="utf-8")
+    except FileNotFoundError:
+        return {}
+    except OSError as exc:
+        raise BuildError(f"读取 {lock_path.name} 失败：{exc}") from exc
+    return dict(LOCK_PACKAGE_RE.findall(text))
+
+
+def refresh_lockfile(lock_path: Path, cargo_dir: Path, names: tuple[str, ...], version: str) -> str | None:
+    """本地包版本没跟上清单时跑一次 cargo metadata 让 lock 自己更新。
+
+    lock 里记着本地路径包的版本，改完 Cargo.toml 不同步它，下一次 cargo build
+    就会把 lock 改脏——版本号提交里就会混进没人预期的 lock diff。已经一致时
+    直接返回，不白跑 cargo；跑完必须回读校验，失败就让构建停下。
+    """
+    actual = read_lock_versions(lock_path)
+    stale = [name for name in names if actual.get(name) != version]
+    if not stale:
+        return None
+
+    label = lock_path.relative_to(PROJECT_ROOT).as_posix()
+    try:
+        result = subprocess.run(
+            ["cargo", "metadata", "--format-version", "1"],
+            cwd=cargo_dir,
+            capture_output=True,
+            text=True,
+            encoding="utf-8",
+            errors="replace",
+        )
+    except FileNotFoundError as exc:
+        raise BuildError("未找到 cargo 命令，无法刷新 Cargo.lock（请确认 cargo 在 PATH 中）") from exc
+    except OSError as exc:
+        raise BuildError(f"运行 cargo metadata 失败：{exc}") from exc
+
+    if result.returncode != 0:
+        tail = (result.stderr or result.stdout or "").strip().splitlines()[-5:]
+        detail = " / ".join(line.strip() for line in tail) or "无输出"
+        raise BuildError(f"刷新 {label} 失败（cargo metadata 退出码 {result.returncode}）：{detail}")
+
+    refreshed = read_lock_versions(lock_path)
+    mismatch = [f"{name}={refreshed.get(name, '缺失')}" for name in names if refreshed.get(name) != version]
+    if mismatch:
+        raise BuildError(f"{label} 刷新后校验失败：期望 {version}，实际 {', '.join(mismatch)}")
+    return f"{label} 已刷新（{', '.join(stale)} → {version}）"
+
+
 def sync_all_version_sources(version: str, segments: list[int]) -> list[str]:
     """把 package.json 的版本铺开到全部派生位置，返回改动说明列表"""
     csv_version, dotted_version = parse_version(version)
@@ -283,6 +349,12 @@ def sync_all_version_sources(version: str, segments: list[int]) -> list[str]:
     for target in TARGETS.values():
         sync_version_rc(target, csv_version, dotted_version)
         touched.append(f"{target.rc_path.name} = {dotted_version}")
+
+    # 清单改完再让两个 lock 跟上，免得后面构建时被 cargo 顺手改脏
+    for lock_path, names in LOCK_LOCAL_PACKAGES.items():
+        note = refresh_lockfile(lock_path, lock_path.parent, names, cargo_version)
+        if note:
+            touched.append(note)
 
     return touched
 
@@ -588,7 +660,7 @@ def collect_build_env(args: argparse.Namespace) -> dict[str, str]:
 def make_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
         prog="pybuild.py",
-        description="打包目标 crate：铺开 package.json 版本号到 Cargo 清单与 rc → cargo build --release → 校验产物（可选签名）。\n"
+        description="打包目标 crate：铺开 package.json 版本号到 Cargo 清单、rc 与 Cargo.lock → cargo build --release → 校验产物（可选签名）。\n"
         "可选构建参数在编译期烘焙进 exe 内置默认值（替代 qsm 默认产品线），未传项保持默认。",
         epilog=(
             "构建参数说明（全部可选，经 QSLTD_* 环境变量传给 src-core/build.rs 生成覆盖常量）：\n"
@@ -600,7 +672,7 @@ def make_parser() -> argparse.ArgumentParser:
             "辅助参数（不带 target，只做版本号或签名的旁路操作）：\n"
             "  --version        仅打印 package.json 的构建版本号后退出\n"
             "  --check-version  只读校验五处版本声明是否一致，不一致退出码 1（CI 门禁用）\n"
-            "  --sync-version   只把版本号铺开到 Cargo 清单与 rc，不执行构建\n"
+            "  --sync-version   只把版本号铺开到 Cargo 清单、两个 rc 并刷新 Cargo.lock，不执行构建\n"
             "  --show-paths     打印各目标构建产物的落盘路径（workspace 成员在根 target/）\n\n"
             "可选签名（不传 --codesign-pfx 即完全不签名）：\n"
             "  --codesign-pfx <路径> / --codesign-tsa <时间戳地址> /\n"
@@ -625,7 +697,7 @@ def make_parser() -> argparse.ArgumentParser:
         version_text = "未知（package.json 不可读）"
     parser.add_argument("--version", action="version", version=f"launcherclient {version_text}", help="显示 package.json 中的构建版本号（即本次打包将烘焙进 rc 的版本）后退出")
     parser.add_argument("--check-version", action="store_true", help="只读校验各处版本号是否与 package.json 一致，不构建")
-    parser.add_argument("--sync-version", action="store_true", help="只把版本号写入 Cargo 清单与 rc，不构建")
+    parser.add_argument("--sync-version", action="store_true", help="只把版本号写入 Cargo 清单与 rc、刷新 Cargo.lock，不构建")
     parser.add_argument("--show-paths", action="store_true", help="打印各目标产物落盘路径后退出")
     parser.add_argument("--name", metavar="标题", help="默认启动器标题（窗口标题栏左侧显示文字，内置默认：启动器），非空、不含换行，最长 64 字符")
     parser.add_argument("--app-name", metavar="名称", help="默认应用名（内置默认：qsm），仅允许字母数字开头、由字母数字 . _ - 组成")

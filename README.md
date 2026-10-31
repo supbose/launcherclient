@@ -43,12 +43,13 @@ launcherclient/
 │   ├── assets/icon.ico  icon.png
 │   ├── assets/font/                # 华为 HarmonyOS Sans SC（Regular/Medium/Bold）+ LICENSE.txt，编译时内嵌
 │   └── version.rc         # exe 图标 + 文件版本信息（build.rs 嵌入）
-├── src-pkgtool/           # 打包工具（egui 0.37，独立 crate + 自己的 target/）
+├── src-pkgtool/           # 打包工具（egui 0.37，独立 crate + 自己的 target/ 与 Cargo.lock）
 │   ├── src/main.rs
 │   ├── assets/icon.ico
+│   ├── Cargo.lock         # 独立 workspace 的另一份锁文件，本地包版本同样随 package.json 刷新
 │   └── icon.rc            # exe 图标 + 文件版本信息
 ├── scripts/
-│   ├── pybuild.py         # 版本铺开（package.json → Cargo/rc）→ cargo release → 产物校验 →（可选）Authenticode 签名
+│   ├── pybuild.py         # 版本铺开（package.json → Cargo/rc/Cargo.lock）→ cargo release → 产物校验 →（可选）Authenticode 签名
 │   ├── build.py           # 全量打包：两个目标依次构建并复制到 dist/<版本号>/
 │   └── versionTools.py    # 旧版 Python 打包脚本（已由 pkgtool 取代，保留参考）
 ├── docs/                  # 选型与界面设计文档
@@ -134,7 +135,7 @@ pnpm qsm:release --name MyApp --app-name myapp --manifest-url https://a.cdn.myap
 
 ### 3.2 版本号：package.json 是唯一来源
 
-一份版本号在仓库里落在五个文件（两个 rc 各含「数值 + 字符串」两种写法），全部由 `package.json` 的 `version` 派生，写入方只有 `scripts/pybuild.py`：
+一份版本号在仓库里落在五处版本声明（两个 rc 各含「数值 + 字符串」两种写法），全部由 `package.json` 的 `version` 派生，写入方只有 `scripts/pybuild.py`：
 
 | 位置 | 形式 | 说明 |
 | --- | --- | --- |
@@ -144,6 +145,8 @@ pnpm qsm:release --name MyApp --app-name myapp --manifest-url https://a.cdn.myap
 | `src-egui/version.rc` | `FILEVERSION 0,2,1,0` + `FileVersion`/`ProductVersion` 字符串 | exe 属性面板「文件版本」 |
 | `src-pkgtool/icon.rc` | 同上 | 同上 |
 
+两份 `Cargo.lock`（仓库根与 `src-pkgtool/`）里的本地包条目（`qsltd-updater-core` / `qsltdupdater-egui` / `qsltd-ui` / `qsltd-pkgtool`）版本同样跟着走：铺开清单后若发现落后，脚本跑一次 `cargo metadata` 让 Cargo 自己刷新，并回读校验生效。**lock 文件随仓库提交**（二进制产物需要可复现的依赖版本），所以这一步的意义是让 lock 变化出现在版本号提交里，而不是下次 `cargo build` 时意外改脏工作区；版本已一致时不调用 cargo。
+
 > Cargo 的字段继承是**逐字段声明**的：成员只写 `version.workspace = true` 而漏掉 `edition.workspace = true`，
 > edition 会静默退回 2015，`async` 代码直接编不过（本项目踩过，故三个成员的 `edition`/`license`/`authors` 都显式继承）。
 
@@ -151,7 +154,7 @@ pnpm qsm:release --name MyApp --app-name myapp --manifest-url https://a.cdn.myap
 
 - `pnpm egui:build` / `pnpm pkgtool` / `pnpm dist`：**每次构建前自动铺开全部五处**，构建后再回读 exe 内嵌 `FileVersion` 做一致性核对，不一致直接失败——不会再出现「icon.rc 停在 0.1.32」这类漂移。
 - `pnpm version:check`（= `python scripts/pybuild.py --check-version`）：只读校验，打印每处「期望/实际」对照表，有漂移时退出码 1。
-- `pnpm version:sync`：只铺开、不构建。
+- `pnpm version:sync`：只铺开、不构建；同样会补齐两份 `Cargo.lock` 里的本地包版本（需要 `cargo` 在 PATH 中）。
 - 直接 `pnpm build` / `cargo build` 只跑 cargo，不动 rc —— 想用这条路径出正式包，先跑一次 `version:sync`。
 
 ### 3.3 CI 门禁（`.cnb.yml`）
