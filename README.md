@@ -145,7 +145,7 @@ pnpm qsm:release --name MyApp --app-name myapp --manifest-url https://a.cdn.myap
 | `src-egui/version.rc` | `FILEVERSION 0,2,1,0` + `FileVersion`/`ProductVersion` 字符串 | exe 属性面板「文件版本」 |
 | `src-pkgtool/icon.rc` | 同上 | 同上 |
 
-两份 `Cargo.lock`（仓库根与 `src-pkgtool/`）里的本地包条目（`qsltd-updater-core` / `qsltdupdater-egui` / `qsltd-ui` / `qsltd-pkgtool`）版本同样跟着走：铺开清单后若发现落后，脚本跑一次 `cargo metadata` 让 Cargo 自己刷新，并回读校验生效。**lock 文件随仓库提交**（二进制产物需要可复现的依赖版本），所以这一步的意义是让 lock 变化出现在版本号提交里，而不是下次 `cargo build` 时意外改脏工作区；版本已一致时不调用 cargo。
+两份 `Cargo.lock`（仓库根与 `src-pkgtool/`）里的本地包条目（`qsltd-updater-core` / `qsltdupdater-egui` / `qsltd-ui` / `qsltd-pkgtool`）版本同样跟着走：铺开清单后若发现落后，脚本跑一次 `cargo metadata` 让 Cargo 自己刷新，并回读校验生效。**lock 文件随仓库提交**（二进制产物需要可复现的依赖版本），所以这一步的意义是让 lock 变化出现在版本号提交里，而不是下次 `cargo build` 时意外改脏工作区；版本已一致时不调用 cargo。`--check-version` 也会只读比对这两处，lock 漂移同样会让 CI 红。
 
 > Cargo 的字段继承是**逐字段声明**的：成员只写 `version.workspace = true` 而漏掉 `edition.workspace = true`，
 > edition 会静默退回 2015，`async` 代码直接编不过（本项目踩过，故三个成员的 `edition`/`license`/`authors` 都显式继承）。
@@ -153,7 +153,7 @@ pnpm qsm:release --name MyApp --app-name myapp --manifest-url https://a.cdn.myap
 同步时机与兜底：
 
 - `pnpm egui:build` / `pnpm pkgtool` / `pnpm dist`：**每次构建前自动铺开全部五处**，构建后再回读 exe 内嵌 `FileVersion` 做一致性核对，不一致直接失败——不会再出现「icon.rc 停在 0.1.32」这类漂移。
-- `pnpm version:check`（= `python scripts/pybuild.py --check-version`）：只读校验，打印每处「期望/实际」对照表，有漂移时退出码 1。
+- `pnpm version:check`（= `python scripts/pybuild.py --check-version`）：只读校验五处声明与两份 `Cargo.lock`，打印每处「期望/实际」对照表，有漂移时退出码 1。
 - `pnpm version:sync`：只铺开、不构建；同样会补齐两份 `Cargo.lock` 里的本地包版本（需要 `cargo` 在 PATH 中）。
 - 直接 `pnpm build` / `cargo build` 只跑 cargo，不动 rc —— 想用这条路径出正式包，先跑一次 `version:sync`。
 
@@ -163,7 +163,7 @@ push 与 pull_request 触发同一条流水线（YAML 锚点复用），分两�
 
 | 档 | 检查 | 说明 |
 | --- | --- | --- |
-| 硬门禁 | `--check-version` | 版本漂移 = 产物「关于」页与 exe 属性自相矛盾，直接拦 |
+| 硬门禁 | `--check-version` | 版本漂移 = 产物「关于」页与 exe 属性自相矛盾，直接拦；同时比对两份 `Cargo.lock` 的本地包版本，防止「清单改了、lock 没提交」 |
 | 硬门禁 | CLI 文档一致性（`gen_cli_docs -- --check`） | README / 使用手册里的参数表与 `cli.rs` 的 `CLI_SPECS` 不同步即失败，杜绝「代码加了参数、文档没跟」 |
 | 硬门禁 | `cargo fmt --all -- --check` + pkgtool 的 `cargo fmt --check` | 只看源码不触发编译，UI crate 也能覆盖 |
 | 硬门禁 | `cargo clippy -p qsltd-updater-core --all-targets -- -D warnings` | 核心库 0 warning（本地已验证） |

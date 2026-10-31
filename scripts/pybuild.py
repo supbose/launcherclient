@@ -14,7 +14,8 @@ rc 与 Cargo 此前只有「被构建的那个目标」会被同步，所以长�
 现在每次构建统一铺开，--check-version 再兜一层。
 
 两个 Cargo.lock（仓库根与 src-pkgtool/）里也记录着本地包版本，清单改动后由
-cargo metadata 顺带刷新，避免每次构建都把 lock 改脏；lock 文件本身随仓库提交。
+cargo metadata 顺带刷新，避免每次构建都把 lock 改脏；lock 文件本身随仓库提交，
+--check-version 也会一并比对这两处（CI 门禁同样覆盖）。
 
 可选构建参数（编译期烘焙进 exe 内置默认值，替代 qsm 默认产品线；未传项保持默认）：
     --name <标题>              默认启动器标题（窗口标题栏左侧显示文字）
@@ -295,6 +296,15 @@ def read_lock_versions(lock_path: Path) -> dict[str, str]:
     return dict(LOCK_PACKAGE_RE.findall(text))
 
 
+def describe_lock_versions(versions: dict[str, str], names: tuple[str, ...]) -> str:
+    """把 lock 里受管包的版本压成一行：全一致只显示版本号，否则逐包列出"""
+    distinct = {versions.get(name) for name in names}
+    if len(distinct) == 1:
+        only = distinct.pop()
+        return only if only is not None else "缺失"
+    return ", ".join(f"{name}={versions.get(name, '缺失')}" for name in names)
+
+
 def refresh_lockfile(lock_path: Path, cargo_dir: Path, names: tuple[str, ...], version: str) -> str | None:
     """本地包版本没跟上清单时跑一次 cargo metadata 让 lock 自己更新。
 
@@ -386,6 +396,16 @@ def collect_version_declarations(version: str, segments: list[int]) -> list[tupl
         except BuildError as exc:
             actual = f"读取失败：{exc}"
         collected.append((label, expected, actual))
+
+    # lock 里的本地包版本同样是 package.json 的派生物，也纳入同一道门禁：
+    # 否则「清单改了、lock 没跟上」的提交 CI 看不见，要到构建时才被 cargo 改脏
+    for lock_path, names in LOCK_LOCAL_PACKAGES.items():
+        label = lock_path.relative_to(PROJECT_ROOT).as_posix()
+        try:
+            actual = describe_lock_versions(read_lock_versions(lock_path), names)
+        except BuildError as exc:
+            actual = f"读取失败：{exc}"
+        collected.append((label, cargo_expected, actual))
     return collected
 
 
@@ -569,7 +589,7 @@ def build_target(
 
 
 def check_versions(version: str, segments: list[int]) -> int:
-    """只读校验：五处版本声明是否都等于 package.json 推导出的期望值。"""
+    """只读校验：五处版本声明与两份 Cargo.lock 的本地包版本是否都等于期望值。"""
     rows = collect_version_declarations(version, segments)
     drift = [row for row in rows if row[1] != row[2]]
     width = max(len(row[0]) for row in rows)
@@ -585,7 +605,7 @@ def check_versions(version: str, segments: list[int]) -> int:
         return 0
 
     print(f"版本号不一致：{len(drift)} 处与 package.json 不符。", file=sys.stderr)
-    print("      修复：python scripts/pybuild.py --sync-version（或正常打包一次，构建会自动铺开）", file=sys.stderr)
+    print("      修复：python scripts/pybuild.py --sync-version（会一并刷新两份 Cargo.lock；或正常打包一次）", file=sys.stderr)
     return 1
 
 
@@ -671,7 +691,7 @@ def make_parser() -> argparse.ArgumentParser:
             "  其余参数分别对应内置默认 官网首页 / 界面模板 / 重试次数 / 保留版本目录数\n\n"
             "辅助参数（不带 target，只做版本号或签名的旁路操作）：\n"
             "  --version        仅打印 package.json 的构建版本号后退出\n"
-            "  --check-version  只读校验五处版本声明是否一致，不一致退出码 1（CI 门禁用）\n"
+            "  --check-version  只读校验五处版本声明与两份 Cargo.lock，不一致退出码 1（CI 门禁用）\n"
             "  --sync-version   只把版本号铺开到 Cargo 清单、两个 rc 并刷新 Cargo.lock，不执行构建\n"
             "  --show-paths     打印各目标构建产物的落盘路径（workspace 成员在根 target/）\n\n"
             "可选签名（不传 --codesign-pfx 即完全不签名）：\n"
