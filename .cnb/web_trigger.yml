@@ -2,6 +2,8 @@
 #
 # 按钮仅支持配置在「代码-分支详情页」；门禁事件只挂在 main 分支下，
 # 因此用 reg 限定按钮只在 main 分支页显示，避免在其他分支点了没反应。
+#
+# 应用打包只在这里手动触发，没有挂 tag_push：推 Tag 不会自动出包，发版请点「打包 Windows 应用」。
 # 权限：未配 permissions，默认有仓库写权限即可点击触发。
 branch:
   - reg: ^main$
@@ -12,8 +14,12 @@ branch:
         isDefault: true
 
       - name: 打包 Windows 应用
-        description: 在 Windows 自托管 Runner 上构建 launcherclient.exe 与 pkgtool.exe（手动触发，不挂 push/PR）
+        description: 在 Windows 自托管 Runner 上构建 launcherclient.exe 与 pkgtool.exe，zip 作为本次构建的 Commit 附件
         event: web_trigger_build_windows
+        # 不再提供 inputs：版本号只认 package.json。想在流水线里覆盖版本号，只能先改写工作区里的
+        # package.json，而 pybuild 构建后会回读校验、产物名与 Release 标题也都靠这个文件，
+        # 覆盖值一旦与 Tag 或提交内容不一致，出来的是一个「看着是 1.0.14、其实是别的 commit」的包。
+        # 打测试版本请在本地改 package.json 后推分支，再点这个按钮。
 
       - name: 打包环境自检
         description: 只检查 Windows Runner 是否可调度、工具链是否齐全（秒级，不出产物）

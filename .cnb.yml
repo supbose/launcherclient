@@ -3,6 +3,10 @@
 # 三条事件共用同一份 Pipeline 定义（YAML 锚点 `&quality_gate` / `*quality_gate`），
 # 避免自动门禁与手动门禁的检查项悄悄分叉。
 #
+# 应用打包走另一条线：只有页面按钮 `web_trigger_build_windows` 一个入口，
+# 刻意不挂 push / pull_request / tag_push —— 推 Tag 不会自动出包，什么时候出包由点按钮的人决定。
+# 需要 Windows 自托管 Runner，原因见该节注释。
+#
 # 层级是 分支 → 事件 → Pipeline → Stage（串行）；CNB 默认已拉好代码，不需要 checkout 步骤。
 #
 # 门禁分两档，刻意不是一锅端：
@@ -29,11 +33,18 @@ main:
       stages:
         - name: 准备工具链与系统依赖
           script:
-            - rustup component add rustfmt clippy
-            # libssl-dev/pkg-config：src-core 的 reqwest 默认走 native-tls，Linux 上要有 OpenSSL 开发头
-            - apt-get update -qq
-            - apt-get install -y -qq --no-install-recommends ca-certificates pkg-config libssl-dev python3
-            - rustc --version && cargo --version && python3 --version
+            # rustup 在镜像里装在 /usr/local/cargo/bin，但节点上的 PATH 不一定带它，
+            # 现象是 `rustup: command not found`（127），在任何代码检查之前就红。
+            # 先补 PATH，仍找不到再明确报错，别让它变成一条看不懂的红。
+            - >-
+              set -e;
+              command -v rustup >/dev/null 2>&1 || export PATH="$PATH:/usr/local/cargo/bin:$HOME/.cargo/bin";
+              command -v rustup >/dev/null 2>&1 || { echo "找不到 rustup：检查构建镜像与 PATH"; exit 1; };
+              rustup component add rustfmt clippy;
+              # libssl-dev/pkg-config：src-core 的 reqwest 默认走 native-tls，Linux 上要有 OpenSSL 开发头
+              apt-get update -qq;
+              apt-get install -y -qq --no-install-recommends ca-certificates pkg-config libssl-dev python3;
+              rustc --version && cargo --version && python3 --version
 
         - name: 版本号一致性（package.json 为唯一来源）
           script:
@@ -86,10 +97,13 @@ main:
   # 按钮触发事件，由 .cnb/web_trigger.yml 的「发布可信度门禁」按钮绑定
   web_trigger_quality_gate: *quality_gate
 
-  # ── Windows 应用打包（仅手动触发，不挂 push / pull_request）──────────────────────────
-  # 为什么必须手动：产物是 .exe，且 egui/wgpu 需要 MSVC + Windows SDK 才能编译；
+  # ── Windows 应用打包（仅手动触发，刻意不挂 tag_push / push / pull_request）────────────
+  # 发布节奏由人决定：什么时候出包、出哪个版本，都由点按钮的人说了算。
+  # 推 Tag 或合并代码都不会自动产出可发布的 exe —— 合进来的代码 ≠ 可以发的东西。
+  #
+  # 为什么用自托管节点：产物是 .exe，且 egui/wgpu 需要 MSVC + Windows SDK 才能编译；
   # CNB 云端只有 Linux 节点，且自托管 Windows Runner 上 Docker 镜像不生效（脚本直接跑在宿主机）。
-  # 因此用 runner.tags 把这条流水线调度到「打过 windows 标签的根组织自托管节点」上。
+  # 因此用 runner.namespace + runner.tags 把流水线调度到「打过 windows 标签的根组织自托管节点」上。
   #
   # 前置（缺任一项都会在 Prepare 阶段直接红，且报错与代码无关）：
   #   1. 根组织「组织设置 / 构建节点」里已新增 Windows Runner 并保持「在线」；
@@ -105,26 +119,34 @@ main:
   #       同步版本号到 Cargo 清单/rc/Cargo.lock → cargo build --release（src-egui 走 workspace、
   #       src-pkgtool 走独立 crate）→ 复制 exe 到 dist/<版本>/。
   # 签名：不传 --codesign-pfx 即完全不签名，与现有约定一致（Authenticode 签名是发布机的事，见 README §7）。
+
+  # 调度 + 缓存：打包流水线用合并键并入（自检流水线只借调度，见下）
+  windows_runner: &windows_runner
+    runner:
+      # 使用当前仓库所属根组织下的自托管节点
+      namespace: group
+      # 列出的每个 tag 都必须出现在节点标签上（AND 关系）。
+      # 建议节点至少打 windows；灰度可再加 win11 / msvc2022 等更细标签。
+      tags:
+        - windows
+    # ── 缓存策略 ──────────────────────────────────────────────────────────────
+    # CNB 原生的 docker.volumes 缓存依赖 Docker，而 Windows 自托管 Runner 上 Docker 不生效、
+    # 脚本直接跑在宿主机，故不能用 volumes 做缓存。
+    # 改用 sccache：编译产物（.rlib/.o）按「编译器版本 + 源码哈希」落盘到节点本地目录，
+    # 重复构建直接命中缓存；它不改变 target/ 路径，因此 pybuild 既有的产物查找逻辑完全不受影响。
+    # SCCACHE_DIR 放在仓库目录之外（../...），跨次 git clone 不会被清空、随节点磁盘持久。
+    # 节点需能联网完成首次 sccache 安装（之后二进制留在 ~/.cargo/bin 复用，不再重装）。
+    env:
+      RUSTC_WRAPPER: sccache
+      SCCACHE_DIR: ../launcherclient-sccache
+      CARGO_INCREMENTAL: "0"
+      CARGO_TERM_COLOR: always
+
+  # ── 页面按钮「打包 Windows 应用」：产物落本次构建的 Commit 附件，不碰 Release ──────────
+  # 版本号只认 package.json：想打测试版本就在本地改 package.json 后提交，不在流水线里改文件
+  # （改了也只在 runner 的临时工作区里，且 pybuild 构建后会回读校验，改出一致性问题是给自己埋坑）。
   web_trigger_build_windows:
-    - runner:
-        # 使用当前仓库所属根组织下的自托管节点
-        namespace: group
-        # 列出的每个 tag 都必须出现在节点标签上（AND 关系）。
-        # 建议节点至少打 windows；灰度可再加 win11 / msvc2022 等更细标签。
-        tags:
-          - windows
-      # ── 缓存策略 ──────────────────────────────────────────────────────────────
-      # CNB 原生的 docker.volumes 缓存依赖 Docker，而 Windows 自托管 Runner 上 Docker 不生效、
-      # 脚本直接跑在宿主机，故不能用 volumes 做缓存。
-      # 改用 sccache：编译产物（.rlib/.o）按「编译器版本 + 源码哈希」落盘到节点本地目录，
-      # 重复构建直接命中缓存；它不改变 target/ 路径，因此 pybuild 既有的产物查找逻辑完全不受影响。
-      # SCCACHE_DIR 放在仓库目录之外（../...），跨次 git clone 不会被清空、随节点磁盘持久。
-      # 节点需能联网完成首次 sccache 安装（之后二进制留在 ~/.cargo/bin 复用，不再重装）。
-      env:
-        RUSTC_WRAPPER: sccache
-        SCCACHE_DIR: ../launcherclient-sccache
-        CARGO_INCREMENTAL: "0"
-        CARGO_TERM_COLOR: always
+    - <<: *windows_runner
       stages:
         - name: 环境自检
           script:
@@ -145,36 +167,39 @@ main:
             # 不传 --codesign-pfx → 完全不签名，产物与现有本地构建流程一致
             - python scripts/build.py
 
-        - name: 列出产物
+        - name: 列出并压缩产物
           script:
+            # 产物目录用通配读回来，不依赖跨 stage 传变量：dist/ 下只会有本次刚生成的那一个版本目录。
+            # 宿主 PowerShell 内置 cmdlet；exe 与字体许可一并打进带版本号的 zip。
             - cmd /c dir dist
+            - >-
+              $version = @(Get-ChildItem dist -Directory)[-1].Name;
+              $zip = "launcherclient-v$version-windows-x64.zip";
+              Compress-Archive -Path "dist/$version" -DestinationPath $zip -Force;
+              echo "产物包：$zip"; cmd /c dir $zip
 
-        - name: 打包 dist 为 zip（便于作为单个附件上传）
-          script:
-            # 宿主 PowerShell 内置 cmdlet；dist/<版本>/ 下的 exe + 字体许可一并打进 dist.zip
-            - Compress-Archive -Path dist -DestinationPath dist.zip -Force
-
-        - name: 上传产物到 Commit 附件（CNB OpenAPI，无需 Docker）
+        - name: 上传产物到 Commit 附件
           script:
             # 直连 CNB OpenAPI 上传 commit 附件；鉴权用流水线注入的 $env:CNB_TOKEN。
             # 端点遵循 CNB 约定 /api/{slug}/commits/{sha}/attachments（与官方 cnbcool/attachments 插件内部调用一致）。
-            # attachment 落到「本次 web_trigger 触发的 commit」上；若想挂到 Release 附件，需先有 tag+release，
-            # 并把 $uri 改为 ".../releases/{tag}/attachments"。
             # 若首次返回 404 或报表单字段错误，通常只需核对该路径或下面 -F 的字段名（最可能是 "file="）。
             - >-
               $api = if ($env:CNB_API_ENDPOINT) { $env:CNB_API_ENDPOINT } else { "https://api.cnb.cool" };
               $uri = "$api/api/$($env:CNB_REPO_SLUG)/commits/$($env:CNB_COMMIT)/attachments";
-              curl.exe -X POST $uri -H "Authorization: Bearer $($env:CNB_TOKEN)" -H "Accept: application/vnd.cnb.api+json" -F "file=@dist.zip"
+              $zip = (Get-ChildItem "launcherclient-v*-windows-x64.zip")[0].Name;
+              curl.exe -X POST $uri -H "Authorization: Bearer $($env:CNB_TOKEN)" -H "Accept: application/vnd.cnb.api+json" -F "file=@$zip"
           # ── 备选：若 Windows 节点已启用 Docker Desktop（Linux 容器模式），可改用官方插件 ──
           #    → 注释掉上面整段 script，启用下面三行即可（无需自己拼 endpoint）：
           # image: cnbcool/attachments:latest
           # settings:
           #   attachments:
-          #     - "./dist.zip"
+          #     - "./launcherclient-v*-windows-x64.zip"
 
   # ── Windows Runner 自检（仅手动触发，不值得为它写代码）────────────────────────────────
   # 目的：把「调度不到节点」和「节点起来了但环境不全」两种情况区分开。
   # 与打包流水线用完全相同的 runner 配置，因此这里红了就一定不是编译问题。
+  # 只借 windows_runner 的调度（runner）部分，不借 env：
+  # 自检不需要 sccache 那套缓存变量，少一层干扰更容易判断是节点问题还是环境问题。
   web_trigger_check_windows_runner:
     - runner:
         namespace: group
