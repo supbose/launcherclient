@@ -85,3 +85,81 @@ main:
 
   # 按钮触发事件，由 .cnb/web_trigger.yml 的「发布可信度门禁」按钮绑定
   web_trigger_quality_gate: *quality_gate
+
+  # ── Windows 应用打包（仅手动触发，不挂 push / pull_request）──────────────────────────
+  # 为什么必须手动：产物是 .exe，且 egui/wgpu 需要 MSVC + Windows SDK 才能编译；
+  # CNB 云端只有 Linux 节点，且自托管 Windows Runner 上 Docker 镜像不生效（脚本直接跑在宿主机）。
+  # 因此用 runner.tags 把这条流水线调度到「打过 windows 标签的根组织自托管节点」上。
+  #
+  # 前置：目标 Windows 节点须已安装 Rust（默认 MSVC 目标）、Python 3、git、
+  #       Visual Studio 生成工具 / Windows SDK（wgpu 的 d3d12 后端需要；可选用于 Authenticode 签名）。
+  # 构建：沿用项目既有打包脚本 scripts/build.py（等价于 `pnpm dist`）——
+  #       同步版本号到 Cargo 清单/rc/Cargo.lock → cargo build --release（src-egui 走 workspace、
+  #       src-pkgtool 走独立 crate）→ 复制 exe 到 dist/<版本>/。
+  # 签名：不传 --codesign-pfx 即完全不签名，与现有约定一致（Authenticode 签名是发布机的事，见 README §7）。
+  web_trigger_build_windows:
+    - runner:
+        # 使用当前仓库所属根组织下的自托管节点
+        namespace: group
+        # 列出的每个 tag 都必须出现在节点标签上（AND 关系）。
+        # 建议节点至少打 windows；灰度可再加 win11 / msvc2022 等更细标签。
+        tags:
+          - windows
+      # ── 缓存策略 ──────────────────────────────────────────────────────────────
+      # CNB 原生的 docker.volumes 缓存依赖 Docker，而 Windows 自托管 Runner 上 Docker 不生效、
+      # 脚本直接跑在宿主机，故不能用 volumes 做缓存。
+      # 改用 sccache：编译产物（.rlib/.o）按「编译器版本 + 源码哈希」落盘到节点本地目录，
+      # 重复构建直接命中缓存；它不改变 target/ 路径，因此 pybuild 既有的产物查找逻辑完全不受影响。
+      # SCCACHE_DIR 放在仓库目录之外（../...），跨次 git clone 不会被清空、随节点磁盘持久。
+      # 节点需能联网完成首次 sccache 安装（之后二进制留在 ~/.cargo/bin 复用，不再重装）。
+      env:
+        RUSTC_WRAPPER: sccache
+        SCCACHE_DIR: ../launcherclient-sccache
+        CARGO_INCREMENTAL: "0"
+        CARGO_TERM_COLOR: always
+      stages:
+        - name: 环境自检
+          script:
+            # Windows 自托管 Runner 的 stage 默认走 PowerShell；ver 是 cmd 内置，用 cmd /c 调用
+            - cmd /c ver
+            - rustc --version
+            - cargo --version
+            - python --version
+            - git --version
+
+        - name: 准备 sccache 编译缓存
+          script:
+            # PowerShell 语法：已安装则跳过，否则用 cargo 装一次（结果留在节点，后续复用）
+            - if (-not (Get-Command sccache -ErrorAction SilentlyContinue)) { cargo install sccache --locked }
+
+        - name: 运行全量打包脚本（scripts/build.py == pnpm dist）
+          script:
+            # 不传 --codesign-pfx → 完全不签名，产物与现有本地构建流程一致
+            - python scripts/build.py
+
+        - name: 列出产物
+          script:
+            - cmd /c dir dist
+
+        - name: 打包 dist 为 zip（便于作为单个附件上传）
+          script:
+            # 宿主 PowerShell 内置 cmdlet；dist/<版本>/ 下的 exe + 字体许可一并打进 dist.zip
+            - Compress-Archive -Path dist -DestinationPath dist.zip -Force
+
+        - name: 上传产物到 Commit 附件（CNB OpenAPI，无需 Docker）
+          script:
+            # 直连 CNB OpenAPI 上传 commit 附件；鉴权用流水线注入的 $env:CNB_TOKEN。
+            # 端点遵循 CNB 约定 /api/{slug}/commits/{sha}/attachments（与官方 cnbcool/attachments 插件内部调用一致）。
+            # attachment 落到「本次 web_trigger 触发的 commit」上；若想挂到 Release 附件，需先有 tag+release，
+            # 并把 $uri 改为 ".../releases/{tag}/attachments"。
+            # 若首次返回 404 或报表单字段错误，通常只需核对该路径或下面 -F 的字段名（最可能是 "file="）。
+            - >-
+              $api = if ($env:CNB_API_ENDPOINT) { $env:CNB_API_ENDPOINT } else { "https://api.cnb.cool" };
+              $uri = "$api/api/$($env:CNB_REPO_SLUG)/commits/$($env:CNB_COMMIT)/attachments";
+              curl.exe -X POST $uri -H "Authorization: Bearer $($env:CNB_TOKEN)" -H "Accept: application/vnd.cnb.api+json" -F "file=@dist.zip"
+          # ── 备选：若 Windows 节点已启用 Docker Desktop（Linux 容器模式），可改用官方插件 ──
+          #    → 注释掉上面整段 script，启用下面三行即可（无需自己拼 endpoint）：
+          # image: cnbcool/attachments:latest
+          # settings:
+          #   attachments:
+          #     - "./dist.zip"
