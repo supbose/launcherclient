@@ -599,6 +599,7 @@ lint 口径：`unwrap_used = "deny"` / `expect_used = "warn"` 是生产代码的
 | [`CHANGELOG.md`](CHANGELOG.md) | 版本变更记录 |
 | [`docs/选型决策记录.md`](docs/选型决策记录.md) | 为什么选 egui 而非 Tauri |
 | [`docs/Tauri-vs-egui性能对比.md`](docs/Tauri-vs-egui性能对比.md) | 两版体积/启动/内存对比 |
+| [`docs/跨平台支持评估-Linux-macOS.md`](docs/跨平台支持评估-Linux-macOS.md) | Linux/macOS 支持边界、启动实测与恢复工作清单（暂缓） |
 | [`docs/egui界面复刻说明.md`](docs/egui界面复刻说明.md) | 两套模板（F 主 / H 副）与阶段画面的复刻说明 |
 | [`docs/更新包打包工具-界面重设计.html`](docs/更新包打包工具-界面重设计.html) | pkgtool 界面设计稿（浏览器打开） |
 | [`docs/ui-drafts-下载校验解压.html`](docs/ui-drafts-下载校验解压.html) | 下载/校验/解压阶段界面草稿 |
