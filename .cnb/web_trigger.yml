@@ -2,6 +2,9 @@
 #
 # 按钮仅支持配置在「代码-分支详情页」；门禁事件只挂在 main 分支下，
 # 因此用 reg 限定按钮只在 main 分支页显示，避免在其他分支点了没反应。
+#
+# 正式发布不用点按钮：推一个与 package.json 版本一致的 v* Tag（如 v1.0.14），
+# tag_push 流水线会自动打包并把 zip 传成该 Release 的附件（见 .cnb.yml 的 tag_push_build_windows）。
 # 权限：未配 permissions，默认有仓库写权限即可点击触发。
 branch:
   - reg: ^main$
@@ -12,8 +15,24 @@ branch:
         isDefault: true
 
       - name: 打包 Windows 应用
-        description: 在 Windows 自托管 Runner 上构建 launcherclient.exe 与 pkgtool.exe（手动触发，不挂 push/PR）
+        description: 在 Windows 自托管 Runner 上构建 launcherclient.exe 与 pkgtool.exe（不勾选项即按 package.json 版本打包）
         event: web_trigger_build_windows
+        inputs:
+          - name: 版本与发布（都可留空）
+            collapsed: true
+            inputs:
+              # 留空 = 用 package.json 里的版本。打测试包时才填，避免为了试一次去改仓库版本号。
+              BUILD_OVERRIDE_VERSION:
+                name: 覆盖版本号
+                description: 留空则用 package.json 的版本；填 1.0.14 这类数值版本
+                type: input
+                placeholder: 1.0.14
+              # 留空 = 产物只作为本次构建的 Commit 附件，不碰 Release。
+              BUILD_RELEASE_TAG:
+                name: 发布到 Release
+                description: 填已有的 Tag（如 v1.0.13），把 zip 传成该 Release 的附件；留空则只留在 Commit 附件
+                type: input
+                placeholder: v1.0.13
 
       - name: 打包环境自检
         description: 只检查 Windows Runner 是否可调度、工具链是否齐全（秒级，不出产物）

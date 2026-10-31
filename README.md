@@ -592,7 +592,30 @@ lint 口径：`unwrap_used = "deny"` / `expect_used = "warn"` 是生产代码的
 
 ---
 
-## 8. 相关文档
+## 8. Windows 发布包（CI）
+
+正式发布不用手动点按钮：**推一个与 `package.json` 版本一致的 `v*` Tag**（如 `package.json` 是 `1.0.14` 就推 `v1.0.14`），
+`tag_push` 流水线会在组织内的 Windows 自托管 Runner 上跑一遍 `scripts/build.py`，然后：
+
+1. 打包出 `launcherclient-v<版本>-windows-x64.zip`（含 `launcherclient.exe`、`pkgtool.exe`、字体许可）；
+2. 按 Tag 建/更新 Release（`latest: true`）；
+3. 把 zip 传成该 Release 的附件。
+
+Tag 与 `package.json` 版本不一致时，质量门禁里的「打包版本号门禁」会先红——发布包的内嵌版本来自 `package.json`，
+Tag 只是外部标签，两者不一致会得到「v1.0.14 的 Release 里躺着一个 1.0.13 的 exe」。
+
+页面按钮留给另外两件事：
+
+| 按钮 | 用途 |
+| --- | --- |
+| `打包 Windows 应用` | 手动打包。可选「覆盖版本号」打测试包（不改仓库版本号），也可选「发布到 Release」（填已有 Tag） |
+| `打包环境自检` | 只验证 Runner 能调度、工具链齐全，秒级出结果，不出产物 |
+
+产物**不做 Authenticode 签名**（`scripts/build.py` 不传 `--codesign-pfx`），签名仍是发布机的事，见 §3.4 与 §7。
+
+---
+
+## 9. 相关文档
 
 | 文档 | 内容 |
 | --- | --- |
