@@ -33,6 +33,12 @@
 
 
 
+
+## v1.0.11 (2026-10-31)
+### 👷 CI/CD
+
+- [9c8bb51](/-/commit/9c8bb516954a9f71f5a76ffd0770b6f883c62fcb) CI(.cnb.yml): ci, scripts, docs: 版本校验门禁新增两份 Cargo.lock 版本比对 (.cnb.yml, README.md, scripts/pybuild.py)
+
 ## v1.0.10 (2026-10-31)
 ### 🚀 新增功能
 
