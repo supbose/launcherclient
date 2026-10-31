@@ -3019,7 +3019,7 @@ checksum = "d55d956fa96f5ec02be2e13af0e20391a5aa83d6a074e3ad368959d0fab299ea"
 
 [[package]]
 name = "qsltd-pkgtool"
-version = "1.0.9"
+version = "1.0.14"
 dependencies = [
  "chrono",
  "eframe",
@@ -3039,7 +3039,7 @@ dependencies = [
 
 [[package]]
 name = "qsltd-ui"
-version = "1.0.9"
+version = "1.0.14"
 dependencies = [
  "egui",
 ]

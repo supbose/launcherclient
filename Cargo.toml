@@ -17,7 +17,7 @@ exclude = ["src-pkgtool"]
 # （以及 src-pkgtool/Cargo.toml 与两个 rc 文件）；`--check-version` 负责校验一致性。
 # 手改这里会在下一次构建被覆盖，且 CI 会报漂移。
 [workspace.package]
-version = "1.0.9"
+version = "1.0.14"
 edition = "2021"
 license = "MIT"
 authors = ["supbose <supbose@qq.com>"]
