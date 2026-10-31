@@ -33,11 +33,18 @@ main:
       stages:
         - name: 准备工具链与系统依赖
           script:
-            - rustup component add rustfmt clippy
-            # libssl-dev/pkg-config：src-core 的 reqwest 默认走 native-tls，Linux 上要有 OpenSSL 开发头
-            - apt-get update -qq
-            - apt-get install -y -qq --no-install-recommends ca-certificates pkg-config libssl-dev python3
-            - rustc --version && cargo --version && python3 --version
+            # rustup 在镜像里装在 /usr/local/cargo/bin，但节点上的 PATH 不一定带它，
+            # 现象是 `rustup: command not found`（127），在任何代码检查之前就红。
+            # 先补 PATH，仍找不到再明确报错，别让它变成一条看不懂的红。
+            - >-
+              set -e;
+              command -v rustup >/dev/null 2>&1 || export PATH="$PATH:/usr/local/cargo/bin:$HOME/.cargo/bin";
+              command -v rustup >/dev/null 2>&1 || { echo "找不到 rustup：检查构建镜像与 PATH"; exit 1; };
+              rustup component add rustfmt clippy;
+              # libssl-dev/pkg-config：src-core 的 reqwest 默认走 native-tls，Linux 上要有 OpenSSL 开发头
+              apt-get update -qq;
+              apt-get install -y -qq --no-install-recommends ca-certificates pkg-config libssl-dev python3;
+              rustc --version && cargo --version && python3 --version
 
         - name: 版本号一致性（package.json 为唯一来源）
           script:
