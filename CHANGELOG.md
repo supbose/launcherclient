@@ -34,6 +34,12 @@
 
 
 
+
+## v1.0.12 (2026-10-31)
+### 📝 文档更新
+
+- [a40cf53](/-/commit/a40cf53ae7ad1f4ebb6c216594256149599d2e7c) 文档(README.md): 新增跨平台支持评估（Linux/macOS）文档并更新 README (README.md, docs/跨平台支持评估-Linux-macOS.md)
+
 ## v1.0.11 (2026-10-31)
 ### 👷 CI/CD
 
