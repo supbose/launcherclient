@@ -32,6 +32,16 @@
 
 
 
+
+## v1.0.10 (2026-10-31)
+### 🚀 新增功能
+
+- [3f85030](/-/commit/3f85030268ffa136e67cfc173932a946302104d1) 新增(src-core): 分卷直装 + 安装自检回滚，版本升级至1.0.9 (Cargo.lock, Cargo.toml, README.md, launcherclient-guide/launcherclient-guide.html, src-core/examples/stage_bench.rs, src-core/src/download.rs, src-core/src/flow.rs, src-core/src/install.rs, src-core/src/lib.rs, src-core/src/parts.rs, src-egui/version.rc, src-pkgtool/Cargo.toml, src-pkgtool/icon.rc)
+
+### 🔧 工具变更
+
+- [7eff199](/-/commit/7eff199c823e2e402e76e2dba02d7f642cb58df3) 工具(README.md): 同步版本号至 Cargo.lock 并更新文档说明 (README.md, scripts/pybuild.py, src-pkgtool/Cargo.lock)
+
 ## v1.0.9 (2026-10-31)
 ### 🚀 新增功能
 
