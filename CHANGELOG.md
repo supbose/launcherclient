@@ -36,6 +36,25 @@
 
 
 
+
+## v1.0.14 (2026-10-31)
+### 🩹 修复 Bug
+
+- [8a24956](/-/commit/8a24956fb662b53e825dd7e93ce1e2a57229b341) 修复(ci): 修正 Tag 发布流水线的定义与门禁，红而不是哑 (.cnb.yml, .cnb/web_trigger.yml, README.md)
+
+### 📝 其他
+
+- [5103f24](/-/commit/5103f24cc61c949c0e9ab01719baabe100da0f2a) 合并来自: 合并来自 ci/package-windows-app 的合并请求 #12
+- [8f9a172](/-/commit/8f9a172f9f79d50a36c5403325a89c5351b50913) 合并来自: 合并来自 ci/windows-runner-selfcheck 的合并请求 #9
+
+### 👷 CI/CD
+
+- [5d6e83d](/-/commit/5d6e83d9b57d367cb4d9ca66a47f6e097bef99c0) CI(.cnb.yml): 删除废弃的 CNB 流水线配置文件 (.cnb.yml, .cnb/web_trigger.yml)
+- [bad7881](/-/commit/bad788142700ca0ee52306b57eb32c8e2b2b2220) CI(.cnb.yml): 质量门禁准备阶段兼容 rustup 不在 PATH 的镜像 (.cnb.yml)
+- [b29f1cb](/-/commit/b29f1cb4cb5dc19cb96d2f655e9a89055ca84a02) CI(.cnb.yml): 出包回退为纯手动触发，去掉 tag_push 自动打包 (.cnb.yml, .cnb/web_trigger.yml, README.md)
+- [60f69ef](/-/commit/60f69efd1fb03952502dc6279bc08855886fabeb) CI(.cnb.yml): 推 Tag 自动打包 Windows 发布包并上传 Release 附件 (.cnb.yml, .cnb/web_trigger.yml, README.md)
+- [0a09727](/-/commit/0a09727226f29c411a9cb57e6bbcc5815b84340c) CI(.cnb.yml): 补充 Windows 自托管 Runner 调度失败排查说明并新增打包环境自检按钮 (.cnb.yml, .cnb/web_trigger.yml)
+
 ## v1.0.13 (2026-10-31)
 ### 👷 CI/CD
 
