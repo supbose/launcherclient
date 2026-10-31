@@ -91,8 +91,16 @@ main:
   # CNB 云端只有 Linux 节点，且自托管 Windows Runner 上 Docker 镜像不生效（脚本直接跑在宿主机）。
   # 因此用 runner.tags 把这条流水线调度到「打过 windows 标签的根组织自托管节点」上。
   #
-  # 前置：目标 Windows 节点须已安装 Rust（默认 MSVC 目标）、Python 3、git、
-  #       Visual Studio 生成工具 / Windows SDK（wgpu 的 d3d12 后端需要；可选用于 Authenticode 签名）。
+  # 前置（缺任一项都会在 Prepare 阶段直接红，且报错与代码无关）：
+  #   1. 根组织「组织设置 / 构建节点」里已新增 Windows Runner 并保持「在线」；
+  #      新节点默认离线，须在该机上跑「连接指引」给的一键脚本接入。
+  #   2. 节点标签是下面 runner.tags 的超集（至少含 windows），且节点未被停用/未达并发上限。
+  #   3. 目标 Windows 节点须已安装 Rust（默认 MSVC 目标）、Python 3、git、
+  #      Visual Studio 生成工具 / Windows SDK（wgpu 的 d3d12 后端需要；可选用于 Authenticode 签名）。
+  # 这三条不满足时的典型现象：Prepare 阶段 0.1 秒内失败，报
+  #   No runner for namespace: group tags: windows, cpus: -1
+  # 这不是 YAML 写错，也不是编译失败——平台压根没分到机器，后续 stage 全部 skipped。
+  # 用下面的「打包环境自检」按钮先确认能分到节点，再去点「打包 Windows 应用」，能省一次无效等待。
   # 构建：沿用项目既有打包脚本 scripts/build.py（等价于 `pnpm dist`）——
   #       同步版本号到 Cargo 清单/rc/Cargo.lock → cargo build --release（src-egui 走 workspace、
   #       src-pkgtool 走独立 crate）→ 复制 exe 到 dist/<版本>/。
@@ -163,3 +171,31 @@ main:
           # settings:
           #   attachments:
           #     - "./dist.zip"
+
+  # ── Windows Runner 自检（仅手动触发，不值得为它写代码）────────────────────────────────
+  # 目的：把「调度不到节点」和「节点起来了但环境不全」两种情况区分开。
+  # 与打包流水线用完全相同的 runner 配置，因此这里红了就一定不是编译问题。
+  web_trigger_check_windows_runner:
+    - runner:
+        namespace: group
+        tags:
+          - windows
+      stages:
+        - name: 节点身份
+          script:
+            - cmd /c ver
+            - python --version
+
+        - name: 构建工具链
+          script:
+            # rustc 必须是 MSVC 目标（x86_64-pc-windows-msvc），gnu 目标编不出可发布的 exe
+            - rustc --version
+            - cargo --version
+            - rustup show active-toolchain
+
+        - name: 代码签名/资源编译依赖
+          script:
+            # rc.exe 来自 Windows SDK，--check-version 之后的资源嵌入环节会用到；缺失时打包才会暴露
+            - >-
+              if (Get-Command rc.exe -ErrorAction SilentlyContinue) { rc.exe }
+              else { Write-Output "未在 PATH 找到 rc.exe：请安装 Windows SDK 并在「Rust/C++ 生成工具」里勾选，或从 Developer Command Prompt 启动 Runner" }

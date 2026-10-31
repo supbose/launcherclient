@@ -14,3 +14,7 @@ branch:
       - name: 打包 Windows 应用
         description: 在 Windows 自托管 Runner 上构建 launcherclient.exe 与 pkgtool.exe（手动触发，不挂 push/PR）
         event: web_trigger_build_windows
+
+      - name: 打包环境自检
+        description: 只检查 Windows Runner 是否可调度、工具链是否齐全（秒级，不出产物）
+        event: web_trigger_check_windows_runner
