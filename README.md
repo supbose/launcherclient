@@ -608,8 +608,11 @@ Tag 只是外部标签，两者不一致会得到「v1.0.14 的 Release 里躺�
 
 | 按钮 | 用途 |
 | --- | --- |
-| `打包 Windows 应用` | 手动打包。可选「覆盖版本号」打测试包（不改仓库版本号），也可选「发布到 Release」（填已有 Tag） |
+| `打包 Windows 应用` | 按 `package.json` 的版本手动打包，zip 作为本次构建的 Commit 附件（不碰 Release） |
 | `打包环境自检` | 只验证 Runner 能调度、工具链齐全，秒级出结果，不出产物 |
+
+版本号只有一个来源：`package.json`。想打测试版本就改本地 `package.json`（`pnpm version:sync` 铺开后提交），
+流水线不提供「覆盖版本号」——那只能改 runner 临时工作区里的文件，产物名、rc 资源与 Release 标题会各说各话。
 
 产物**不做 Authenticode 签名**（`scripts/build.py` 不传 `--codesign-pfx`），签名仍是发布机的事，见 §3.4 与 §7。
 
