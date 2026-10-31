@@ -10,9 +10,12 @@
 //!
 //! 与 Python 版的差异：
 //! - 配置（FILES / 下载前缀 / 单卷大小 / 输出目录 / app 名）在界面内可编辑，
-//!   持久化到 exe 同目录的 `packtool.json`，下次启动自动载入；
+//!   以**多个命名项目**的形式持久化到 exe 同目录的 `packtool.db`（SQLite），
+//!   下次启动自动载入上次选中的项目；旧的 `packtool.json` 首次启动会自动导入；
 //! - 打包引擎完全用 Rust 实现（zip/sha2/walkdir），不依赖 python 环境；
 //! - version.json 中 changelog 的中文按 JSON 规范转义（功能等价，客户端解析一致）。
+
+mod store;
 
 use std::fs;
 use std::io::{Read, Write};
@@ -30,11 +33,10 @@ use qsltd_ui::widgets::{draw_titlebar, paint_bg, progress_track, TitleBarAction}
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 
-/// 配置文件名（与 exe 同目录）
-const CONFIG_FILE: &str = "packtool.json";
+use store::{ProjectSummary, SeedOutcome, Store};
 
-/// 应用配置（界面可编辑 + 持久化）
-#[derive(Serialize, Deserialize, Clone, Default)]
+/// 应用配置（界面可编辑 + 持久化；每个命名项目各存一份）
+#[derive(Serialize, Deserialize, Clone, Default, PartialEq)]
 struct Config {
     /// 应用名，用于 `{app}_{version}.zip` 与历史包清理匹配前缀
     app_name: String,
@@ -62,7 +64,7 @@ struct Config {
 
 impl Config {
     /// 默认配置（对齐 versionTools.py 的「配置区」初值）
-    fn default_config() -> Self {
+    pub(crate) fn default_config() -> Self {
         Config {
             app_name: "qsm".into(),
             files: vec![
@@ -83,34 +85,15 @@ impl Config {
         }
     }
 
-    /// 载入配置：存在则解析，否则写入默认配置
-    fn load() -> Self {
-        let path = config_path();
-        if let Ok(text) = fs::read_to_string(&path) {
-            if let Ok(cfg) = serde_json::from_str::<Config>(&text) {
-                return cfg;
-            }
+    /// 从旧版 packtool.json 导入时的项目命名：优先 app_name，缺失则「默认项目」
+    pub(crate) fn project_name_hint(&self) -> String {
+        let name = self.app_name.trim();
+        if name.is_empty() {
+            "默认项目".into()
+        } else {
+            name.to_string()
         }
-        let cfg = Config::default_config();
-        let _ = cfg.save();
-        cfg
     }
-
-    /// 保存到 exe 同目录的 packtool.json
-    fn save(&self) -> Result<(), String> {
-        let path = config_path();
-        let text = serde_json::to_string_pretty(self).map_err(|e| e.to_string())?;
-        fs::write(&path, text + "\n").map_err(|e| e.to_string())?;
-        Ok(())
-    }
-}
-
-/// 配置文件绝对路径（exe 同目录）
-fn config_path() -> PathBuf {
-    std::env::current_exe()
-        .ok()
-        .and_then(|p| p.parent().map(|d| d.join(CONFIG_FILE)))
-        .unwrap_or_else(|| PathBuf::from(CONFIG_FILE))
 }
 
 /// 版本号末位自动加一，非 x.y.z 返回 None
@@ -142,6 +125,13 @@ fn suggest_version(output_dir: &str, app: &str) -> String {
     // 不存在时以 {app} 命名也无妨，默认 1.0.0
     let _ = app;
     "1.0.0".to_string()
+}
+
+/// 关于页展示的数据库名：只显示文件名（与 exe 同目录，完整路径无需要在界面暴露）
+fn db_file_label(path: &Path) -> String {
+    path.file_name()
+        .map(|n| n.to_string_lossy().into_owned())
+        .unwrap_or_else(|| path.display().to_string())
 }
 
 /// 解析单个配置项为 (源路径, zip 内路径) 列表；不存在返回空
@@ -749,8 +739,46 @@ fn mono_edit(ui: &mut egui::Ui, text: &mut String) -> egui::Response {
     )
 }
 
+/// 自动保存提示（右下角浮层，定时消失）
+struct Toast {
+    text: String,
+    /// 到期时刻
+    until: Instant,
+    success: bool,
+}
+
+/// 项目命名/删除弹窗状态
+enum ProjectDialog {
+    /// 新建项目（name 为输入草稿）
+    New { name: String },
+    /// 重命名当前项目（name 为输入草稿）
+    Rename { name: String },
+    /// 删除当前项目（二次确认）
+    Delete,
+}
+
 /// 打包工具应用状态
 struct PackToolApp {
+    /// 多项目配置存储；打开失败时保持 None，界面仍可用内存配置打包
+    store: Option<Store>,
+    /// 数据库路径（关于页/错误提示展示）
+    db_path: PathBuf,
+    /// 数据库打开或初始化失败的原因（仅在 store 为 None 时有值）
+    store_error: Option<String>,
+    /// 项目列表（下拉框）
+    projects: Vec<ProjectSummary>,
+    /// 当前项目 id（0 表示数据库不可用）
+    current_id: i64,
+    /// 项目命名/删除弹窗
+    project_dialog: Option<ProjectDialog>,
+    /// 最近一次成功写入数据库的配置快照（用于逐项改动自动保存）
+    saved_snapshot: Config,
+    /// 上一帧观察到的配置（改动时重置防抖计时）
+    last_seen: Config,
+    /// 防抖起点：最后一次检测到配置改动的时间
+    dirty_since: Option<Instant>,
+    /// 自动保存提示（右下角浮层）
+    toast: Option<Toast>,
     config: Config,
     version: String,
     changelog: String,
@@ -777,9 +805,74 @@ impl PackToolApp {
         install_fonts(&cc.egui_ctx);
         // 深色主题对齐 launcherclient（src-egui/src/theme.rs 色板）
         apply_theme(&cc.egui_ctx);
-        let config = Config::load();
+
+        let log = Arc::new(Mutex::new(Vec::new()));
+        let db_path = store::default_path();
+        let mut store = None;
+        let mut store_error = None;
+        let mut projects = Vec::new();
+        let mut current_id = 0i64;
+        let mut config = None;
+
+        match Store::open(&db_path) {
+            Ok(s) => {
+                match s.ensure_seeded() {
+                    Ok(SeedOutcome::ImportedLegacy(name)) => push_log(
+                        &log,
+                        &format!("已将旧版 packtool.json 导入为项目「{}」", name),
+                    ),
+                    Ok(SeedOutcome::CreatedDefault(name)) => {
+                        push_log(&log, &format!("首次启动：已创建默认项目「{}」", name))
+                    }
+                    Ok(SeedOutcome::Existing) => {}
+                    Err(e) => push_log(&log, &format!("[警告] 初始化项目数据失败: {}", e)),
+                }
+                store = Some(s);
+            }
+            Err(e) => {
+                store_error = Some(e.clone());
+                push_log(
+                    &log,
+                    &format!("[警告] 数据库不可用，配置仅在本次运行内有效: {}", e),
+                );
+            }
+        }
+
+        if store_error.is_none() {
+            let boot = store.as_ref().map(|s| s.bootstrap());
+            match boot {
+                Some(Ok((list, id, cfg))) => {
+                    projects = list;
+                    current_id = id;
+                    config = Some(cfg);
+                }
+                Some(Err(e)) => {
+                    store_error = Some(e.clone());
+                    store = None;
+                    push_log(
+                        &log,
+                        &format!("[警告] 读取项目失败，已回退到内存配置: {}", e),
+                    );
+                }
+                None => {}
+            }
+        }
+
+        let config = config.unwrap_or_else(store::fallback_config);
         let version = suggest_version(&config.output_dir, &config.app_name);
+        let saved_snapshot = config.clone();
+        let last_seen = config.clone();
         PackToolApp {
+            store,
+            db_path,
+            store_error,
+            projects,
+            current_id,
+            project_dialog: None,
+            saved_snapshot,
+            last_seen,
+            dirty_since: None,
+            toast: None,
             config,
             version,
             changelog: String::new(),
@@ -795,11 +888,356 @@ impl PackToolApp {
         }
     }
 
+    /// 当前项目显示名（数据库不可用时给出占位）
+    fn current_project_name(&self) -> String {
+        self.projects
+            .iter()
+            .find(|p| p.id == self.current_id)
+            .map(|p| p.name.clone())
+            .unwrap_or_else(|| "（未命名）".into())
+    }
+
+    /// 把当前内存配置写回当前项目
+    fn persist_current(&self) -> Result<(), String> {
+        match &self.store {
+            Some(s) => s.save_config(self.current_id, &self.config),
+            None => Err(self
+                .store_error
+                .clone()
+                .unwrap_or_else(|| "数据库不可用".into())),
+        }
+    }
+
+    /// 从数据库重新读取项目列表与当前项目配置（切换/新建/删除后统一走这里）
+    fn reload_from_store(&mut self) -> Result<(), String> {
+        let (list, id, cfg) = self.store.as_ref().ok_or("数据库不可用")?.bootstrap()?;
+        self.projects = list;
+        self.current_id = id;
+        self.config = cfg;
+        self.version = suggest_version(&self.config.output_dir, &self.config.app_name);
+        self.changelog.clear();
+        // 刚载入的配置与数据库一致：重置自动保存的对比基线
+        self.saved_snapshot = self.config.clone();
+        self.last_seen = self.config.clone();
+        self.dirty_since = None;
+        Ok(())
+    }
+
+    /// 右下角浮层提示（用于自动保存结果）
+    fn show_toast(&mut self, text: impl Into<String>, success: bool) {
+        self.toast = Some(Toast {
+            text: text.into(),
+            until: Instant::now() + std::time::Duration::from_millis(1600),
+            success,
+        });
+    }
+
+    /// 保存成功后的基线同步：后续只有再次改动才触发自动保存
+    fn mark_saved(&mut self) {
+        self.saved_snapshot = self.config.clone();
+        self.last_seen = self.config.clone();
+        self.dirty_since = None;
+    }
+
+    /// 逐项修改自动保存：停止输入约 0.6 秒后写库，并弹一次提示。
+    ///
+    /// 用「快照 + 防抖」而不是每帧写库：输入路径时每个字符都写 SQLite 既浪费又会让
+    /// 磁盘 IO 与 UI 抢时间；停止输入后再落盘，并且一次连续编辑只提示一次。
+    fn auto_save_tick(&mut self, ctx: &egui::Context) {
+        if self.store.is_none() {
+            return;
+        }
+        // 仍在变化：不断重置防抖计时
+        if self.config != self.last_seen {
+            self.last_seen = self.config.clone();
+            self.dirty_since = Some(Instant::now());
+            ctx.request_repaint_after(std::time::Duration::from_millis(120));
+            return;
+        }
+        let Some(since) = self.dirty_since else {
+            return;
+        };
+        if since.elapsed() < std::time::Duration::from_millis(600) {
+            ctx.request_repaint_after(std::time::Duration::from_millis(120));
+            return;
+        }
+        self.dirty_since = None;
+        if self.config == self.saved_snapshot {
+            return;
+        }
+        match self.persist_current() {
+            Ok(()) => {
+                self.saved_snapshot = self.config.clone();
+                self.last_seen = self.config.clone();
+                let name = self.current_project_name();
+                self.show_toast(format!("已自动保存 · {}", name), true);
+            }
+            Err(e) => {
+                // 失败只提示一次，下一次改动再重试，避免每 0.6 秒刷屏
+                self.saved_snapshot = self.config.clone();
+                self.show_toast(format!("自动保存失败：{}", e), false);
+                push_log(&self.log, &format!("[失败] 自动保存失败: {}", e));
+            }
+        }
+        ctx.request_repaint_after(std::time::Duration::from_millis(100));
+    }
+
+    /// 绘制右下角自动保存提示（到期自动消失）
+    fn draw_toast(&mut self, ctx: &egui::Context) {
+        let Some(toast) = &self.toast else {
+            return;
+        };
+        if Instant::now() >= toast.until {
+            self.toast = None;
+            return;
+        }
+        let color = if toast.success {
+            SUCCESS
+        } else {
+            egui::Color32::from_rgb(230, 120, 120)
+        };
+        let text = toast.text.clone();
+        egui::Area::new(egui::Id::unique("pkgtool_auto_save_toast"))
+            .order(egui::Order::Foreground)
+            .anchor(egui::Align2::RIGHT_BOTTOM, egui::vec2(-16.0, -16.0))
+            .show(ctx, |ui| {
+                egui::Frame::default()
+                    .fill(theme::RING_INNER)
+                    .stroke(egui::Stroke::new(1.0, BORDER))
+                    .inner_margin(egui::Margin::symmetric(12, 8))
+                    .corner_radius(8.0)
+                    .show(ui, |ui| {
+                        ui.label(egui::RichText::new(text).size(11.5).color(color));
+                    });
+            });
+        ctx.request_repaint_after(std::time::Duration::from_millis(100));
+    }
+
+    /// 切换项目：先把当前草稿落盘，再载入目标项目
+    fn switch_project(&mut self, id: i64) {
+        if id == self.current_id || self.store.is_none() {
+            return;
+        }
+        if let Err(e) = self.persist_current() {
+            push_log(&self.log, &format!("[失败] 切换前保存当前配置失败: {}", e));
+            return;
+        }
+        let res = self.store.as_ref().map(|s| s.set_current(id));
+        match res {
+            Some(Ok(())) => match self.reload_from_store() {
+                Ok(()) => push_log(
+                    &self.log,
+                    &format!("已切换到项目「{}」", self.current_project_name()),
+                ),
+                Err(e) => push_log(&self.log, &format!("[失败] 载入项目失败: {}", e)),
+            },
+            Some(Err(e)) => push_log(&self.log, &format!("[失败] 切换项目失败: {}", e)),
+            None => {}
+        }
+    }
+
+    /// 新建命名项目（以当前配置为模板）
+    fn create_project(&mut self, raw_name: &str) {
+        let name = match store::validate_name(raw_name) {
+            Ok(n) => n,
+            Err(e) => {
+                push_log(&self.log, &format!("[失败] {}", e));
+                return;
+            }
+        };
+        let template = self.config.clone();
+        if let Err(e) = self.persist_current() {
+            push_log(&self.log, &format!("[警告] 保存当前项目失败: {}", e));
+        }
+        let res = self
+            .store
+            .as_ref()
+            .ok_or_else(|| "数据库不可用".to_string())
+            .and_then(|s| {
+                s.create_project(&name, &template)
+                    .and_then(|id| s.set_current(id))
+            });
+        match res {
+            Ok(_) => match self.reload_from_store() {
+                Ok(()) => push_log(
+                    &self.log,
+                    &format!("已新建项目「{}」（复制了当前项目的配置）", name),
+                ),
+                Err(e) => push_log(&self.log, &format!("[失败] 载入新项目失败: {}", e)),
+            },
+            Err(e) => push_log(&self.log, &format!("[失败] 新建项目失败: {}", e)),
+        }
+    }
+
+    /// 重命名当前项目
+    fn rename_current_project(&mut self, raw_name: &str) {
+        let res = self
+            .store
+            .as_ref()
+            .ok_or_else(|| "数据库不可用".to_string())
+            .and_then(|s| s.rename_project(self.current_id, raw_name));
+        match res {
+            Ok(name) => {
+                if let Some(list) = self.store.as_ref().and_then(|s| s.list_projects().ok()) {
+                    self.projects = list;
+                }
+                push_log(&self.log, &format!("项目已重命名为「{}」", name));
+            }
+            Err(e) => push_log(&self.log, &format!("[失败] 重命名项目失败: {}", e)),
+        }
+    }
+
+    /// 删除当前项目（至少保留一个）
+    fn delete_current_project(&mut self) {
+        let name = self.current_project_name();
+        let res = self
+            .store
+            .as_ref()
+            .ok_or_else(|| "数据库不可用".to_string())
+            .and_then(|s| s.delete_project(self.current_id));
+        match res {
+            Ok(()) => match self.reload_from_store() {
+                Ok(()) => push_log(&self.log, &format!("已删除项目「{}」", name)),
+                Err(e) => push_log(&self.log, &format!("[失败] 载入剩余项目失败: {}", e)),
+            },
+            Err(e) => push_log(&self.log, &format!("[失败] 删除项目失败: {}", e)),
+        }
+    }
+
+    /// 项目命名/删除弹窗：新建与重命名共用一个输入框，删除需二次确认
+    fn show_project_dialog(&mut self, ctx: &egui::Context) {
+        enum Act {
+            None,
+            Cancel,
+            Confirm,
+        }
+
+        let current_name = self.current_project_name();
+        let can_delete = self.projects.len() > 1;
+        let is_new = matches!(
+            self.project_dialog.as_ref(),
+            Some(ProjectDialog::New { .. })
+        );
+        let title = match self.project_dialog.as_ref() {
+            Some(ProjectDialog::New { .. }) => "新建项目",
+            Some(ProjectDialog::Rename { .. }) => "重命名项目",
+            Some(ProjectDialog::Delete) => "删除项目",
+            None => return,
+        };
+        let Some(dialog) = self.project_dialog.as_mut() else {
+            return;
+        };
+
+        let mut act = Act::None;
+        egui::Window::new(title)
+            .collapsible(false)
+            .resizable(false)
+            .anchor(egui::Align2::CENTER_CENTER, egui::Vec2::ZERO)
+            .show(ctx, |ui| {
+                ui.set_width(340.0);
+                match dialog {
+                    ProjectDialog::New { name } | ProjectDialog::Rename { name } => {
+                        let hint = if is_new {
+                            "新项目会复制当前项目的配置，创建后仍可继续修改"
+                        } else {
+                            "项目名仅用于工具内区分，不影响产物文件名（由「应用名」决定）"
+                        };
+                        ui.label(egui::RichText::new(hint).size(11.5).color(MUTED));
+                        ui.add_space(8.0);
+                        let resp = ui.add(
+                            egui::TextEdit::singleline(name)
+                                .font(egui::FontId::monospace(13.0))
+                                .desired_width(f32::INFINITY)
+                                .hint_text("项目名（最多 64 字）"),
+                        );
+                        if resp.lost_focus() && ui.input(|i| i.key_pressed(egui::Key::Enter)) {
+                            act = Act::Confirm;
+                        }
+                        ui.add_space(12.0);
+                        ui.horizontal(|ui| {
+                            if ui.button("取消").clicked() {
+                                act = Act::Cancel;
+                            }
+                            let ok = egui::Button::new(
+                                egui::RichText::new("确定").strong().color(ACCENT_TEXT),
+                            )
+                            .fill(ACCENT)
+                            .corner_radius(6.0)
+                            .min_size(egui::vec2(72.0, 26.0));
+                            if ui.add(ok).clicked() {
+                                act = Act::Confirm;
+                            }
+                        });
+                    }
+                    ProjectDialog::Delete => {
+                        ui.label(
+                            egui::RichText::new(format!("确定删除项目「{}」？", current_name))
+                                .size(13.0)
+                                .color(TEXT),
+                        );
+                        ui.add_space(6.0);
+                        ui.label(
+                            egui::RichText::new(
+                                "该项目的配置会从数据库永久删除，已打出的包不受影响。",
+                            )
+                            .size(11.5)
+                            .color(MUTED),
+                        );
+                        if !can_delete {
+                            ui.add_space(6.0);
+                            ui.label(
+                                egui::RichText::new("至少需要保留一个项目。")
+                                    .size(11.5)
+                                    .color(egui::Color32::from_rgb(230, 120, 120)),
+                            );
+                        }
+                        ui.add_space(12.0);
+                        ui.horizontal(|ui| {
+                            if ui.button("取消").clicked() {
+                                act = Act::Cancel;
+                            }
+                            let danger = egui::Button::new(
+                                egui::RichText::new("删除").strong().color(ACCENT_TEXT),
+                            )
+                            .fill(egui::Color32::from_rgb(196, 66, 74))
+                            .corner_radius(6.0)
+                            .min_size(egui::vec2(72.0, 26.0));
+                            if ui.add_enabled(can_delete, danger).clicked() {
+                                act = Act::Confirm;
+                            }
+                        });
+                    }
+                }
+            });
+
+        if ctx.input(|i| i.key_pressed(egui::Key::Escape)) {
+            act = Act::Cancel;
+        }
+        match act {
+            Act::None => {}
+            Act::Cancel => self.project_dialog = None,
+            Act::Confirm => {
+                let Some(dialog) = self.project_dialog.take() else {
+                    return;
+                };
+                match dialog {
+                    ProjectDialog::New { name } => self.create_project(&name),
+                    ProjectDialog::Rename { name } => self.rename_current_project(&name),
+                    ProjectDialog::Delete => self.delete_current_project(),
+                }
+            }
+        }
+    }
+
     /// 触发打包（后台线程执行）
     ///
     /// 关键：日志回调内部**每条短暂加锁后立即释放**，绝不在整个打包期间持有锁；
     /// 否则 UI 线程读取日志时会被阻塞，Windows 会把窗口标记为「无响应」（假死）。
     fn start_pack(&mut self, ctx: Context) {
+        // 打包前把当前项目配置落盘：即便之后误关窗口，下一次也能直接重试
+        if let Err(e) = self.persist_current() {
+            push_log(&self.log, &format!("[警告] 保存项目配置失败: {}", e));
+        }
         let version = self.version.trim().to_string();
         let version = if version.is_empty() {
             suggest_version(&self.config.output_dir, &self.config.app_name)
@@ -939,6 +1377,88 @@ impl PackToolApp {
                     egui::ScrollArea::vertical()
                         .auto_shrink([false, false])
                         .show(ui, |ui| {
+                            let mut switch_to: Option<i64> = None;
+                            let mut open_new = false;
+                            let mut open_rename = false;
+                            let mut open_delete = false;
+                            section(ui, "项目", |ui| {
+                                ui.label(
+                                    egui::RichText::new(
+                                        "每个项目独立保存应用名、文件列表、下载前缀与输出目录",
+                                    )
+                                    .size(11.0)
+                                    .color(MUTED),
+                                );
+                                ui.add_space(8.0);
+                                ui.horizontal(|ui| {
+                                    let current_name = self.current_project_name();
+                                    let list = self.projects.clone();
+                                    egui::ComboBox::from_id_salt("pkgtool_project_select")
+                                        .selected_text(
+                                            egui::RichText::new(current_name).size(13.0),
+                                        )
+                                        .width(210.0)
+                                        .show_ui(ui, |ui| {
+                                            for p in &list {
+                                                if ui
+                                                    .selectable_label(
+                                                        p.id == self.current_id,
+                                                        &p.name,
+                                                    )
+                                                    .clicked()
+                                                {
+                                                    switch_to = Some(p.id);
+                                                }
+                                            }
+                                        });
+                                    let enabled = self.store.is_some();
+                                    if ui
+                                        .add_enabled(enabled, egui::Button::new("新建"))
+                                        .clicked()
+                                    {
+                                        open_new = true;
+                                    }
+                                    if ui
+                                        .add_enabled(enabled, egui::Button::new("重命名"))
+                                        .clicked()
+                                    {
+                                        open_rename = true;
+                                    }
+                                    if ui
+                                        .add_enabled(enabled, egui::Button::new("删除"))
+                                        .clicked()
+                                    {
+                                        open_delete = true;
+                                    }
+                                });
+                                if self.store.is_none() {
+                                    ui.add_space(6.0);
+                                    ui.label(
+                                        egui::RichText::new(format!(
+                                            "数据库不可用：{}",
+                                            self.store_error.as_deref().unwrap_or("未知原因")
+                                        ))
+                                        .size(11.0)
+                                        .color(egui::Color32::from_rgb(230, 120, 120)),
+                                    );
+                                }
+                            });
+                            if open_new {
+                                self.project_dialog = Some(ProjectDialog::New {
+                                    name: format!("项目 {}", self.projects.len() + 1),
+                                });
+                            }
+                            if open_rename {
+                                self.project_dialog = Some(ProjectDialog::Rename {
+                                    name: self.current_project_name(),
+                                });
+                            }
+                            if open_delete {
+                                self.project_dialog = Some(ProjectDialog::Delete);
+                            }
+                            if let Some(id) = switch_to {
+                                self.switch_project(id);
+                            }
                             section(ui, "基本信息", |ui| {
                                 field(
                                     ui,
@@ -995,21 +1515,41 @@ impl PackToolApp {
                                         )
                                         .clicked()
                                     {
-                                        match self.config.save() {
-                                            Ok(_) => push_log(
-                                                &self.log,
-                                                "配置已保存到 packtool.json",
-                                            ),
-                                            Err(e) => push_log(
-                                                &self.log,
-                                                &format!("保存失败: {}", e),
-                                            ),
+                                        match self.persist_current() {
+                                            Ok(_) => {
+                                                self.mark_saved();
+                                                let name = self.current_project_name();
+                                                push_log(
+                                                    &self.log,
+                                                    &format!(
+                                                        "配置已保存到 {}（项目：{}）",
+                                                        self.db_path.display(),
+                                                        name
+                                                    ),
+                                                );
+                                                self.show_toast(
+                                                    format!("已保存 · {}", name),
+                                                    true,
+                                                );
+                                            }
+                                            Err(e) => {
+                                                self.show_toast(
+                                                    format!("保存失败：{}", e),
+                                                    false,
+                                                );
+                                                push_log(
+                                                    &self.log,
+                                                    &format!("保存失败: {}", e),
+                                                );
+                                            }
                                         }
                                     }
                                     ui.label(
-                                        egui::RichText::new("未保存的改动不会写进 packtool.json")
-                                            .size(11.0)
-                                            .color(MUTED),
+                                        egui::RichText::new(
+                                            "逐项修改停止输入 0.6 秒后自动保存，也可点此立即保存",
+                                        )
+                                        .size(11.0)
+                                        .color(MUTED),
                                     );
                                 });
                             });
@@ -1620,7 +2160,7 @@ impl PackToolApp {
 
         // ---- 双栏：左 = 应用信息，右 = 第三方依赖 ----
         // 注意：allocate_ui 会继承父布局，horizontal 内必须显式 top_down（配置页同款坑）
-        let deps: [(&str, &str, &str); 13] = [
+        let deps: [(&str, &str, &str); 14] = [
             ("eframe", "0.37", "MIT OR Apache-2.0"),
             ("egui", "0.37", "MIT OR Apache-2.0"),
             ("zip", "2", "MIT"),
@@ -1628,6 +2168,7 @@ impl PackToolApp {
             ("hex", "0.4", "MIT OR Apache-2.0"),
             ("serde", "1", "MIT OR Apache-2.0"),
             ("serde_json", "1", "MIT OR Apache-2.0"),
+            ("rusqlite", "0.32", "MIT"),
             ("chrono", "0.4", "MIT OR Apache-2.0"),
             ("walkdir", "2", "Unlicense OR MIT"),
             ("regex", "1", "MIT OR Apache-2.0"),
@@ -1642,11 +2183,12 @@ impl PackToolApp {
             let right_w = ui.available_width() - left_w - 14.0;
             ui.allocate_ui_with_layout(egui::vec2(left_w, h), top_down, |ui| {
                 section(ui, "应用信息", |ui| {
-                    let rows: [(&str, &str); 4] = [
-                        ("名称", env!("CARGO_PKG_NAME")),
-                        ("版本", env!("PKG_VERSION")),
-                        ("许可证", env!("CARGO_PKG_LICENSE")),
-                        ("描述", env!("CARGO_PKG_DESCRIPTION")),
+                    let rows: [(&str, String); 5] = [
+                        ("名称", env!("CARGO_PKG_NAME").to_string()),
+                        ("版本", env!("PKG_VERSION").to_string()),
+                        ("许可证", env!("CARGO_PKG_LICENSE").to_string()),
+                        ("描述", env!("CARGO_PKG_DESCRIPTION").to_string()),
+                        ("数据文件", db_file_label(&self.db_path)),
                     ];
                     for (k, v) in rows {
                         ui.horizontal(|ui| {
@@ -1670,7 +2212,7 @@ impl PackToolApp {
             });
             ui.add_space(14.0);
             ui.allocate_ui_with_layout(egui::vec2(right_w, h), top_down, |ui| {
-                // 卡片内固定高度滚动：13 行依赖不再溢出窗口底部
+                // 卡片内固定高度滚动：14 行依赖不再溢出窗口底部
                 // （section 头部 ≈23 + 间距 8 + 卡片上下内边距 24 + 尾部 18 ≈ 73）
                 let list_h = (h - 74.0).max(140.0);
                 section(ui, "第三方依赖", |ui| {
@@ -1734,6 +2276,10 @@ impl eframe::App for PackToolApp {
                     .send_viewport_cmd(egui::ViewportCommand::Minimized(true));
             }
             TitleBarAction::Close => {
+                // 关闭前兜底保存当前项目（与 on_exit 双保险，避免原生关闭路径丢改动）
+                if let Err(e) = self.persist_current() {
+                    push_log(&self.log, &format!("[警告] 退出前保存失败: {}", e));
+                }
                 ui.ctx().send_viewport_cmd(egui::ViewportCommand::Close);
             }
             TitleBarAction::None => {}
@@ -1812,6 +2358,17 @@ impl eframe::App for PackToolApp {
                     });
             }
         });
+
+        // 项目命名/删除弹窗盖在内容区之上（放在 CentralPanel 之后绘制）
+        self.show_project_dialog(ui.ctx());
+        // 逐项修改防抖自动保存 + 右下角保存提示
+        self.auto_save_tick(ui.ctx());
+        self.draw_toast(ui.ctx());
+    }
+
+    /// 退出时兜底保存当前项目（标题栏关闭/Alt+F4/系统关机都走这里）
+    fn on_exit(&mut self) {
+        let _ = self.persist_current();
     }
 }
 

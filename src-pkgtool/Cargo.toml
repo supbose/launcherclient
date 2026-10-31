@@ -22,9 +22,11 @@ zip = "2"
 sha2 = "0.10"
 # 字节 hex 编码
 hex = "0.4"
-# 配置（FILES/前缀/输出目录）序列化到 packtool.json
+# 配置（FILES/前缀/输出目录）序列化后存入 SQLite（多项目命名保存）
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
+# 本地数据存储：多项目配置、当前项目选择（bundled = 静态编入 SQLite，exe 免外部 DLL）
+rusqlite = { version = "0.32", features = ["bundled"] }
 # 发布时间（UTC ISO8601，对齐 python datetime.now(timezone.utc)）
 chrono = { version = "0.4", default-features = false, features = ["clock"] }
 # 目录递归收集待打包文件

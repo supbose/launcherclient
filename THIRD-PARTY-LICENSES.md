@@ -1,18 +1,19 @@
 # 第三方依赖许可证清单（qsltd-pkgtool）
 
-> 由 src-pkgtool/Cargo.lock 与本地 cargo 注册表元数据自动解析生成，生成日期：2026-10-29。
-> 共 519 个 crate（含传递依赖与跨平台依赖）。发布前请复核「未知」条目（当前 0 个，多为非 Windows 构建目标）。
+> 由 src-pkgtool/Cargo.lock 与本地 cargo 注册表元数据自动解析生成，生成日期：2026-10-31。
+> 共 526 个 crate（含传递依赖与跨平台依赖）。发布前请复核「未知」条目（当前 0 个，多为非 Windows 构建目标）。
+> `rusqlite` 以 `bundled` 特性静态编译 SQLite 3（public domain），不引入额外运行时 DLL。
 
 ## 许可证分布
 
 | 许可证 | crate 数 |
 |---|---|
-| MIT OR Apache-2.0 | 215 |
-| MIT | 100 |
+| MIT OR Apache-2.0 | 217 |
+| MIT | 102 |
 | Apache-2.0 OR MIT | 49 |
 | 见 crates.io | 41 |
 | Unicode-3.0 | 18 |
-| MIT/Apache-2.0 | 16 |
+| MIT/Apache-2.0 | 19 |
 | Apache-2.0 | 16 |
 | Zlib OR Apache-2.0 OR MIT | 10 |
 | Apache-2.0 WITH LLVM-exception OR Apache-2.0 OR MIT | 7 |
@@ -160,6 +161,8 @@
 | euclid | 0.22.14 | MIT OR Apache-2.0 |
 | event-listener | 5.4.2 | Apache-2.0 OR MIT |
 | event-listener-strategy | 0.5.4 | Apache-2.0 OR MIT |
+| fallible-iterator | 0.3.0 | MIT/Apache-2.0 |
+| fallible-streaming-iterator | 0.1.9 | MIT/Apache-2.0 |
 | fastrand | 2.5.0 | Apache-2.0 OR MIT |
 | fax | 0.2.7 | MIT |
 | fdeflate | 0.3.7 | MIT OR Apache-2.0 |
@@ -203,6 +206,8 @@
 | hashbrown | 0.17.1 | MIT OR Apache-2.0 |
 | hashbrown | 0.16.1 | MIT OR Apache-2.0 |
 | hashbrown | 0.15.5 | MIT OR Apache-2.0 |
+| hashbrown | 0.14.5 | MIT OR Apache-2.0 |
+| hashlink | 0.9.1 | MIT OR Apache-2.0 |
 | hermit-abi | 0.5.3 | MIT OR Apache-2.0 |
 | hex | 0.4.3 | MIT OR Apache-2.0 |
 | hmac | 0.12.1 | MIT OR Apache-2.0 |
@@ -237,6 +242,7 @@
 | libloading | 0.8.9 | ISC |
 | libm | 0.2.16 | MIT |
 | libredox | 0.1.25 | MIT |
+| libsqlite3-sys | 0.30.1 | MIT |
 | linebender_resource_handle | 0.1.1 | Apache-2.0 OR MIT |
 | linux-raw-sys | 0.12.1 | Apache-2.0 WITH LLVM-exception OR Apache-2.0 OR MIT |
 | linux-raw-sys | 0.4.15 | Apache-2.0 WITH LLVM-exception OR Apache-2.0 OR MIT |
@@ -361,6 +367,7 @@
 | rustc_version | 0.4.1 | MIT OR Apache-2.0 |
 | rustc-hash | 1.1.0 | Apache-2.0/MIT |
 | rustc-hash | 2.1.3 | Apache-2.0 OR MIT |
+| rusqlite | 0.32.1 | MIT |
 | rustix | 1.1.5 | Apache-2.0 WITH LLVM-exception OR Apache-2.0 OR MIT |
 | rustix | 0.38.44 | Apache-2.0 WITH LLVM-exception OR Apache-2.0 OR MIT |
 | rustversion | 1.0.23 | MIT OR Apache-2.0 |
@@ -440,6 +447,7 @@
 | uuid | 1.29.0 | Apache-2.0 OR MIT |
 | vello_common | 0.2.0 | Apache-2.0 OR MIT |
 | vello_cpu | 0.2.0 | Apache-2.0 OR MIT |
+| vcpkg | 0.2.15 | MIT/Apache-2.0 |
 | version_check | 0.9.5 | MIT/Apache-2.0 |
 | vswhom | 0.1.0 | MIT |
 | vswhom-sys | 0.1.3 | MIT |

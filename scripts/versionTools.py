@@ -2,7 +2,7 @@
 #
 # [已弃用 / DEPRECATED]
 # 本脚本的功能已由纯 Rust 的 egui 工具 `src-pkgtool` 完整复刻并取代
-# （配置界面化、持久化到 packtool.json，无需 python 环境）。
+# （配置界面化、以命名多项目持久化到 SQLite（packtool.db），无需 python 环境）。
 # 新打包请改用 src-pkgtool：cargo build --release 后运行 target/release/pkgtool.exe。
 # 本文件仅保留作历史参考，不再维护。
 #
