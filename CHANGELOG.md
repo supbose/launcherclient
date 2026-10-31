@@ -35,6 +35,12 @@
 
 
 
+
+## v1.0.13 (2026-10-31)
+### 👷 CI/CD
+
+- [d422afb](/-/commit/d422afb4a0133df47e8606363b01b53be0cf41bc) CI(.cnb.yml): 添加 Windows 应用手动打包流水线 (.cnb.yml, .cnb/web_trigger.yml)
+
 ## v1.0.12 (2026-10-31)
 ### 📝 文档更新
 
