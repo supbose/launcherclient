@@ -592,27 +592,22 @@ lint 口径：`unwrap_used = "deny"` / `expect_used = "warn"` 是生产代码的
 
 ---
 
-## 8. Windows 发布包（CI）
+## 8. Windows 发布包（CI，手动出包）
 
-正式发布不用手动点按钮：**推一个与 `package.json` 版本一致的 `v*` Tag**（如 `package.json` 是 `1.0.14` 就推 `v1.0.14`），
-`tag_push` 流水线会在组织内的 Windows 自托管 Runner 上跑一遍 `scripts/build.py`，然后：
+出包是**纯手动**的：打开 `main` 分支详情页，点「打包 Windows 应用」。
+**推 Tag 不会自动打包**，合并 PR 也不会——这是刻意的：什么时候出包、出哪个版本，由点按钮的人决定。
+
+流水线在组织内的 Windows 自托管 Runner 上跑一遍 `scripts/build.py`（等价 `pnpm dist`），然后：
 
 1. 打包出 `launcherclient-v<版本>-windows-x64.zip`（含 `launcherclient.exe`、`pkgtool.exe`、字体许可）；
-2. 按 Tag 建/更新 Release（`latest: true`）；
-3. 把 zip 传成该 Release 的附件。
-
-Tag 与 `package.json` 版本不一致时，质量门禁里的「打包版本号门禁」会先红——发布包的内嵌版本来自 `package.json`，
-Tag 只是外部标签，两者不一致会得到「v1.0.14 的 Release 里躺着一个 1.0.13 的 exe」。
-
-页面按钮留给另外两件事：
-
-| 按钮 | 用途 |
-| --- | --- |
-| `打包 Windows 应用` | 按 `package.json` 的版本手动打包，zip 作为本次构建的 Commit 附件（不碰 Release） |
-| `打包环境自检` | 只验证 Runner 能调度、工具链齐全，秒级出结果，不出产物 |
+2. 把 zip 上传成**本次构建的 Commit 附件**（构建详情页可下载）；
+3. 不建 Release、不动 `latest`，发布仍由人在页面上手动做。
 
 版本号只有一个来源：`package.json`。想打测试版本就改本地 `package.json`（`pnpm version:sync` 铺开后提交），
 流水线不提供「覆盖版本号」——那只能改 runner 临时工作区里的文件，产物名、rc 资源与 Release 标题会各说各话。
+
+另有一个「打包环境自检」按钮：只验证 Runner 能调度、工具链齐全，秒级出结果，不出产物。
+打包前先点它，能省掉一次「Prepare 阶段 0.1 秒就红」的无效等待。
 
 产物**不做 Authenticode 签名**（`scripts/build.py` 不传 `--codesign-pfx`），签名仍是发布机的事，见 §3.4 与 §7。
 

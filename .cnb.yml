@@ -3,9 +3,9 @@
 # 三条事件共用同一份 Pipeline 定义（YAML 锚点 `&quality_gate` / `*quality_gate`），
 # 避免自动门禁与手动门禁的检查项悄悄分叉。
 #
-# 应用打包走另一条线：推 v* Tag 自动打包发布（tag_push_build_windows），页面按钮手动打包
-# （web_trigger_build_windows）；两者共用 `&windows_runner`（调度 + 缓存），stage 各写各的，
-# 因为收尾不同（Release 附件 vs Commit 附件）。需要 Windows 自托管 Runner，原因见该节注释。
+# 应用打包走另一条线：只有页面按钮 `web_trigger_build_windows` 一个入口，
+# 刻意不挂 push / pull_request / tag_push —— 推 Tag 不会自动出包，什么时候出包由点按钮的人决定。
+# 需要 Windows 自托管 Runner，原因见该节注释。
 #
 # 层级是 分支 → 事件 → Pipeline → Stage（串行）；CNB 默认已拉好代码，不需要 checkout 步骤。
 #
@@ -38,29 +38,6 @@ main:
             - apt-get update -qq
             - apt-get install -y -qq --no-install-recommends ca-certificates pkg-config libssl-dev python3
             - rustc --version && cargo --version && python3 --version
-
-        - name: 打包版本号门禁（package.json 与 Tag 一致）
-          script:
-            # 发布包的内嵌版本来自 package.json，Tag 只是外部标签；两者不一致时
-            # 「v1.0.14 的 Release 里躺着一个 1.0.13 的 exe」，用户装了不会升级。
-            # 只在 tag_push（=推送 Tag 后的打包发布）时校验，PR / push 不受影响：
-            # 不允许在 Tag 上回头改版本号，必须是 main 上已经提交的那个版本。
-            # 多行写成一条 `>-`：CNB 默认把每行当独立脚本、行间不共享状态，
-            # cmd1 && cmd2 里的 `exit 1` 只结束子 shell，整条仍是 0 —— 门禁会形同虚设，
-            # 所以要显式 set -e，也别拆成多个数组项。
-            - >-
-              set -e;
-              if [ "${CNB_EVENT:-}" != "tag_push" ]; then
-              echo "非 Tag 事件（${CNB_EVENT:-?}），跳过 Tag 与版本号一致性校验";
-              exit 0;
-              fi;
-              expected="v$(python3 -c 'import json;print(json.load(open("package.json"))["version"])')";
-              if [ "$expected" != "${CNB_BRANCH}" ]; then
-              echo "Tag ${CNB_BRANCH} 与 package.json 版本 ${expected} 不一致";
-              echo "请在 main 上把 package.json 改成要发布的版本（再跑 pnpm version:sync）、提交后再打 Tag";
-              exit 1;
-              fi;
-              echo "Tag ${CNB_BRANCH} 与 package.json 版本一致"
 
         - name: 版本号一致性（package.json 为唯一来源）
           script:
@@ -113,21 +90,13 @@ main:
   # 按钮触发事件，由 .cnb/web_trigger.yml 的「发布可信度门禁」按钮绑定
   web_trigger_quality_gate: *quality_gate
 
-  # ── Windows 应用打包（Tag 自动发布 + 页面按钮手动打）────────────────────────────────
-  # 产物是 .exe，且 egui/wgpu 需要 MSVC + Windows SDK 才能编译；CNB 云端只有 Linux 节点，
-  # 且自托管 Windows Runner 上 Docker 镜像不生效（脚本直接跑在宿主机）。
-  # 因此用 runner.namespace + runner.tags 把这两条流水线统一调度到
-  # 「打过 windows 标签的根组织自托管节点」上。
+  # ── Windows 应用打包（仅手动触发，刻意不挂 tag_push / push / pull_request）────────────
+  # 发布节奏由人决定：什么时候出包、出哪个版本，都由点按钮的人说了算。
+  # 推 Tag 或合并代码都不会自动产出可发布的 exe —— 合进来的代码 ≠ 可以发的东西。
   #
-  # 两种触发方式，编的是同一份 scripts/build.py，只是产物落到不同地方：
-  #   · 推 Tag（v1.0.14 这种）：tag_push_build_windows → 打包 → 建/更新 Release → 上传 Release 附件。
-  #     Tag 名必须等于 package.json 版本（带 v 前缀），由质量门禁里的「打包版本号门禁」兜住。
-  #   · 页面手动点「打包 Windows 应用」：按 package.json 版本打包，zip 留在本次构建的 Commit 附件。
-  #
-  # 关于 YAML 锚点：`&x` 只锚定它后面那一个节点，且序列不能把另一个序列「拼接」进来
-  # （`- *锚点` 得到的是嵌套列表，平台不认）。所以锚点只用在真正能省事的地方：
-  # `&windows_runner` 用合并键 `<<:` 并入同级的 runner/env；stage 列表各写各的。
-  # Tag 那条流水线把 stage 重写一遍——它的收尾（Release）本来就不同，写全比藏在别名里可读。
+  # 为什么用自托管节点：产物是 .exe，且 egui/wgpu 需要 MSVC + Windows SDK 才能编译；
+  # CNB 云端只有 Linux 节点，且自托管 Windows Runner 上 Docker 镜像不生效（脚本直接跑在宿主机）。
+  # 因此用 runner.namespace + runner.tags 把流水线调度到「打过 windows 标签的根组织自托管节点」上。
   #
   # 前置（缺任一项都会在 Prepare 阶段直接红，且报错与代码无关）：
   #   1. 根组织「组织设置 / 构建节点」里已新增 Windows Runner 并保持「在线」；
@@ -144,7 +113,7 @@ main:
   #       src-pkgtool 走独立 crate）→ 复制 exe 到 dist/<版本>/。
   # 签名：不传 --codesign-pfx 即完全不签名，与现有约定一致（Authenticode 签名是发布机的事，见 README §7）。
 
-  # 调度 + 缓存：两条 Windows 流水线共用，用合并键并入
+  # 调度 + 缓存：打包流水线用合并键并入（自检流水线只借调度，见下）
   windows_runner: &windows_runner
     runner:
       # 使用当前仓库所属根组织下的自托管节点
@@ -248,67 +217,3 @@ main:
             - >-
               if (Get-Command rc.exe -ErrorAction SilentlyContinue) { rc.exe }
               else { Write-Output "未在 PATH 找到 rc.exe：请安装 Windows SDK 并在「Rust/C++ 生成工具」里勾选，或从 Developer Command Prompt 启动 Runner" }
-
-  # ── 推 Tag 即发布：打包 → 建/更新 Release → zip 传成 Release 附件 ────────────────────
-  # Tag 事件在这份文件里只挂这一条：质量门禁在 main 的 push 上已经跑过，不为打 Tag 再跑一遍。
-  # 编排与手动打包一致（自检 → 缓存 → build.py → 压 zip），只有收尾不同：
-  # 产物传成 Release 附件，不在 Commit 上留副本。
-  tag_push_build_windows:
-    - <<: *windows_runner
-      stages:
-        - name: 环境自检
-          script:
-            - cmd /c ver
-            - rustc --version
-            - cargo --version
-            - python --version
-            - git --version
-
-        - name: 准备 sccache 编译缓存
-          script:
-            - if (-not (Get-Command sccache -ErrorAction SilentlyContinue)) { cargo install sccache --locked }
-
-        - name: 运行全量打包脚本（scripts/build.py == pnpm dist）
-          script:
-            # 版本号来自 package.json，与 Tag 的一致性由门禁兜住
-            - python scripts/build.py
-
-        - name: 列出并压缩产物
-          script:
-            - cmd /c dir dist
-            - >-
-              $version = @(Get-ChildItem dist -Directory)[-1].Name;
-              $zip = "launcherclient-v$version-windows-x64.zip";
-              Compress-Archive -Path "dist/$version" -DestinationPath $zip -Force;
-              echo "产物包：$zip"; cmd /c dir $zip
-
-        - name: 创建/更新 Release
-          type: git:release
-          options:
-            # tag_push 事件不用传 tag，取触发的 Tag 名；描述从 CHANGELOG 头部截取太脆，
-            # 这里只给出「版本 + 产物说明」，正文可在页面上补。
-            title: $CNB_BRANCH
-            description: |
-              版本 $CNB_BRANCH 的 Windows 构建产物。
-
-              - `launcherclient-v*-windows-x64.zip`：解压后为 `launcherclient.exe`、`pkgtool.exe` 与字体许可
-              - 产物未做 Authenticode 签名
-            latest: true
-
-        - name: 上传产物到 Release 附件
-          script:
-            # 直连 CNB OpenAPI 上传 Release 附件；鉴权用流水线注入的 $env:CNB_TOKEN。
-            # 端点遵循 CNB 约定 /api/{slug}/releases/{tag}/attachments（与官方 cnbcool/attachments 插件内部一致），
-            # 要求该 Tag 已有 Release —— 上一步 git:release 刚建好。
-            # 若首次返回 404 或报表单字段错误，通常只需核对该路径或下面 -F 的字段名（最可能是 "file="）。
-            - >-
-              $api = if ($env:CNB_API_ENDPOINT) { $env:CNB_API_ENDPOINT } else { "https://api.cnb.cool" };
-              $uri = "$api/api/$($env:CNB_REPO_SLUG)/releases/$($env:CNB_BRANCH)/attachments";
-              $zip = (Get-ChildItem "launcherclient-v*-windows-x64.zip")[0].Name;
-              curl.exe -X POST $uri -H "Authorization: Bearer $($env:CNB_TOKEN)" -H "Accept: application/vnd.cnb.api+json" -F "file=@$zip"
-          # ── 备选：若 Windows 节点已启用 Docker Desktop（Linux 容器模式），可改用官方插件 ──
-          #    → 注释掉上面整段 script，启用下面三行即可（无需自己拼 endpoint）：
-          # image: cnbcool/attachments:latest
-          # settings:
-          #   attachments:
-          #     - "./launcherclient-v*-windows-x64.zip"
