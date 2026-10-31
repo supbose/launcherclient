@@ -37,6 +37,17 @@
 
 
 
+
+## v1.0.15 (2026-10-31)
+### 🚀 新增功能
+
+- [d21fcc7](/-/commit/d21fcc7fbcf7ab50826b671b4abdd7d02c30b9ae) 新增(icon): 新增多系统图标生成工具及对应图标资源 (icon/20261031_224818/rocket_launch/linux/128x128.ico, icon/20261031_224818/rocket_launch/linux/16x16.ico, icon/20261031_224818/rocket_launch/linux/24x24.ico, icon/20261031_224818/rocket_launch/linux/256x256.ico, icon/20261031_224818/rocket_launch/linux/32x32.ico, icon/20261031_224818/rocket_launch/linux/48x48.ico, icon/20261031_224818/rocket_launch/linux/512x512.png, icon/20261031_224818/rocket_launch/linux/64x64.ico, icon/20261031_224818/rocket_launch/linux/96x96.ico, icon/20261031_224818/rocket_launch/macos/1024x1024.png, icon/20261031_224818/rocket_launch/macos/128x128.ico, icon/20261031_224818/rocket_launch/macos/16x16.ico, icon/20261031_224818/rocket_launch/macos/256x256.ico, icon/20261031_224818/rocket_launch/macos/32x32.ico, icon/20261031_224818/rocket_launch/macos/512x512.png, icon/20261031_224818/rocket_launch/windows/128x128.ico, icon/20261031_224818/rocket_launch/windows/16x16.ico, icon/20261031_224818/rocket_launch/windows/24x24.ico, icon/20261031_224818/rocket_launch/windows/256x256.ico, icon/20261031_224818/rocket_launch/windows/32x32.ico, icon/20261031_224818/rocket_launch/windows/48x48.ico, icon/20261031_224818/rocket_launch/windows/64x64.ico, icon/20261031_224818/update_tool_icon_transparent/linux/128x128.ico, icon/20261031_224818/update_tool_icon_transparent/linux/16x16.ico, icon/20261031_224818/update_tool_icon_transparent/linux/24x24.ico, icon/20261031_224818/update_tool_icon_transparent/linux/256x256.ico, icon/20261031_224818/update_tool_icon_transparent/linux/32x32.ico, icon/20261031_224818/update_tool_icon_transparent/linux/48x48.ico, icon/20261031_224818/update_tool_icon_transparent/linux/512x512.png, icon/20261031_224818/update_tool_icon_transparent/linux/64x64.ico, icon/20261031_224818/update_tool_icon_transparent/linux/96x96.ico, icon/20261031_224818/update_tool_icon_transparent/macos/1024x1024.png, icon/20261031_224818/update_tool_icon_transparent/macos/128x128.ico, icon/20261031_224818/update_tool_icon_transparent/macos/16x16.ico, icon/20261031_224818/update_tool_icon_transparent/macos/256x256.ico, icon/20261031_224818/update_tool_icon_transparent/macos/32x32.ico, icon/20261031_224818/update_tool_icon_transparent/macos/512x512.png, icon/20261031_224818/update_tool_icon_transparent/windows/128x128.ico, icon/20261031_224818/update_tool_icon_transparent/windows/16x16.ico, icon/20261031_224818/update_tool_icon_transparent/windows/24x24.ico, icon/20261031_224818/update_tool_icon_transparent/windows/256x256.ico, icon/20261031_224818/update_tool_icon_transparent/windows/32x32.ico, icon/20261031_224818/update_tool_icon_transparent/windows/48x48.ico, icon/20261031_224818/update_tool_icon_transparent/windows/64x64.ico, icon/README.md, icon/png2ico.py, icon/rocket_launch.png, icon/update_tool_icon_transparent.png, package.json, src-egui/assets/icon-1.ico, src-egui/assets/icon.ico, src-pkgtool/assets/icon.ico)
+- [95426df](/-/commit/95426df016ef8cc99ee138883ff1b242487031d9) 新增(packtool): 用 SQLite 多项目持久化替代单 JSON 配置 (README.md, THIRD-PARTY-LICENSES.md, scripts/versionTools.py, src-pkgtool/Cargo.lock, src-pkgtool/Cargo.toml, src-pkgtool/src/main.rs, src-pkgtool/src/store.rs)
+
+### 📦 构建系统
+
+- [28f42d8](/-/commit/28f42d8cc924541005369ff732befbe5ad65a350) 构建(src-pkgtool): 升级版本号至1.0.14 (Cargo.lock, Cargo.toml, src-egui/version.rc, src-pkgtool/Cargo.lock, src-pkgtool/Cargo.toml, src-pkgtool/icon.rc)
+
 ## v1.0.14 (2026-10-31)
 ### 🩹 修复 Bug
 
